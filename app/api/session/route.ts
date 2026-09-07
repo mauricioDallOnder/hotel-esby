@@ -16,7 +16,7 @@ export async function GET() {
     {
       authenticated: await authorized(),
       configured: !!process.env.APP_PASSWORD,
-      hotelName: process.env.HOTEL_NAME || "Mon hôtel",
+      hotelName: "Hôtel Résidence Esbly",
     },
     {
       headers: {
