@@ -32,7 +32,7 @@ export default function DashboardPage() {
       <ConnectionBar />
       <PageTitle
         eyebrow={hotelName}
-        title="L’hôtel, sous votre regard."
+        title="Hôtel, gestion de pilotage."
         description={new Date().toLocaleDateString("fr-FR", {
           timeZone: "Europe/Paris",
           weekday: "long",
@@ -67,7 +67,7 @@ export default function DashboardPage() {
         >
           <Box sx={{ maxWidth: 560 }}>
             <Chip
-              label="LA RONDE DU MATIN"
+              label="LA RONDE"
               size="small"
               sx={{
                 color: "#e4eedc",
@@ -76,9 +76,7 @@ export default function DashboardPage() {
                 letterSpacing: 1,
               }}
             />
-            <Typography variant="h4" sx={{ mb: 1 }}>
-              Une visite. Rien d’oublié.
-            </Typography>
+           
             <Typography sx={{ color: "#cfddd4" }}>
               Vérifiez les points essentiels, photographiez les anomalies et
               gardez une trace de chaque intervention.
