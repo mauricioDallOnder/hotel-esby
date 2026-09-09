@@ -1,4 +1,7 @@
 import { z } from "zod";
+import type { Role } from "./roles";
+
+export const MAX_ISSUE_PHOTOS = 3;
 
 export const priorities = {
   critique: "Critique",
@@ -135,6 +138,7 @@ export const commandSchema = z.discriminatedUnion("type", [
     actor: text,
     fields,
     photoData: photoSchema.optional(),
+    photosData: z.array(photoSchema).max(MAX_ISSUE_PHOTOS).optional(),
   }),
 
   z.object({
@@ -177,6 +181,7 @@ export type Issue = IssueFields & {
   status: Status;
   reportedBy: string;
   photoId: string | null;
+  photoIds?: string[];
   history: Event[];
 };
 
@@ -198,6 +203,7 @@ export type Change =
       record: Issue;
       expectedVersion: number;
       photoData?: string;
+      photosData?: string[];
     }
   | {
       collection: "inspections";
@@ -317,6 +323,9 @@ export function applyCommand(
   const command = commandSchema.parse(input);
 
   if (command.type === "createIssue") {
+    const photosData = [...(command.photoData ? [command.photoData] : []), ...(command.photosData || [])];
+    if (photosData.length > MAX_ISSUE_PHOTOS)
+      throw new DomainError(`Ajoutez au maximum ${MAX_ISSUE_PHOTOS} photos.`);
     const existing = state.issues.find(
       (i) => i.id === command.id
     );
@@ -344,6 +353,7 @@ export function applyCommand(
       updatedAt: now,
       status: "ouvert",
       photoId: null,
+      photoIds: [],
       history: [
         {
           at: now,
@@ -360,7 +370,7 @@ export function applyCommand(
       collection: "issues",
       record,
       expectedVersion: 0,
-      photoData: command.photoData,
+      photosData,
     };
   }
 
@@ -492,6 +502,16 @@ export function applyCommand(
         : null,
     },
   };
+}
+
+export function authorizeCommand(role: Role, command: Command) {
+  if (role !== "direction" && command.type === "updateIssue") {
+    throw new DomainError("Seule la direction peut modifier une anomalie ou son état.", 403);
+  }
+}
+
+export function issuePhotoIds(issue: Pick<Issue, "photoId" | "photoIds">): string[] {
+  return issue.photoIds?.length ? issue.photoIds : issue.photoId ? [issue.photoId] : [];
 }
 
 // Status at a calendar boundary is derived from history,

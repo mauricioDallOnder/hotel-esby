@@ -20,6 +20,8 @@ import { compressPhoto } from "@/lib/photos";
 import { IssueBadges } from "./HotelUI";
 import {
   categories,
+  issuePhotoIds,
+  MAX_ISSUE_PHOTOS,
   createId,
   priorities,
   Status,
@@ -46,7 +48,8 @@ export function IssueDialog({
   onClose: () => void;
   onSaved?: (issue: Issue) => void;
 }) {
-  const { mutate, busy } = useAppContext();
+  const { mutate, busy, role } = useAppContext();
+  const readOnly = !!issue && role !== "direction";
   const [id] = useState(() => issue?.id || createId());
   const [fields, setFields] = useState<IssueFields>(() =>
     issue
@@ -71,18 +74,23 @@ export function IssueDialog({
   const [actor, setActor] = useState(defaults?.actor || "");
   const [status, setStatus] = useState<Status>(issue?.status || "ouvert");
   const [note, setNote] = useState("");
-  const [photo, setPhoto] = useState<string>();
+  const [photos, setPhotos] = useState<string[]>([]);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   function change<K extends keyof IssueFields>(key: K, value: IssueFields[K]) {
     setFields((f) => ({ ...f, [key]: value }));
   }
-  async function loadPhoto(file?: File) {
-    if (!file) return;
+  async function loadPhotos(files: File[]) {
+    if (!files.length || processing || busy) return;
+    if (photos.length + files.length > MAX_ISSUE_PHOTOS) {
+      setError(`Ajoutez au maximum ${MAX_ISSUE_PHOTOS} photos.`);
+      return;
+    }
     setProcessing(true);
     setError("");
     try {
-      setPhoto(await compressPhoto(file));
+      const added = await Promise.all(files.map(compressPhoto));
+      setPhotos((current) => [...current, ...added]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -91,6 +99,7 @@ export function IssueDialog({
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (readOnly || processing || busy) return;
     setError("");
     try {
       const result = await mutate(
@@ -104,7 +113,7 @@ export function IssueDialog({
               status,
               fields,
             }
-          : { type: "createIssue", id, date, actor, fields, photoData: photo }
+          : { type: "createIssue", id, date, actor, fields, photosData: photos }
       );
       const saved = result.issues.find((i) => i.id === id)!;
       onSaved?.(saved);
@@ -122,12 +131,13 @@ export function IssueDialog({
     >
       <Box component="form" onSubmit={submit}>
         <DialogTitle>
-          {issue ? "Suivi de l’anomalie" : "Signaler une anomalie"}
+          {readOnly ? "Consulter l’anomalie" : issue ? "Suivi de l’anomalie" : "Signaler une anomalie"}
         </DialogTitle>
         <DialogContent>
           <Stack spacing={2.5} sx={{ pt: 1 }}>
             {error && <Alert severity="error">{error}</Alert>}
             {issue && <IssueBadges issue={issue} />}
+            {readOnly && <Alert severity="info">Seule la direction peut modifier cette anomalie et son état.</Alert>}
             {!issue && (
               <>
                 <Stack sx={{ gap: 1 }} direction={{ xs: "column", sm: "row" }}>
@@ -135,7 +145,7 @@ export function IssueDialog({
                     variant="outlined"
                     component="label"
                     startIcon={<PhotoCameraOutlined />}
-                    disabled={processing || busy}
+                    disabled={processing || busy || photos.length >= MAX_ISSUE_PHOTOS}
                   >
                     Prendre une photo
                     <input
@@ -144,45 +154,48 @@ export function IssueDialog({
                       accept="image/*"
                       capture="environment"
                       onChange={(e) => {
-                        void loadPhoto(e.target.files?.[0]);
+                        void loadPhotos(Array.from(e.target.files || []));
                         e.target.value = "";
                       }}
                     />
                   </Button>
-                  <Button component="label" disabled={processing || busy}>
-                    Choisir une photo
+                  <Button component="label" disabled={processing || busy || photos.length >= MAX_ISSUE_PHOTOS}>
+                    Choisir des photos
                     <input
                       hidden
                       type="file"
                       accept="image/*"
+                      multiple
                       onChange={(e) => {
-                        void loadPhoto(e.target.files?.[0]);
+                        void loadPhotos(Array.from(e.target.files || []));
                         e.target.value = "";
                       }}
                     />
                   </Button>
                 </Stack>
+                <Typography variant="body2" color="text.secondary">{photos.length} / {MAX_ISSUE_PHOTOS} photos · facultatif</Typography>
                 {processing && (
-                  <Typography>Préparation de la photo…</Typography>
+                  <Typography>Préparation des photos…</Typography>
                 )}
               </>
             )}
-            {(photo || issue?.photoId) && (
-              <Box>
+            {(issue ? issuePhotoIds(issue).map((_, index) => `/api/photos/${issue.id}?index=${index}`) : photos).map((src, index) => (
+              <Box key={index}>
                 <Box
                   component="img"
                   className="photo-preview"
-                  src={photo || `/api/photos/${issue!.id}`}
-                  alt="Photo du problème signalé"
+                  src={src}
+                  alt={`Photo ${index + 1} du problème signalé`}
                 />
-                {photo && (
-                  <Button onClick={() => setPhoto(undefined)}>
-                    Retirer la photo
+                {!issue && (
+                  <Button disabled={busy || processing} onClick={() => setPhotos((current) => current.filter((_, i) => i !== index))}>
+                    Retirer la photo {index + 1}
                   </Button>
                 )}
               </Box>
-            )}
+            ))}
             <TextField
+              disabled={readOnly}
               required
               label="Description du problème"
               placeholder="Ex. : fuite sous le lavabo, eau au sol…"
@@ -194,6 +207,7 @@ export function IssueDialog({
             <TextField
               required
               label="Titre"
+              disabled={readOnly}
               placeholder="Ex. : Fuite sous le lavabo"
               value={fields.title}
               onChange={(e) => change("title", e.target.value)}
@@ -201,6 +215,7 @@ export function IssueDialog({
             <TextField
               required
               label="Lieu précis"
+              disabled={readOnly}
               placeholder="Ex. : Chambre 204 · salle de bain"
               value={fields.location}
               onChange={(e) => change("location", e.target.value)}
@@ -210,6 +225,7 @@ export function IssueDialog({
                 fullWidth
                 select
                 label="Catégorie"
+                disabled={readOnly}
                 value={fields.category}
                 onChange={(e) =>
                   change("category", e.target.value as IssueFields["category"])
@@ -225,6 +241,7 @@ export function IssueDialog({
                 fullWidth
                 select
                 label="Priorité"
+                disabled={readOnly}
                 value={fields.priority}
                 onChange={(e) =>
                   change("priority", e.target.value as IssueFields["priority"])
@@ -252,17 +269,20 @@ export function IssueDialog({
             )}
             <TextField
               label="Responsable de l’intervention"
+              disabled={readOnly}
               value={fields.assignee}
               onChange={(e) => change("assignee", e.target.value)}
             />
             <TextField
               required
-              label={issue ? "Votre nom" : "Signalé par"}
-              value={actor}
+              label={issue && !readOnly ? "Votre nom" : "Signalé par"}
+              value={readOnly ? issue.reportedBy : actor}
+              disabled={readOnly}
               onChange={(e) => setActor(e.target.value)}
             />
             {issue && (
               <>
+                {!readOnly && <>
                 <TextField
                   select
                   label="État de résolution"
@@ -288,6 +308,7 @@ export function IssueDialog({
                   onChange={(e) => setNote(e.target.value)}
                   helperText="Cette note sera conservée dans le bilan mensuel."
                 />
+                </>}
                 <Typography variant="h6">Historique</Typography>
                 {issue.history.toReversed().map((event, index) => (
                   <Box
@@ -313,9 +334,9 @@ export function IssueDialog({
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button disabled={busy || processing} onClick={onClose}>
-            Annuler
+            {readOnly ? "Fermer" : "Annuler"}
           </Button>
-          <Button
+          {!readOnly && <Button
             disabled={busy || processing}
             variant="contained"
             type="submit"
@@ -325,7 +346,7 @@ export function IssueDialog({
               : issue
               ? "Enregistrer le suivi"
               : "Enregistrer l’anomalie"}
-          </Button>
+          </Button>}
         </DialogActions>
       </Box>
     </Dialog>

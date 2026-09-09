@@ -11,7 +11,7 @@ import {
 } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { useAppContext } from "@/context/AppContext";
-import { displayDate, priorities, statuses, type Issue } from "@/lib/domain";
+import { displayDate, issuePhotoIds, priorities, statuses, type Issue } from "@/lib/domain";
 import {
   ConnectionBar,
   EmptyState,
@@ -20,7 +20,7 @@ import {
 } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
 export default function IssuesPage() {
-  const { issues } = useAppContext();
+  const { issues, role } = useAppContext();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("pending");
   const [priority, setPriority] = useState("all");
@@ -48,7 +48,7 @@ export default function IssuesPage() {
       <PageTitle
         eyebrow="Maintenance"
         title="Anomalies & suivi"
-        description="Un problème, une photo, un suivi jusqu’à sa résolution."
+        description="Un problème, jusqu’à 3 photos, un suivi jusqu’à sa résolution."
         action={
           <Button
             variant="contained"
@@ -126,14 +126,20 @@ export default function IssuesPage() {
             >
               <Stack spacing={2}>
                 <IssueBadges issue={issue} />
-                {issue.photoId && (
+                {issuePhotoIds(issue).length > 0 && (
+                  <Box sx={{ display: "flex", gap: 1, overflowX: "auto" }}>
+                  {issuePhotoIds(issue).map((photoId, index) => (
                   <Box
+                    key={photoId}
                     component="img"
                     className="photo-preview"
-                    src={`/api/photos/${issue.id}`}
-                    alt={issue.title}
+                    sx={{ minWidth: 0, width: `${100 / issuePhotoIds(issue).length}%`, objectFit: "cover" }}
+                    src={`/api/photos/${issue.id}?index=${index}`}
+                    alt={`${issue.title} · photo ${index + 1}`}
                     loading="lazy"
                   />
+                  ))}
+                  </Box>
                 )}
                 <Box>
                   <Typography variant="h6" sx={{ overflowWrap: "anywhere" }}>
@@ -160,7 +166,7 @@ export default function IssuesPage() {
                     {issue.assignee || "Responsable à désigner"}
                   </Typography>
                   <Button variant="outlined" onClick={() => setDialog(issue)}>
-                    Ouvrir le suivi
+                    {role === "direction" ? "Ouvrir le suivi" : "Consulter"}
                   </Button>
                 </Stack>
               </Stack>

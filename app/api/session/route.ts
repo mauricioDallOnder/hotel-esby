@@ -1,5 +1,6 @@
 import {
-  authorized,
+  sessionRole,
+  configuredRoles,
   clearSession,
   passwordMatches,
   setSession,
@@ -12,10 +13,14 @@ import { z } from "zod";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const role = await sessionRole();
+  const availableRoles = configuredRoles();
   return Response.json(
     {
-      authenticated: await authorized(),
-      configured: !!process.env.APP_PASSWORD,
+      authenticated: !!role,
+      role,
+      configured: availableRoles.length > 0,
+      availableRoles,
       hotelName: "Hôtel Résidence Esbly",
     },
     {
@@ -37,19 +42,20 @@ export async function POST(request: Request) {
       }
     }
 
-    const { password } = z
+    const { password, role } = z
       .object({
         password: z.string().max(300),
+        role: z.enum(["direction", "employe"]),
       })
       .parse(await readBody(request, 1000));
 
-    if (!passwordMatches(password)) {
+    if (!passwordMatches(password, role)) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
       throw new DomainError("Mot de passe incorrect.", 401);
     }
 
-    await setSession();
+    await setSession(role);
 
     return Response.json({
       ok: true,

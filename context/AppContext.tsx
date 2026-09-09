@@ -12,16 +12,19 @@ import {
   Box,
   Button,
   CircularProgress,
+  MenuItem,
   Paper,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
 import type { Command, State } from "@/lib/domain";
+import { roles, type Role } from "@/lib/roles";
 
 type Data = State & { mode: "local" | "sheets" };
 type Context = Data & {
   hotelName: string;
+  role: Role;
   busy: boolean;
   error: string;
   refresh: () => Promise<void>;
@@ -44,11 +47,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     authenticated: boolean;
     configured: boolean;
     hotelName: string;
+    role: Role | null;
+    availableRoles: Role[];
   } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [password, setPassword] = useState("");
+  const [loginRole, setLoginRole] = useState<Role>("employe");
   const inFlight = useRef(false);
   const request = useCallback(async (url: string, options?: RequestInit) => {
     const response = await fetch(url, { ...options, cache: "no-store" });
@@ -78,6 +84,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .then(async (result) => {
         if (cancelled) return;
         setSession(result);
+        if (result.availableRoles?.length)
+          setLoginRole(result.availableRoles.includes("employe") ? "employe" : result.availableRoles[0]);
         if (result.authenticated) await refresh();
       })
       .catch(() => {
@@ -95,7 +103,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await request("/api/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password, role: loginRole }),
       });
       setPassword("");
       setSession(await request("/api/session"));
@@ -171,17 +179,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             {error && <Alert severity="error">{error}</Alert>}
             {!session.configured ? (
               <Alert severity="info">
-                Définissez APP_PASSWORD dans la configuration du serveur pour
-                activer l’accès.
+                Les accès ne sont pas encore configurés. Contactez la direction.
               </Alert>
             ) : (
               <>
                 <TextField
+                  select
+                  label="Profil"
+                  value={loginRole}
+                  disabled={busy}
+                  onChange={(e) => {
+                    setLoginRole(e.target.value as Role);
+                    setPassword("");
+                    setError("");
+                  }}
+                >
+                  {Object.entries(roles).map(([value, label]) => (
+                    <MenuItem key={value} value={value} disabled={!session.availableRoles.includes(value as Role)}>
+                      {label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField
                   required
                   type="password"
-                  label="Mot de passe de l’équipe"
+                  label={`Mot de passe · ${roles[loginRole]}`}
                   autoComplete="current-password"
                   value={password}
+                  disabled={busy}
                   onChange={(e) => setPassword(e.target.value)}
                 />
                 <Button disabled={busy} type="submit" variant="contained">
@@ -198,6 +223,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       value={{
         ...data,
         hotelName: session.hotelName,
+        role: session.role!,
         busy,
         error,
         refresh,

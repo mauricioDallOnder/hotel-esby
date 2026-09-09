@@ -1,0 +1,70 @@
+import { expect, test } from "@playwright/test";
+
+test("employee reports three photos; only direction changes the status", async ({ page, request }) => {
+  const unauthorized = await request.get("/api/hotel");
+  expect(unauthorized.status()).toBe(401);
+  await page.goto("/anomalies");
+  await page.getByLabel("Mot de passe · Employé").fill("test-employee");
+  await page.getByRole("button", { name: "Se connecter", exact: true }).click();
+  await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const jpeg = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 20;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "red";
+    context.fillRect(0, 0, 20, 20);
+    return canvas.toDataURL("image/jpeg").split(",")[1];
+  });
+  const file = { name: "photo.jpg", mimeType: "image/jpeg", buffer: Buffer.from(jpeg, "base64") };
+  const picker = dialog.locator('input[type="file"][multiple]');
+  await picker.setInputFiles([file, file, file, file]);
+  await expect(dialog.getByText("Ajoutez au maximum 3 photos.")).toBeVisible();
+  await picker.setInputFiles([file, file, file]);
+  await expect(dialog.getByText("3 / 3 photos · facultatif")).toBeVisible();
+  await dialog.getByRole("button", { name: "Retirer la photo 2" }).click();
+  await expect(dialog.getByText("2 / 3 photos · facultatif")).toBeVisible();
+  await dialog.locator('input[capture="environment"]').setInputFiles(file);
+  await expect(dialog.getByText("3 / 3 photos · facultatif")).toBeVisible();
+  await dialog.getByLabel("Description du problème").fill("Fuite de test");
+  await dialog.getByLabel("Titre").fill("Test trois photos");
+  await dialog.getByLabel("Lieu précis").fill("Chambre 204");
+  await dialog.getByLabel("Signalé par").fill("Employé test");
+  await dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole("button", { name: "Consulter", exact: true }).click();
+  await expect(dialog.getByLabel("Titre")).toBeDisabled();
+  await expect(dialog.getByLabel("État de résolution")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Enregistrer le suivi" })).toHaveCount(0);
+  await expect(dialog.locator("img")).toHaveCount(3);
+  for (const img of await dialog.locator("img").all())
+    await expect(img).toHaveJSProperty("naturalWidth", 20);
+  const state = await (await page.request.get("/api/hotel")).json();
+  const issue = state.issues[0];
+  const update = { type: "updateIssue", id: issue.id, version: 1, actor: "Test", note: "Réparé", fields: issue, status: "resolu" };
+  for (const method of ["POST", "PATCH"]) {
+    const denied = await page.request.fetch("/api/hotel", { method, data: update });
+    expect(denied.status()).toBe(403);
+  }
+  await dialog.getByRole("button", { name: "Fermer", exact: true }).click();
+  await page.getByRole("button", { name: "Déconnexion", exact: true }).click();
+  await page.getByLabel("Profil", { exact: true }).click();
+  await page.getByRole("option", { name: "Direction", exact: true }).click();
+  await page.getByLabel("Mot de passe · Direction").fill("test-employee");
+  await page.getByRole("button", { name: "Se connecter", exact: true }).click();
+  await expect(page.getByText("Mot de passe incorrect.")).toBeVisible();
+  await page.getByLabel("Mot de passe · Direction").fill("test-direction");
+  await page.getByRole("button", { name: "Se connecter", exact: true }).click();
+  await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
+  await dialog.getByLabel("Votre nom").fill("Direction test");
+  await dialog.getByLabel("État de résolution", { exact: true }).click();
+  await page.getByRole("option", { name: "Résolu", exact: true }).click();
+  await dialog.getByLabel("Travaux effectués / résolution").fill("Fuite réparée");
+  await dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = await (await page.request.get("/api/hotel")).json();
+  expect(saved.issues[0].status).toBe("resolu");
+  expect(saved.issues[0].photoIds).toHaveLength(3);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Déconnexion" })).toBeVisible();
+});

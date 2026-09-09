@@ -10,6 +10,7 @@ import {
 } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
 import { priorities, statuses, type Issue } from "@/lib/domain";
+import { roles } from "@/lib/roles";
 export function PageTitle({
   eyebrow,
   title,
@@ -57,7 +58,7 @@ export function PageTitle({
   );
 }
 export function ConnectionBar() {
-  const { mode, error, refresh, busy, logout } = useAppContext();
+  const { mode, error, refresh, busy, logout, role } = useAppContext();
   return (
     <Box sx={{ mb: 3 }}>
       <Stack
@@ -80,6 +81,7 @@ export function ConnectionBar() {
           }
         />
         <Stack direction="row">
+          <Chip size="small" label={roles[role]} sx={{ alignSelf: "center" }} />
           <Button size="small" disabled={busy} onClick={() => void refresh()}>
             Actualiser
           </Button>

@@ -1,67 +1,59 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { DomainError } from "./domain";
+import { isRole, type Role } from "./roles";
 
 const cookieName = "hotel-session";
-function secret() {
-  return process.env.APP_PASSWORD || "";
+function passwordFor(role: Role) {
+  return role === "direction"
+    ? process.env.APP_DIRECTION_PASSWORD || process.env.APP_PASSWORD || ""
+    : process.env.APP_EMPLOYEE_PASSWORD || "";
 }
-function signature(value: string) {
-  return createHmac("sha256", secret()).update(value).digest("hex");
+export function configuredRoles(): Role[] {
+  return (["direction", "employe"] as const).filter((role) => !!passwordFor(role));
 }
-export function passwordMatches(value: string) {
-  const a = Buffer.from(signature(value));
-  const b = Buffer.from(signature(secret()));
-  return !!secret() && timingSafeEqual(a, b);
+function signature(value: string, role: Role) {
+  return createHmac("sha256", passwordFor(role)).update(value).digest("hex");
 }
-export async function authorized() {
-  if (!secret())
-    return (
-      process.env.NODE_ENV !== "production" &&
-      process.env.STORAGE_DRIVER !== "sheets"
-    );
-  const token = (await cookies()).get(cookieName)?.value || "";
-  const [expires, signed] = token.split(".");
-  if (!expires || !signed || Number(expires) <= Date.now()) return false;
-  const a = Buffer.from(signed);
-  const b = Buffer.from(signature(expires));
-  return a.length === b.length && timingSafeEqual(a, b);
-  }
-export async function requireAuth(request: Request) {
-  console.log("### REQUIRE AUTH CHAMADO ###");
-  console.log("NODE_ENV:", process.env.NODE_ENV);
-  console.log("method:", request.method);
-  console.log("url:", request.url);
-  console.log("origin:", request.headers.get("origin"));
-  console.log("host:", request.headers.get("host"));
-
-  if (!(await authorized())) {
-    console.log("### SEM AUTORIZACAO / COOKIE ###");
-    throw new DomainError("Connexion requise.", 401);
-  }
-
-  // Em desenvolvimento, NÃO verificar origem.
-  if (process.env.NODE_ENV !== "production") {
-    console.log("### DEV: VERIFICACAO DE ORIGIN IGNORADA ###");
-    return;
-  }
-
-  const origin = request.headers.get("origin");
-
-  if (origin && origin !== new URL(request.url).origin) {
-    console.log("### ORIGIN BLOQUEADA EM PRODUCAO ###");
-    console.log("origin:", origin);
-    console.log("expected:", new URL(request.url).origin);
-
-    throw new DomainError(
-      "ORIGIN_BLOCK_AUTH_TS_2026",
-      403
-    );
-  }
+export function passwordMatches(value: string, role: Role) {
+  if (!passwordFor(role)) return false;
+  return timingSafeEqual(
+    Buffer.from(signature(value, role)),
+    Buffer.from(signature(passwordFor(role), role))
+  );
 }
-export async function setSession() {
-  const expires = String(Date.now() + 12 * 60 * 60 * 1000);
-  (await cookies()).set(cookieName, `${expires}.${signature(expires)}`, {
+export function createSessionToken(role: Role, now = Date.now()) {
+  if (!passwordFor(role)) throw new DomainError("Accès non configuré.", 503);
+  const payload = `${role}.${now + 12 * 60 * 60 * 1000}`;
+  return `${payload}.${signature(payload, role)}`;
+}
+export function verifySessionToken(token: string, now = Date.now()): Role | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [role, expires, signed] = parts;
+  if (!isRole(role) || !passwordFor(role) || !/^\d+$/.test(expires) || Number(expires) <= now)
+    return null;
+  const expected = Buffer.from(signature(`${role}.${expires}`, role));
+  const received = Buffer.from(signed);
+  return received.length === expected.length && timingSafeEqual(received, expected)
+    ? role
+    : null;
+}
+export async function sessionRole(): Promise<Role | null> {
+  return verifySessionToken((await cookies()).get(cookieName)?.value || "");
+}
+export async function requireAuth(request: Request): Promise<Role> {
+  const role = await sessionRole();
+  if (!role) throw new DomainError("Connexion requise.", 401);
+  if (process.env.NODE_ENV === "production") {
+    const origin = request.headers.get("origin");
+    if (origin && origin !== new URL(request.url).origin)
+      throw new DomainError("Origine non autorisée.", 403);
+  }
+  return role;
+}
+export async function setSession(role: Role) {
+  (await cookies()).set(cookieName, createSessionToken(role), {
     httpOnly: true,
     sameSite: "strict",
     secure: process.env.NODE_ENV === "production",

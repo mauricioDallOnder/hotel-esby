@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   applyCommand,
   DomainError,
+  issuePhotoIds,
   type Command,
   type State,
   type Change,
@@ -72,9 +73,20 @@ export async function readState(): Promise<State> {
 }
 export async function execute(command: Command): Promise<State> {
   if (storageMode() === "sheets") {
-    const state = await readState();
+    const state = await google<State & { maxIssuePhotos?: number }>({ action: "list" });
     const change = applyCommand(state, command);
-    await google({ action: "commit", ...change });
+    if (change.collection === "issues") {
+      const { photosData, ...recordChange } = change;
+      if ((photosData?.length || 0) > 1 && state.maxIssuePhotos !== 3)
+        throw new DomainError("La connexion Google doit être mise à jour par la direction pour enregistrer plusieurs photos.", 503);
+      await google({
+        action: "commit",
+        ...recordChange,
+        ...(photosData?.length === 1 ? { photoData: photosData[0] } : { photosData }),
+      });
+    } else {
+      await google({ action: "commit", ...change });
+    }
     return readState();
   }
   // Synchronous read + replace keeps local writes serialized in one Node process.
@@ -82,15 +94,18 @@ export async function execute(command: Command): Promise<State> {
   const state = localState();
   const change = applyCommand(state, command);
   mkdirSync(directory(), { recursive: true });
-  if (change.collection === "issues" && change.photoData) {
-    const photoId = change.record.id;
+  if (change.collection === "issues" && change.photosData?.length) {
     mkdirSync(path.join(directory(), "photos"), { recursive: true });
-    writeFileSync(
-      path.join(directory(), "photos", photoId + ".jpg"),
-      Buffer.from(change.photoData.split(",")[1], "base64"),
-      { mode: 0o600 }
-    );
-    change.record.photoId = photoId;
+    change.record.photoIds = change.photosData.map((photo, index) => {
+      const photoId = `${change.record.id}-${index}`;
+      writeFileSync(
+        path.join(directory(), "photos", photoId + ".jpg"),
+        Buffer.from(photo.split(",")[1], "base64"),
+        { mode: 0o600 }
+      );
+      return photoId;
+    });
+    change.record.photoId = change.record.photoIds[0];
   }
   replace(state, change);
   const temp = path.join(directory(), "hotel." + crypto.randomUUID() + ".tmp");
@@ -110,17 +125,20 @@ function replace(state: State, change: Change) {
       change.record,
     ];
 }
-export async function readPhoto(issueId: string): Promise<Buffer> {
+export async function readPhoto(issueId: string, index = 0): Promise<Buffer> {
   const issue = (await readState()).issues.find((i) => i.id === issueId);
-  if (!issue?.photoId) throw new DomainError("Photo introuvable.", 404);
+  const photoId = issue && issuePhotoIds(issue)[index];
+  if (!Number.isInteger(index) || index < 0 || !photoId)
+    throw new DomainError("Photo introuvable.", 404);
   if (storageMode() === "sheets") {
     const result = await google<{ base64: string }>({
       action: "photo",
       issueId,
+      index,
     });
     return Buffer.from(result.base64, "base64");
   }
-  if (!/^[\da-f-]{36}$/i.test(issue.photoId))
+  if (!/^[\da-f-]{36}(?:-[0-2])?$/i.test(photoId))
     throw new DomainError("Photo invalide.");
-  return readFileSync(path.join(directory(), "photos", issue.photoId + ".jpg"));
+  return readFileSync(path.join(directory(), "photos", photoId + ".jpg"));
 }
