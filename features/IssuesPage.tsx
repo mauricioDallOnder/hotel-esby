@@ -19,6 +19,7 @@ import {
   PageTitle,
 } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
+import { IssuePhoto } from "@/components/IssuePhoto";
 export default function IssuesPage() {
   const { issues, role } = useAppContext();
   const [query, setQuery] = useState("");
@@ -129,14 +130,12 @@ export default function IssuesPage() {
                 {issuePhotoIds(issue).length > 0 && (
                   <Box sx={{ display: "flex", gap: 1, overflowX: "auto" }}>
                   {issuePhotoIds(issue).map((photoId, index) => (
-                  <Box
+                  <IssuePhoto
                     key={photoId}
-                    component="img"
-                    className="photo-preview"
-                    sx={{ minWidth: 0, width: `${100 / issuePhotoIds(issue).length}%`, objectFit: "cover" }}
-                    src={`/api/photos/${issue.id}?index=${index}`}
+                    width={`calc((100% - ${(issuePhotoIds(issue).length - 1) * 8}px) / ${issuePhotoIds(issue).length})`}
+                    issueId={issue.id}
+                    index={index}
                     alt={`${issue.title} · photo ${index + 1}`}
-                    loading="lazy"
                   />
                   ))}
                   </Box>

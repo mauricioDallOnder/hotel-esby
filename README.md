@@ -20,6 +20,15 @@ Script project and deploy a new version of the existing web app before using
 multiple photos. Keep the existing spreadsheet, API token, and photo folder.
 The photo column will contain the links to all attached photos.
 
+Google reads now share concurrent requests and cache the hotel data for 15 seconds
+and photo bytes for 15 minutes (up to 32 MiB per server process). The **Actualiser**
+button bypasses the data cache; saves invalidate it. Read requests retry once on
+transient network errors or temporary Google failures. Writes are never retried
+automatically. Photos remain authenticated, and failed images offer a retry button.
+These application changes work with the existing three-photo Apps Script deployment;
+publish a new application build to make them available on phones using the hosted site.
+Process caches reset when a server restarts and are not shared between hosting instances.
+
 First, run the development server:
 
 ```bash

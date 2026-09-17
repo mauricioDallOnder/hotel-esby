@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 export async function GET(request: Request) {
-  try { await requireAuth(request); return Response.json({ ...await readState(), mode: storageMode() }, { headers: { "Cache-Control": "no-store" } }); } catch (e) { return errorResponse(e); }
+  try { await requireAuth(request); return Response.json({ ...await readState({ fresh: new URL(request.url).searchParams.get("fresh") === "1" }), mode: storageMode() }, { headers: { "Cache-Control": "no-store" } }); } catch (e) { return errorResponse(e); }
 }
 export async function POST(request: Request) {
   try {

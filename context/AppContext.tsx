@@ -57,21 +57,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [loginRole, setLoginRole] = useState<Role>("employe");
   const inFlight = useRef(false);
   const request = useCallback(async (url: string, options?: RequestInit) => {
-    const response = await fetch(url, { ...options, cache: "no-store" });
-    const result = await response.json();
+    let response: Response;
+    try {
+      response = await fetch(url, { ...options, cache: "no-store" });
+    } catch {
+      throw new Error("Connexion interrompue. Vérifiez votre réseau puis réessayez.");
+    }
     if (response.status === 401)
       setSession((s) => (s ? { ...s, authenticated: false } : s));
+    let result;
+    try {
+      result = await response.json();
+    } catch {
+      throw new Error("Le serveur n’a pas pu répondre. Réessayez dans quelques instants.");
+    }
     if (!response.ok) throw new Error(result.error || "Erreur de connexion.");
     return result;
   }, []);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (fresh = true) => {
     if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
     try {
       setError("");
-      setData(await request("/api/hotel"));
+      setData(await request(fresh ? "/api/hotel?fresh=1" : "/api/hotel"));
       setLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connexion impossible.");
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
     }
   }, [request]);
   useEffect(() => {
@@ -86,7 +101,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setSession(result);
         if (result.availableRoles?.length)
           setLoginRole(result.availableRoles.includes("employe") ? "employe" : result.availableRoles[0]);
-        if (result.authenticated) await refresh();
+        if (result.authenticated) await refresh(false);
       })
       .catch(() => {
         if (!cancelled) setError("Serveur inaccessible. Rechargez la page.");
@@ -107,7 +122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       setPassword("");
       setSession(await request("/api/session"));
-      await refresh();
+      await refresh(false);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -146,7 +161,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           <Alert
             severity="error"
             action={
-              <Button onClick={() => window.location.reload()}>
+              <Button disabled={busy} onClick={() => session?.authenticated ? void refresh() : window.location.reload()}>
                 Réessayer
               </Button>
             }

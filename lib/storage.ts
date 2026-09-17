@@ -1,9 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { ReadCache } from "./readCache";
 import {
   applyCommand,
   DomainError,
   issuePhotoIds,
+  MAX_ISSUE_PHOTOS,
   type Command,
   type State,
   type Change,
@@ -13,6 +16,13 @@ const directory = () =>
   process.env.LOCAL_DATA_DIR || path.join(process.cwd(), "data");
 export const storageMode = () =>
   process.env.STORAGE_DRIVER === "sheets" ? "sheets" : "local";
+const stateCache = new ReadCache<State>(15_000, 1);
+const photoCache = new ReadCache<Buffer>(15 * 60_000, 32 * 1024 * 1024, (photo) => photo.length);
+function googleScope() {
+  return createHash("sha256")
+    .update(JSON.stringify([process.env.GOOGLE_SCRIPT_URL, process.env.GOOGLE_API_TOKEN]))
+    .digest("hex");
+}
 function localState(): State {
   try {
     return JSON.parse(
@@ -34,58 +44,85 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
     );
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url))
     throw new DomainError("URL Google Apps Script invalide.", 503);
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, token }),
-      cache: "no-store",
-      redirect: "follow",
-      signal: AbortSignal.timeout(55000),
-    });
-  } catch {
-    throw new DomainError(
-      "Google Sheets est indisponible. Vérifiez la connexion puis actualisez avant de réessayer.",
-      503
-    );
+  const readOnly = payload.action === "list" || payload.action === "photo";
+  const started = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    let response: Response;
+    let result: { ok: boolean; data: T; error?: string; code?: number };
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, token }),
+        cache: "no-store",
+        redirect: "follow",
+        signal: AbortSignal.timeout(Math.max(1, Math.min(readOnly ? 25_000 : 55_000, 55_000 - (Date.now() - started)))),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        if (readOnly && attempt === 0 && [429, 500, 502, 503, 504].includes(response.status) && Date.now() - started < 54_000) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          continue;
+        }
+        throw new DomainError(
+          [401, 403, 404].includes(response.status)
+            ? "Le déploiement Google est inaccessible. Vérifiez son URL et ses autorisations."
+            : "Google est temporairement indisponible. Réessayez dans quelques instants.",
+          503
+        );
+      }
+      result = await response.json();
+      if (!result || typeof result.ok !== "boolean") throw new SyntaxError("Invalid Google response");
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      const failure = error as Error & { cause?: { code?: string } };
+      const elapsed = Date.now() - started;
+      if (readOnly && attempt === 0 && elapsed < 54_000) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        continue;
+      }
+      console.error("[hotel:google]", { action: payload.action, elapsed, name: failure.name, code: failure.cause?.code });
+      throw new DomainError(
+        error instanceof SyntaxError
+          ? "Réponse Google invalide. Vérifiez le déploiement Apps Script."
+          : "La connexion Google a échoué ou a mis trop de temps à répondre. Réessayez dans quelques instants.",
+        error instanceof SyntaxError ? 502 : 503
+      );
+    }
+    if (!result.ok)
+      // A Google token failure is a server configuration error, not an expired hotel session.
+      throw new DomainError(result.code === 401
+        ? "L’accès du serveur à Google est refusé. Vérifiez la configuration de la connexion."
+        : result.error || "Erreur Google Sheets.", result.code === 401 ? 503 : result.code || 502);
+    return result.data;
   }
-  let result: { ok: boolean; data: T; error?: string; code?: number };
-  try {
-    result = await response.json();
-  } catch {
-    throw new DomainError(
-      "Réponse Google invalide. Vérifiez le déploiement Apps Script.",
-      502
-    );
-  }
-  if (!response.ok || !result.ok)
-    throw new DomainError(
-      result.error || "Erreur Google Sheets.",
-      result.code || 502
-    );
-  return result.data;
 }
-export async function readState(): Promise<State> {
+export async function readState({ fresh = false } = {}): Promise<State> {
+  if (fresh) stateCache.clear();
   return storageMode() === "sheets"
-    ? google<State>({ action: "list" })
+    ? stateCache.get(googleScope(), () => google<State>({ action: "list" }))
     : localState();
 }
 export async function execute(command: Command): Promise<State> {
   if (storageMode() === "sheets") {
     const state = await google<State & { maxIssuePhotos?: number }>({ action: "list" });
     const change = applyCommand(state, command);
-    if (change.collection === "issues") {
-      const { photosData, ...recordChange } = change;
-      if ((photosData?.length || 0) > 1 && state.maxIssuePhotos !== 3)
-        throw new DomainError("La connexion Google doit être mise à jour par la direction pour enregistrer plusieurs photos.", 503);
-      await google({
-        action: "commit",
-        ...recordChange,
-        ...(photosData?.length === 1 ? { photoData: photosData[0] } : { photosData }),
-      });
-    } else {
-      await google({ action: "commit", ...change });
+    stateCache.clear();
+    try {
+      if (change.collection === "issues") {
+        const { photosData, ...recordChange } = change;
+        if ((photosData?.length || 0) > 1 && state.maxIssuePhotos !== MAX_ISSUE_PHOTOS)
+          throw new DomainError("La connexion Google doit être mise à jour par la direction pour enregistrer plusieurs photos.", 503);
+        await google({
+          action: "commit",
+          ...recordChange,
+          ...(photosData?.length === 1 ? { photoData: photosData[0] } : { photosData }),
+        });
+      } else {
+        await google({ action: "commit", ...change });
+      }
+    } finally {
+      stateCache.clear();
     }
     return readState();
   }
@@ -126,18 +163,19 @@ function replace(state: State, change: Change) {
     ];
 }
 export async function readPhoto(issueId: string, index = 0): Promise<Buffer> {
+  if (!/^[\da-f-]{36}$/i.test(issueId) || !Number.isInteger(index) || index < 0 || index >= MAX_ISSUE_PHOTOS)
+    throw new DomainError("Photo introuvable.", 404);
+  if (storageMode() === "sheets") {
+    // Apps Script checks that this index belongs to the issue. No extra list call.
+    return photoCache.get(`${googleScope()}:${issueId}:${index}`, async () => {
+      const result = await google<{ base64: string }>({ action: "photo", issueId, index });
+      return Buffer.from(result.base64, "base64");
+    });
+  }
   const issue = (await readState()).issues.find((i) => i.id === issueId);
   const photoId = issue && issuePhotoIds(issue)[index];
   if (!Number.isInteger(index) || index < 0 || !photoId)
     throw new DomainError("Photo introuvable.", 404);
-  if (storageMode() === "sheets") {
-    const result = await google<{ base64: string }>({
-      action: "photo",
-      issueId,
-      index,
-    });
-    return Buffer.from(result.base64, "base64");
-  }
   if (!/^[\da-f-]{36}(?:-[0-2])?$/i.test(photoId))
     throw new DomainError("Photo invalide.");
   return readFileSync(path.join(directory(), "photos", photoId + ".jpg"));

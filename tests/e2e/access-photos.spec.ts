@@ -41,6 +41,14 @@ test("employee reports three photos; only direction changes the status", async (
     await expect(img).toHaveJSProperty("naturalWidth", 20);
   const state = await (await page.request.get("/api/hotel")).json();
   const issue = state.issues[0];
+  const photoUrl = `/api/photos/${issue.id}?index=0`;
+  const firstPhoto = await page.request.get(photoUrl);
+  expect(firstPhoto.status()).toBe(200);
+  const etag = firstPhoto.headers().etag;
+  expect(etag).toBeTruthy();
+  expect(firstPhoto.headers()["cache-control"]).toBe("private, no-cache");
+  const cachedPhoto = await page.request.get(photoUrl, { headers: { "If-None-Match": etag } });
+  expect(cachedPhoto.status()).toBe(304);
   const update = { type: "updateIssue", id: issue.id, version: 1, actor: "Test", note: "Réparé", fields: issue, status: "resolu" };
   for (const method of ["POST", "PATCH"]) {
     const denied = await page.request.fetch("/api/hotel", { method, data: update });
@@ -48,6 +56,9 @@ test("employee reports three photos; only direction changes the status", async (
   }
   await dialog.getByRole("button", { name: "Fermer", exact: true }).click();
   await page.getByRole("button", { name: "Déconnexion", exact: true }).click();
+  await expect(page.getByLabel("Profil", { exact: true })).toBeVisible();
+  const privatePhoto = await page.request.get(photoUrl, { headers: { "If-None-Match": etag } });
+  expect(privatePhoto.status()).toBe(401);
   await page.getByLabel("Profil", { exact: true }).click();
   await page.getByRole("option", { name: "Direction", exact: true }).click();
   await page.getByLabel("Mot de passe · Direction").fill("test-employee");

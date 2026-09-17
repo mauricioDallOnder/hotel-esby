@@ -18,6 +18,7 @@ import { useAppContext } from "@/context/AppContext";
 
 import { compressPhoto } from "@/lib/photos";
 import { IssueBadges } from "./HotelUI";
+import { IssuePhoto } from "./IssuePhoto";
 import {
   categories,
   issuePhotoIds,
@@ -179,7 +180,9 @@ export function IssueDialog({
                 )}
               </>
             )}
-            {(issue ? issuePhotoIds(issue).map((_, index) => `/api/photos/${issue.id}?index=${index}`) : photos).map((src, index) => (
+            {issue ? issuePhotoIds(issue).map((photoId, index) => (
+              <IssuePhoto key={photoId} issueId={issue.id} index={index} alt={`Photo ${index + 1} du problème signalé`} lazy={false} />
+            )) : photos.map((src, index) => (
               <Box key={index}>
                 <Box
                   component="img"
