@@ -3,7 +3,11 @@ import { AppRouterCacheProvider } from "@mui/material-nextjs/v15-appRouter";
 import CssBaseline from "@mui/material/CssBaseline";
 import { ThemeRegistry } from "@/theme/ThemeRegistry";
 import { AppProvider } from "@/context/AppContext";
+import { VersionNotice } from "@/components/VersionNotice";
 import "./globals.css";
+
+// Revalidate the document on every opening, preserving immutable hashed assets.
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Hôtel Contrôle · Rondes et maintenance",
@@ -21,6 +25,7 @@ export default function RootLayout({
         <AppRouterCacheProvider>
           <ThemeRegistry>
             <CssBaseline />
+            <VersionNotice />
             <AppProvider>
               {children}
             </AppProvider>

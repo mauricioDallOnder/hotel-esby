@@ -174,9 +174,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
   const mergeEntry = useCallback((change: EntryChange) => {
     setData(current => change.collection === "familyEvents"
-      ? { ...current, familyEvents: [...(current.familyEvents || []).filter(r => r.id !== change.record.id), change.record] }
+      ? { ...current, familyEvents: [...(current.familyEvents || []).filter(r => r.id !== change.record.id), ...(current.deletedFamilyEventIds?.includes(change.record.id) ? [] : [change.record])] }
       : { ...current, roomInspections: [...(current.roomInspections || []).filter(r => r.id !== change.record.id), change.record] });
   }, []);
+  const deleteAbsence = useCallback(async (id: string) => {
+    const receipt = await request("/api/entries", {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collection: "familyEvents", id }),
+    });
+    if (receipt.deleted !== true || receipt.id !== id) throw new Error("Confirmation de suppression invalide.");
+    setData(current => ({ ...current,
+      familyEvents: (current.familyEvents || []).filter(r => r.id !== id),
+      deletedFamilyEventIds: [...new Set([...(current.deletedFamilyEventIds || []), id])],
+    }));
+  }, [request]);
   async function logout() {
     await request("/api/session", { method: "DELETE" });
     setLoaded(false);
@@ -278,7 +289,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         logout,
       }}
     >
-      <EntriesProvider onSaved={mergeEntry}>{children}</EntriesProvider>
+      <EntriesProvider onSaved={mergeEntry} onDelete={deleteAbsence}>{children}</EntriesProvider>
     </AppContext.Provider>
   );
 }

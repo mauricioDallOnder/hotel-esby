@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { entrySchema, type Entry, type EntryChange } from "./rooms";
+import { absenceDeleteSchema, parseEntry, type Entry, type EntryChange } from "./rooms";
 import { today } from "./domain";
 import { ReadCache } from "./readCache";
 import {
@@ -185,8 +185,8 @@ export async function readPhoto(issueId: string, index = 0, collection: "issues"
 
 // New entries are immutable and idempotent: a retry returns the original receipt.
 // One Google request per save, with no full hotel download before or after it.
-export async function executeEntry(input: Entry): Promise<EntryChange> {
-  const entry = entrySchema.parse(input);
+export async function executeEntry(input: Entry, legacy = false): Promise<EntryChange> {
+  const entry = parseEntry(input, legacy);
   if (entry.type === "createRoomInspection" && entry.date > today())
     throw new DomainError("La date du contrôle ne peut pas être dans le futur.");
   const submissionHash = createHash("sha256").update(JSON.stringify(entry)).digest("hex");
@@ -204,6 +204,8 @@ export async function executeEntry(input: Entry): Promise<EntryChange> {
     } finally { stateCache.clear(); }
   }
   const state = localState();
+  if (collection === "familyEvents" && state.deletedFamilyEventIds?.includes(entry.id))
+    throw new DomainError("Cette absence a été supprimée.", 409);
   const existing = (state[collection] || []).find(item => item.id === entry.id);
   if (existing) {
     if (existing.submissionHash !== submissionHash) throw new DomainError("Ce numéro d’enregistrement existe avec un contenu différent.", 409);
@@ -225,4 +227,27 @@ export async function executeEntry(input: Entry): Promise<EntryChange> {
   writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
   renameSync(temp, path.join(directory(), "hotel.json"));
   return change;
+}
+
+export async function deleteAbsence(input: unknown): Promise<{ deleted: true; id: string }> {
+  const { id, collection } = absenceDeleteSchema.parse(input);
+  if (storageMode() === "sheets") {
+    try {
+      const receipt = await google<{ deleted: true; id: string }>({ action: "deleteEntry", collection, id });
+      if (receipt?.deleted !== true || receipt.id !== id) throw new DomainError("Confirmation de suppression invalide.", 502);
+      return receipt;
+    } finally { stateCache.clear(); }
+  }
+  const state = localState();
+  const record = state.familyEvents?.find(r => r.id === id);
+  if (!record && state.deletedFamilyEventIds?.includes(id)) return { deleted: true, id };
+  if (!record) throw new DomainError("Absence introuvable.", 404);
+  if (record.kind !== "absence") throw new DomainError("Seules les absences peuvent être supprimées.", 400);
+  state.familyEvents = state.familyEvents!.filter(r => r.id !== id);
+  state.deletedFamilyEventIds = [...new Set([...(state.deletedFamilyEventIds || []), id])];
+  mkdirSync(directory(), { recursive: true });
+  const temp = path.join(directory(), "hotel." + crypto.randomUUID() + ".tmp");
+  writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
+  renameSync(temp, path.join(directory(), "hotel.json"));
+  return { deleted: true, id };
 }

@@ -191,6 +191,7 @@ export type Inspection = z.infer<typeof inspectionInput> & {
 };
 
 export type State = {
+  deletedFamilyEventIds?: string[];
   issues: Issue[];
   inspections: Inspection[];
   familyEvents?: import("./rooms").FamilyEvent[];

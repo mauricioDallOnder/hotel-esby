@@ -5,11 +5,15 @@ const TABLES = { issues: 'Anomalies', inspections: 'Rondes', familyEvents: 'Abse
 const HEADERS = ['ID', 'Version', 'Date', 'Lieu / zone', 'Titre / inspecteur', 'Statut', 'Priorité', 'Responsable', 'Photo Drive', 'Modifié le'].concat(Array.from({length: 12}, (_, i) => 'Données ' + (i + 1)));
 
 function setup() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty('API_TOKEN')) props.setProperty('API_TOKEN', Utilities.getUuid() + Utilities.getUuid());
   if (!props.getProperty('PHOTO_FOLDER_ID')) props.setProperty('PHOTO_FOLDER_ID', DriveApp.createFolder('Hôtel Contrôle - Photos privées').getId());
   Object.keys(TABLES).forEach(table_);
   setupRooms_();
+  } finally { lock.releaseLock(); }
   // Retrieve API_TOKEN from Project Settings > Script properties, not public logs.
 }
 function table_(collection) {
@@ -24,6 +28,12 @@ function table_(collection) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#153f37').setFontColor('#ffffff');
     sheet.setFrozenRows(1);
     sheet.hideColumns(11, 12);
+  }
+  if (headers.length > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
+  const existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  // The only supported upgrade appends the new check. Never shift old cells.
+  if (collection === 'roomInspections' && existing.slice(0, -1).join('|') === headers.slice(0, -1).join('|') && !existing[headers.length - 1]) {
+    sheet.getRange(1, headers.length, 1, 1).setValues([[headers[headers.length - 1]]]).setFontWeight('bold');
   }
   if (sheet.getRange(1, 1, 1, headers.length).getValues()[0].join('|') !== headers.join('|')) throw new Error('En-têtes incompatibles dans ' + name + '. Ne modifiez pas la structure.');
   return sheet;
@@ -43,7 +53,7 @@ function doPost(e) {
     const input = JSON.parse(e.postData.contents);
     const token = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
     if (!token || input.token !== token) return json_({ ok: false, code: 401, error: 'Accès refusé.' });
-    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), maxIssuePhotos: 3, entryVersion: 1 } });
+    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), maxIssuePhotos: 3, entryVersion: 2, deletedFamilyEventIds: deletedAbsences_() } });
     if (input.action === 'photo') {
       const collection = input.collection === 'roomInspections' ? 'roomInspections' : 'issues';
       const issue = records_(collection).find(item => item.id === input.issueId);
@@ -52,6 +62,27 @@ function doPost(e) {
       if (!Number.isInteger(index) || index < 0 || !photoIds[index]) return json_({ ok: false, code: 404, error: 'Photo introuvable.' });
       const file = DriveApp.getFileById(photoIds[index]);
       return json_({ ok: true, data: { base64: Utilities.base64Encode(file.getBlob().getBytes()) } });
+    }
+    if (input.action === 'deleteEntry') {
+      if (input.collection !== 'familyEvents' || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(input.id || '')) throw new Error('Suppression invalide.');
+      lock = LockService.getScriptLock(); lock.waitLock(20000);
+      const current = records_('familyEvents').find(record => record.id === input.id);
+      const deleted = deletedAbsences_().includes(input.id);
+      if (!current && !deleted) return json_({ ok: false, code: 404, error: 'Absence introuvable.' });
+      if (current && current.kind !== 'absence') throw new Error('Seules les absences peuvent être supprimées.');
+      if (!deleted) {
+        const tombstones = deletionTable_();
+        tombstones.getRange(tombstones.getLastRow() + 1, 1, 1, 2).setValues([[input.id, new Date().toISOString()]]);
+        SpreadsheetApp.flush();
+      }
+      if (current) {
+        const sheet = table_('familyEvents');
+        const row = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().findIndex(row => row[0] === input.id);
+        if (row < 0) throw new Error('Absence introuvable.');
+        sheet.deleteRow(row + 2);
+        SpreadsheetApp.flush();
+      }
+      return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
     if (input.action !== 'commit' && input.action !== 'commitEntry') throw new Error('Action invalide.');
     lock = LockService.getScriptLock();
@@ -65,6 +96,7 @@ function doPost(e) {
     if (!record || !/^[\da-f-]{36}$/i.test(record.id) || !Number.isInteger(input.expectedVersion) || record.version !== input.expectedVersion + 1) throw new Error('Enregistrement invalide.');
     const records = records_(input.collection);
     const current = records.find(item => item.id === record.id);
+    if (input.collection === 'familyEvents' && deletedAbsences_().includes(record.id)) return json_({ ok: false, code: 409, error: 'Cette absence a été supprimée.' });
     if (isEntry && current && current.submissionHash === record.submissionHash) return json_({ ok: true, data: { collection: input.collection, record: current } });
     if ((current ? current.version : 0) !== input.expectedVersion) return json_({ ok: false, code: 409, error: 'Modifié par un autre utilisateur. Actualisez avant de réessayer.' });
     if (input.collection === 'inspections' && current && current.completed) throw new Error('Ronde déjà terminée.');
@@ -111,21 +143,39 @@ function photoIds_(record) {
   return record.photoIds && record.photoIds.length ? record.photoIds : record.photoId ? [record.photoId] : [];
 }
 
-const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge'];
+const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear'];
 function headers_(collection) {
   const data = HEADERS.slice(10);
   if (collection === 'familyEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Famille', 'Événement', 'Signalé par', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Retour prévu']);
-  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar']);
+  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée']);
   return HEADERS;
 }
+function deletionTable_() {
+  const book = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = book.getSheetByName('Suppressions absences');
+  if (!sheet) {
+    sheet = book.insertSheet('Suppressions absences');
+    sheet.getRange(1, 1, 1, 2).setValues([['ID', 'Supprimé le']]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+function deletedAbsences_() {
+  const sheet = deletionTable_();
+  return sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().map(row => String(row[0])).filter(Boolean);
+}
+const ROOM_GROUPS = [
+  { label: "1er étage", rooms: ["101", "102", "103", "104", "105", "106", "107", "108", "109", "110", "114", "115", "116", "117", "118", "119", "120", "121", "122", "123", "124", "125", "126"] },
+  { label: "2e étage", rooms: ["201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212", "214", "215", "216", "217", "218", "219", "220", "221", "222", "223", "224", "225", "226", "227", "228", "229", "230", "231", "232", "233"] },
+  { label: "3e étage", rooms: ["302", "303", "304", "305", "306", "307", "308", "309", "310", "311", "312", "314", "315", "316", "317", "318", "319", "320", "321", "322", "323", "324", "325", "326", "327", "328", "329", "330", "331", "332"] },
+];
 function setupRooms_() {
   const book = SpreadsheetApp.openById(SPREADSHEET_ID);
-  if (book.getSheetByName('Chambres')) return;
-  const sheet = book.insertSheet('Chambres');
-  const rows = [['Chambre', 'Groupe']];
-  [[112,126],[101,111],[217,232],[201,216],[316,332],[302,315]].forEach(range => {
-    for (let n = range[0]; n <= range[1]; n++) rows.push([String(n), range[0] + '–' + range[1]]);
-  });
+  const sheet = book.getSheetByName('Chambres') || book.insertSheet('Chambres');
+  const rows = [['Chambre', 'Groupe']].concat(ROOM_GROUPS.flatMap(group => group.rooms.map(room => [room, group.label])));
+  // Only this reference catalogue is reconciled. Historical tables are untouched.
+  const previousRows = sheet.getLastRow();
   sheet.getRange(1, 1, rows.length, 2).setNumberFormat('@').setValues(rows);
+  if (previousRows > rows.length) sheet.getRange(rows.length + 1, 1, previousRows - rows.length, 2).clearContent();
   sheet.setFrozenRows(1);
 }

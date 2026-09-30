@@ -3,19 +3,76 @@ import { test } from "node:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import vm from "node:vm";
 import { mergeHotel } from "../lib/mergeHotel";
-import { entrySchema, roomChecks, rooms, type RoomEntry, type FamilyEntry } from "../lib/rooms";
+import { entrySchema, roomChecks, roomGroups, rooms, parseEntry, roomEntrySchema, normalizeRoomDraft, countRoomsOnDate, cleaningText, type RoomEntry, type FamilyEntry } from "../lib/rooms";
 import { createId, today } from "../lib/domain";
-import { executeEntry, readPhoto, readState } from "../lib/storage";
+import { deleteAbsence, executeEntry, readPhoto, readState } from "../lib/storage";
 
-const roomEntry = (): RoomEntry => ({ type: "createRoomInspection", id: createId(), room: "112", date: today(), actor: "Marie", condition: "bon", cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", notes: "", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
+const roomEntry = (): RoomEntry => ({ type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", condition: "bon", occupied: true, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", notes: "", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
 const familyEntry = (): FamilyEntry => ({ type: "createFamilyEvent", id: createId(), room: "332", date: today(), actor: "Marie", family: "Famille test", notes: "", kind: "absence", returnDate: "" });
 
-test("exactly the 89 requested rooms, with no 301 or invented rooms", () => {
-  assert.equal(rooms.length, 89); assert.equal(new Set(rooms).size, 89);
-  for (const [start, end] of [[101,126], [201,232], [302,332]]) for (let i = start; i <= end; i++) assert.ok(rooms.includes(String(i)));
-  assert.equal(entrySchema.safeParse({ ...roomEntry(), room: "301" }).success, false);
+test("exactly the 85 requested rooms", () => {
+  assert.equal(rooms.length, 85); assert.equal(new Set(rooms).size, 85);
+  assert.deepEqual(roomGroups.map(g => g.rooms.length), [23, 32, 30]);
+  const expected = "101 102 103 104 105 106 107 108 109 110 114 115 116 117 118 119 120 121 122 123 124 125 126 201 202 203 204 205 206 207 208 209 210 211 212 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 302 303 304 305 306 307 308 309 310 311 312 314 315 316 317 318 319 320 321 322 323 324 325 326 327 328 329 330 331 332".split(" ");
+  assert.deepEqual(rooms, expected);
+  for (const room of ["111", "112", "113", "213", "301", "313"]) {
+    assert.equal(rooms.includes(room), false);
+    assert.equal(entrySchema.safeParse({ ...roomEntry(), room }).success, false);
+    assert.equal(entrySchema.safeParse({ ...familyEntry(), room }).success, false);
+  }
+  assert.equal(entrySchema.safeParse({ ...roomEntry(), room: "233" }).success, true);
+});
+test("new room controls require all answers except cleaning and clear inapplicable cleaning", () => {
+  for (const occupied of [null, undefined]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), occupied }).success, false);
+  for (const cleaning of [null, undefined, "faite", "non_faite"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), cleaning }).success, true);
+  for (const cleaning of [null, "faite", "non_faite"]) assert.equal(roomEntrySchema.parse({ ...roomEntry(), occupied: false, cleaning }).cleaning, null);
+  for (const check of roomChecks) {
+    const entry = roomEntry(); entry.checks.find(c => c.key === check.key)!.result = "non_verifie";
+    assert.equal(roomEntrySchema.safeParse(entry).success, false, check.key);
+    entry.checks.find(c => c.key === check.key)!.result = "absent";
+    assert.equal(roomEntrySchema.safeParse(entry).success, true);
+  }
+  assert.equal(roomChecks.at(-1)?.key, "door_handle_clear");
+  assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), checks: roomEntry().checks.slice(0, -1) }).success, false);
+  assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), microwave: "non_verifie" }).success, false);
+  for (const carpet of ["sale", "tachee"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), carpet }).success, false);
+  for (const condition of ["a_revoir", "mauvais"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), condition }).success, false);
+  assert.equal(cleaningText({ occupied: true }), "Non renseigné");
+  assert.equal(cleaningText({ occupied: false, cleaning: "faite" }), "Non applicable");
+  assert.equal(cleaningText({ cleaning: "faite" }), "Faite");
+});
+test("legacy drafts gain unanswered fields without changing existing values or photos", () => {
+  const draft = { ...roomEntry(), occupied: undefined, photosData: ["data:image/jpeg;base64,YQ=="], checks: roomEntry().checks.slice(0, -1) };
+  const normalized = normalizeRoomDraft(draft);
+  assert.equal(normalized.occupied, null);
+  assert.equal(normalized.checks.at(-1)?.result, "non_verifie");
+  assert.deepEqual(normalized.checks.slice(0, -1), draft.checks);
+  assert.deepEqual(normalized.photosData, draft.photosData);
+  assert.equal(normalized.id, draft.id);
+  assert.equal(draft.checks.length, 10);
+});
+test("daily counter deduplicates rooms including pending and resets at Paris midnight", () => {
+  const history = [{ room: "114", date: "2026-09-29" }, { room: "115", date: "2026-09-30" }, { room: "115", date: "2026-09-30" }, { room: "116", date: "2026-09-30" }, { room: "112", date: "2026-09-30" }];
+  assert.equal(countRoomsOnDate(history, today(new Date("2026-09-30T21:59:59Z"))), 2);
+  assert.equal(countRoomsOnDate(history, today(new Date("2026-09-30T22:00:00Z"))), 0);
+  assert.equal(history.length, 5);
+});
+test("v1 queue preserves the old hash, IDs and removed rooms across retries", async () => {
+  process.env.STORAGE_DRIVER = "local";
+  process.env.LOCAL_DATA_DIR = mkdtempSync(path.join(tmpdir(), "hotel-legacy-"));
+  // The precise original Zod output order is part of the v1 hash contract.
+  const legacy = { type: "createRoomInspection" as const, id: createId(), room: "112", date: today(), actor: "Marie", notes: "", condition: "bon" as const, cleaning: "faite" as const, checks: roomEntry().checks.slice(0, -1), carpet: "ok" as const, carpetNotes: "", microwave: "non_verifie" as const, photosData: ["data:image/jpeg;base64,YQ=="] };
+  assert.deepEqual(parseEntry(legacy, true), legacy);
+  const first = await executeEntry(legacy, true);
+  assert.equal(first.record.submissionHash, createHash("sha256").update(JSON.stringify(legacy)).digest("hex"));
+  assert.deepEqual(await executeEntry(legacy, true), first);
+  assert.equal("occupied" in first.record, false);
+  assert.equal((await readState()).roomInspections?.[0].room, "112");
+  assert.throws(() => parseEntry(legacy));
+  assert.throws(() => parseEntry({ ...legacy, occupied: true, schemaVersion: 2 }, true));
 });
 test("room checks and family date validation reject incomplete or inconsistent records", () => {
   assert.equal(entrySchema.safeParse({ ...roomEntry(), carpet: "sale" }).success, false);
@@ -55,10 +112,12 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
     return {
       getMaxColumns: () => 26, insertColumnsAfter() {}, setFrozenRows() {}, hideColumns() {},
       getLastRow: () => rows.length,
+      deleteRow: (n: number) => { rows.splice(n - 1, 1); },
       getRange: (r: number, c: number, h: number, w: number) => {
         const range = {
           getValues: () => Array.from({ length: h }, (_, y) => Array.from({ length: w }, (_, x) => rows[r - 1 + y]?.[c - 1 + x] ?? "")),
           setValues: (values: Cell[][]) => { values.forEach((row, y) => row.forEach((v, x) => { (rows[r - 1 + y] ||= [])[c - 1 + x] = v; })); return range; },
+          clearContent: () => { for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (rows[r - 1 + y]) rows[r - 1 + y][c - 1 + x] = ""; while (rows.length && rows.at(-1)!.every(v => v === "")) rows.pop(); return range; },
           setFontWeight: () => range, setBackground: () => range, setFontColor: () => range, setNumberFormat: () => range,
         };
         return range;
@@ -77,7 +136,19 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   });
   vm.runInContext(readFileSync("google-apps-script/Code.gs", "utf8"), context);
   context.setup();
-  assert.equal(tables.get("Chambres")?.length, 90);
+  assert.equal(tables.get("Chambres")?.length, 86);
+  tables.get("Chambres")!.push(["112", "ancien"], ["313", "ancien"]);
+  context.setup(); context.setup();
+  assert.deepEqual(tables.get("Chambres")!.slice(1).map(r => r[0]), rooms);
+  assert.equal(new Set(tables.get("Chambres")!.slice(1).map(r => r[0])).size, 85);
+  // Simulate the exact previous room header, including an existing data row.
+  const roomTable = tables.get("Contrôles chambres")!;
+  roomTable[0].pop();
+  roomTable.push(["old-history", "1", "old-date"]);
+  context.setup(); context.setup();
+  assert.equal(roomTable[0].at(-1), "Poignée dégagée");
+  assert.deepEqual(roomTable[1], ["old-history", "1", "old-date"]);
+  roomTable.pop();
   const call = (input: object) => context.doPost({ postData: { contents: JSON.stringify({ ...input, token: "test-token" }) } });
   const legacy = { id: createId(), version: 1, title: "Old issue" };
   assert.equal(call({ action: "commit", collection: "issues", expectedVersion: 0, record: legacy }).ok, true);
@@ -97,6 +168,23 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   const state = call({ action: "list" }).data;
   assert.equal(state.issues.length, 1); assert.equal(state.roomInspections.length, 1); assert.equal(state.familyEvents.length, 1);
   assert.equal(state.familyEvents[0].notes, fam.notes);
+  assert.equal(state.roomInspections[0].occupied, true);
+  assert.equal(state.roomInspections[0].checks.at(-1).key, "door_handle_clear");
+  for (const collection of ["issues", "inspections", "roomInspections"]) assert.equal(call({ action: "deleteEntry", collection, id: fam.id }).ok, false);
+  assert.equal(call({ action: "deleteEntry", collection: "familyEvents", id: "invalid" }).ok, false);
+  assert.equal(call({ action: "deleteEntry", collection: "familyEvents", id: createId() }).code, 404);
+  const departure = { ...familyEntry(), kind: "depart" };
+  assert.equal(call({ action: "commitEntry", collection: "familyEvents", expectedVersion: 0, record: { ...departure, version: 1, submissionHash: "d".repeat(64) } }).ok, true);
+  assert.equal(call({ action: "deleteEntry", collection: "familyEvents", id: departure.id }).ok, false);
+  assert.equal(call({ action: "deleteEntry", collection: "familyEvents", id: fam.id }).data.deleted, true);
+  assert.equal(call({ action: "deleteEntry", collection: "familyEvents", id: fam.id }).data.deleted, true);
+  const after = call({ action: "list" }).data;
+  assert.equal(after.familyEvents.length, 1);
+  assert.equal(after.familyEvents[0].id, departure.id);
+  assert.equal(after.deletedFamilyEventIds[0], fam.id);
+  assert.equal(call({ action: "commitEntry", collection: "familyEvents", expectedVersion: 0, record: { ...fam, version: 1, submissionHash: "c".repeat(64) } }).code, 409);
+  assert.equal(after.roomInspections.length, 1);
+  assert.equal(JSON.stringify(tables.get("Anomalies")), old);
 });
 
 test("Google entry save uses one request and requires a matching receipt", async () => {
@@ -119,4 +207,41 @@ test("a stale refresh cannot remove an acknowledged entry, and storage modes sta
   assert.equal(mergeHotel(current, stale).familyEvents.length, 1);
   assert.equal(mergeHotel(current, current).familyEvents.length, 1);
   assert.equal(mergeHotel(current, { ...stale, mode: "local" }).familyEvents.length, 0);
+});
+
+test("local absence deletion is selective, idempotent and prevents resurrection", async () => {
+  process.env.STORAGE_DRIVER = "local";
+  process.env.LOCAL_DATA_DIR = mkdtempSync(path.join(tmpdir(), "hotel-delete-"));
+  const absence = familyEntry(), departure = { ...familyEntry(), kind: "depart" as const }, other = familyEntry();
+  await executeEntry(absence); await executeEntry(departure); await executeEntry(other); await executeEntry(roomEntry());
+  for (const input of [{ collection: "issues", id: absence.id }, { collection: "familyEvents", id: "invalid" }, { collection: "familyEvents", id: departure.id }]) await assert.rejects(deleteAbsence(input));
+  await assert.rejects(deleteAbsence({ collection: "familyEvents", id: createId() }), { code: 404 });
+  const stale = { ...await readState(), mode: "local" };
+  assert.deepEqual(await deleteAbsence({ collection: "familyEvents", id: absence.id }), { deleted: true, id: absence.id });
+  await deleteAbsence({ collection: "familyEvents", id: absence.id });
+  const after = { ...await readState(), mode: "local" };
+  assert.deepEqual(after.familyEvents?.map(r => r.id), [departure.id, other.id]);
+  assert.equal(after.roomInspections?.length, 1);
+  assert.equal(mergeHotel(after, stale).familyEvents?.some(r => r.id === absence.id), false);
+  assert.equal(mergeHotel(stale, after).familyEvents?.some(r => r.id === absence.id), false);
+  await assert.rejects(executeEntry(absence), { code: 409 });
+});
+test("Google deletion invalidates cached state and requires an explicit matching receipt", async () => {
+  process.env.STORAGE_DRIVER = "sheets";
+  process.env.GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/delete-test/exec";
+  process.env.GOOGLE_API_TOKEN = "test-token";
+  const original = globalThis.fetch, entry = familyEntry(); let deleted = false, lists = 0;
+  globalThis.fetch = async (_url, options) => {
+    const input = JSON.parse(options!.body as string);
+    if (input.action === "list") { lists++; return Response.json({ ok: true, data: { issues: [], inspections: [], familyEvents: deleted ? [] : [entry] } }); }
+    assert.equal(input.action, "deleteEntry"); deleted = true;
+    return Response.json({ ok: true, data: { deleted: true, id: input.id } });
+  };
+  try {
+    assert.equal((await readState()).familyEvents?.length, 1);
+    await deleteAbsence({ collection: "familyEvents", id: entry.id });
+    assert.equal((await readState()).familyEvents?.length, 0); assert.equal(lists, 2);
+    globalThis.fetch = async () => Response.json({ ok: true, data: {} });
+    await assert.rejects(deleteAbsence({ collection: "familyEvents", id: entry.id }), { code: 502 });
+  } finally { globalThis.fetch = original; }
 });

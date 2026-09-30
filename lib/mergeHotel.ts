@@ -5,8 +5,10 @@ export function mergeHotel<T extends State & { mode: string }>(current: T, incom
   if (current.mode !== incoming.mode) return incoming;
   const merge = <R extends { id: string }>(old: R[] = [], fresh: R[] = []) =>
     [...new Map([...old, ...fresh].map(record => [record.id, record])).values()];
+  const deletedFamilyEventIds = [...new Set([...(current.deletedFamilyEventIds || []), ...(incoming.deletedFamilyEventIds || [])])];
   return { ...incoming,
-    familyEvents: merge(current.familyEvents, incoming.familyEvents),
+    deletedFamilyEventIds,
+    familyEvents: merge(current.familyEvents, incoming.familyEvents).filter(r => !deletedFamilyEventIds.includes(r.id)),
     roomInspections: merge(current.roomInspections, incoming.roomInspections),
   };
 }

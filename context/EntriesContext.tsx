@@ -1,14 +1,15 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Alert, Button, Stack, Typography } from "@mui/material";
+import { withEntryLock } from "@/lib/entryLock";
 import { deviceStore } from "@/lib/deviceStore";
 import { entrySchema, type Entry, type EntryChange } from "@/lib/rooms";
 
-type Pending = { entry: Entry; error?: string; blocked?: boolean };
-type Context = { pending: Pending[]; enqueue: (entry: Entry) => Promise<void>; retry: () => void; status: React.ReactNode };
+type Pending = { entry: Entry; protocol?: 2; attempted?: boolean; error?: string; blocked?: boolean };
+type Context = { pending: Pending[]; enqueue: (entry: Entry) => Promise<void>; retry: () => void; removeAbsence: (id: string) => Promise<void>; status: React.ReactNode };
 const EntriesContext = createContext<Context | null>(null);
 export function useEntries() { return useContext(EntriesContext)!; }
-export function EntriesProvider({ children, onSaved }: { children: React.ReactNode; onSaved: (change: EntryChange) => void }) {
+export function EntriesProvider({ children, onSaved, onDelete }: { children: React.ReactNode; onSaved: (change: EntryChange) => void; onDelete: (id: string) => Promise<void> }) {
   const [pending, setPending] = useState<Pending[]>([]);
   const [online, setOnline] = useState(true);
   const [working, setWorking] = useState(false);
@@ -25,12 +26,15 @@ export function EntriesProvider({ children, onSaved }: { children: React.ReactNo
     running.current = true;
     setWorking(true);
     try {
+      await withEntryLock(async () => {
       const items = await reload();
       for (const item of items) {
         if (!mounted.current || item.blocked) continue;
         try {
+          item.attempted = true;
+          await deviceStore("put", "queue:" + item.entry.id, item);
           const response = await fetch("/api/entries", {
-            method: "POST", headers: { "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json", "X-Entry-Schema": item.protocol === 2 ? "2" : "1" },
             body: JSON.stringify(item.entry), signal: AbortSignal.timeout(65_000),
           });
           const result = await response.json();
@@ -53,6 +57,7 @@ export function EntriesProvider({ children, onSaved }: { children: React.ReactNo
         }
       }
       await reload();
+      });
     } catch (error) { if (mounted.current) setStorageError((error as Error).message); }
     finally { running.current = false; if (mounted.current) setWorking(false); }
   }, [reload, onSaved]);
@@ -68,16 +73,28 @@ export function EntriesProvider({ children, onSaved }: { children: React.ReactNo
   }, [reload, sync]);
   async function enqueue(input: Entry) {
     const entry = entrySchema.parse(input);
-    await deviceStore("put", "queue:" + entry.id, { entry });
+    await withEntryLock(() => deviceStore("put", "queue:" + entry.id, { entry, protocol: 2, attempted: false }));
     await reload();
     void sync();
   }
   function retry() {
     if (running.current) return;
     void (async () => {
-      for (const item of await reload()) await deviceStore("put", "queue:" + item.entry.id, { entry: item.entry });
+      await withEntryLock(async () => {
+        for (const item of await reload()) await deviceStore("put", "queue:" + item.entry.id, { ...item, error: undefined, blocked: false });
+      });
       await sync();
     })().catch(error => setStorageError(error.message));
+  }
+  async function removeAbsence(id: string) {
+    await withEntryLock(async () => {
+      const item = await deviceStore<Pending | undefined>("get", "queue:" + id);
+      if (item && (item.entry.type !== "createFamilyEvent" || item.entry.kind !== "absence")) throw new Error("Seules les absences peuvent être supprimées.");
+      // Undefined means an old queue item: it may have a lost server receipt.
+      if (!item || item.attempted !== false) await onDelete(id);
+      if (item) await deviceStore("delete", "queue:" + id);
+      await reload();
+    });
   }
   const status = <>
     <Stack spacing={1} sx={{ mb: 2 }}>
@@ -89,7 +106,7 @@ export function EntriesProvider({ children, onSaved }: { children: React.ReactNo
       {storageError && <Alert severity="error">{storageError}</Alert>}
     </Stack>
   </>;
-  return <EntriesContext.Provider value={{ pending, enqueue, retry, status }}>{children}</EntriesContext.Provider>;
+  return <EntriesContext.Provider value={{ pending, enqueue, retry, removeAbsence, status }}>{children}</EntriesContext.Provider>;
 }
 
 export function SyncStatus() { return useEntries().status; }

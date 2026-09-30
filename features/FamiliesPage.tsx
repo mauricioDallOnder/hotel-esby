@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Alert, Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
@@ -11,8 +11,11 @@ import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 export default function FamiliesPage() {
   const { familyEvents = [] } = useAppContext();
-  const { pending, enqueue } = useEntries();
+  const { pending, enqueue, removeAbsence } = useEntries();
   const draft = useDeviceDraft<FamilyEntry>("draft:family", () => ({ type: "createFamilyEvent", id: createId(), date: today(), room: "", family: "", actor: "", notes: "", kind: "absence", returnDate: "" }));
+  const [deleting, setDeleting] = useState<FamilyEntry | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,6 +37,13 @@ export default function FamiliesPage() {
       setMessage("Événement sauvegardé sur cet appareil. L’état d’envoi apparaît dans l’historique.");
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
+  }
+  async function confirmDelete() {
+    if (!deleting) return;
+    setDeleteBusy(true); setDeleteError("");
+    try { await removeAbsence(deleting.id); setDeleting(null); }
+    catch (e) { setDeleteError((e as Error).message); }
+    finally { setDeleteBusy(false); }
   }
   return <>
     <ConnectionBar />
@@ -68,11 +78,21 @@ export default function FamiliesPage() {
           <Typography variant="h6">Ch. {record.room} · {record.family}</Typography>
           <Typography>{displayDate(record.date)}{record.returnDate ? ` · Retour prévu : ${displayDate(record.returnDate)}` : ""}</Typography>
           <Typography variant="body2" color="text.secondary">Signalé par {record.actor}</Typography>
+          {record.kind === "absence" && <Button color="error" onClick={() => { setDeleteError(""); setDeleting(record); }}>Supprimer</Button>}
           {record.notes && <Typography sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{record.notes}</Typography>}
         </Stack>
       </Paper>)}
       {visibleRecords.length > limit && <Button onClick={() => setLimit(n => n + 30)}>Afficher plus</Button>}
       {!records.length && <Typography color="text.secondary">Aucun événement enregistré.</Typography>}
     </Stack>
+    <Dialog open={!!deleting} onClose={deleteBusy ? undefined : () => setDeleting(null)} fullWidth maxWidth="xs">
+      <DialogTitle>Supprimer cette absence ?</DialogTitle>
+      <DialogContent>
+        <Typography>Voulez-vous vraiment supprimer cette absence ?</Typography>
+        <Typography>Chambre {deleting?.room} · {deleting?.family} · {displayDate(deleting?.date || "")}</Typography>
+        {deleteError && <Alert severity="error">{deleteError}</Alert>}
+      </DialogContent>
+      <DialogActions><Button disabled={deleteBusy} onClick={() => setDeleting(null)}>Annuler</Button><Button color="error" disabled={deleteBusy} onClick={() => void confirmDelete()}>Supprimer</Button></DialogActions>
+    </Dialog>
   </>;
 }
