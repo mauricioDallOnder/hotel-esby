@@ -99,6 +99,10 @@ export default function DashboardPage() {
           </Button>
         </Stack>
       </Paper>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 3 }}>
+        <Button component={Link} href="/checklist" variant="outlined">Contrôler une chambre</Button>
+        <Button component={Link} href="/familles" variant="outlined">Absences et départs des familles</Button>
+      </Stack>
       <StatCards
         items={[
           {

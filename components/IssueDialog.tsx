@@ -90,7 +90,7 @@ export function IssueDialog({
     setProcessing(true);
     setError("");
     try {
-      const added = await Promise.all(files.map(compressPhoto));
+      const added = await Promise.all(files.map(file => compressPhoto(file)));
       setPhotos((current) => [...current, ...added]);
     } catch (e) {
       setError((e as Error).message);

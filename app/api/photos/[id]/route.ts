@@ -10,7 +10,8 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     await requireAuth(request);
     const { id } = await context.params;
     const index = Number(new URL(request.url).searchParams.get("index") ?? "0");
-    const photo = await readPhoto(id, index);
+    const collection = new URL(request.url).searchParams.get("collection") === "roomInspections" ? "roomInspections" : "issues";
+    const photo = await readPhoto(id, index, collection);
     const etag = `"${createHash("sha256").update(photo).digest("hex")}"`;
     const headers = {
       "Content-Type": "image/jpeg",

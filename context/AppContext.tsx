@@ -19,6 +19,10 @@ import {
   Typography,
 } from "@mui/material";
 import type { Command, State } from "@/lib/domain";
+import { mergeHotel } from "@/lib/mergeHotel";
+import { deviceStore } from "@/lib/deviceStore";
+import { EntriesProvider } from "./EntriesContext";
+import type { EntryChange } from "@/lib/rooms";
 import { roles, type Role } from "@/lib/roles";
 
 type Data = State & { mode: "local" | "sheets" };
@@ -27,6 +31,7 @@ type Context = Data & {
   role: Role;
   busy: boolean;
   error: string;
+  cachedAt: string;
   refresh: () => Promise<void>;
   mutate: (command: Command) => Promise<Data>;
   logout: () => Promise<void>;
@@ -51,6 +56,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     availableRoles: Role[];
   } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [cachedAt, setCachedAt] = useState("");
+  const hasLoaded = useRef(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [password, setPassword] = useState("");
@@ -80,8 +87,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBusy(true);
     try {
       setError("");
-      setData(await request(fresh ? "/api/hotel?fresh=1" : "/api/hotel"));
+      // Restore only after /api/session has authenticated the current user.
+      if (!hasLoaded.current) {
+        try {
+          const snapshot = await deviceStore<{ data: Data; at: string } | undefined>("get", "snapshot");
+          if (snapshot?.data && Array.isArray(snapshot.data.issues) && Array.isArray(snapshot.data.inspections)) {
+            setData(snapshot.data); setCachedAt(snapshot.at); setLoaded(true); hasLoaded.current = true;
+          }
+        } catch { /* A cache failure must not prevent a live read. */ }
+      }
+      const result: Data = await request(fresh ? "/api/hotel?fresh=1" : "/api/hotel");
+      setData(current => mergeHotel(current, result));
       setLoaded(true);
+      hasLoaded.current = true;
+      setCachedAt("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connexion impossible.");
     } finally {
@@ -110,6 +129,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [request, refresh]);
+  useEffect(() => {
+    if (!loaded || cachedAt || !session?.authenticated) return;
+    // Records only; photo bytes are downloaded on demand and never included here.
+    void deviceStore("put", "snapshot", { data, at: new Date().toISOString() }).catch(() => {});
+  }, [data, loaded, cachedAt, session?.authenticated]);
   async function login(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -141,16 +165,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(command),
       });
-      setData(result);
+      setData(current => mergeHotel(current, result));
       return result;
     } finally {
       inFlight.current = false;
       setBusy(false);
     }
   }
+  const mergeEntry = useCallback((change: EntryChange) => {
+    setData(current => change.collection === "familyEvents"
+      ? { ...current, familyEvents: [...(current.familyEvents || []).filter(r => r.id !== change.record.id), change.record] }
+      : { ...current, roomInspections: [...(current.roomInspections || []).filter(r => r.id !== change.record.id), change.record] });
+  }, []);
   async function logout() {
     await request("/api/session", { method: "DELETE" });
     setLoaded(false);
+    hasLoaded.current = false;
+    setCachedAt("");
     setData({ issues: [], inspections: [], mode: "local" });
     setSession(await request("/api/session"));
   }
@@ -241,12 +272,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         role: session.role!,
         busy,
         error,
+        cachedAt,
         refresh,
         mutate,
         logout,
       }}
     >
-      {children}
+      <EntriesProvider onSaved={mergeEntry}>{children}</EntriesProvider>
     </AppContext.Provider>
   );
 }

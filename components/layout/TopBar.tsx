@@ -143,7 +143,7 @@ export function Topbar({
             },
           }}
         >
-          Checklist du jour
+          Checklist des chambres
         </Button>
       </Toolbar>
     </AppBar>

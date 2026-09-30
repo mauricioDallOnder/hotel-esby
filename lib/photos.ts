@@ -1,4 +1,4 @@
-export async function compressPhoto(file: File): Promise<string> {
+export async function compressPhoto(file: File, compact = false): Promise<string> {
   if (!file.type.startsWith("image/")) throw new Error("Choisissez une photo.");
   if (file.size > 20 * 1024 * 1024) throw new Error("La photo dépasse 20 Mo.");
   const url = URL.createObjectURL(file);
@@ -12,7 +12,7 @@ export async function compressPhoto(file: File): Promise<string> {
         "Format non reconnu. Utilisez une photo JPEG, PNG ou WebP."
       );
     }
-    const ratio = Math.min(1, 1600 / Math.max(image.width, image.height));
+    const ratio = Math.min(1, (compact ? 1280 : 1600) / Math.max(image.width, image.height));
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(image.width * ratio);
     canvas.height = Math.round(image.height * ratio);
@@ -22,6 +22,13 @@ export async function compressPhoto(file: File): Promise<string> {
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     let photo = canvas.toDataURL("image/jpeg", 0.8);
+    if (compact) {
+      for (const quality of [0.7, 0.55, 0.4, 0.25]) {
+        photo = canvas.toDataURL("image/jpeg", quality);
+        if (photo.length <= 500_000) break;
+      }
+      if (photo.length > 500_000) throw new Error("Photo trop détaillée. Rapprochez-vous du problème et réessayez.");
+    }
     if (photo.length > 2_800_000) photo = canvas.toDataURL("image/jpeg", 0.55);
     if (photo.length > 2_800_000)
       throw new Error(

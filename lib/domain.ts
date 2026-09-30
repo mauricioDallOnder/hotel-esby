@@ -193,6 +193,8 @@ export type Inspection = z.infer<typeof inspectionInput> & {
 export type State = {
   issues: Issue[];
   inspections: Inspection[];
+  familyEvents?: import("./rooms").FamilyEvent[];
+  roomInspections?: import("./rooms").RoomInspection[];
 };
 
 export type Command = z.infer<typeof commandSchema>;

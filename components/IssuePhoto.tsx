@@ -9,12 +9,14 @@ export function IssuePhoto({
   alt,
   width = "100%",
   lazy = true,
+  collection = "issues",
 }: {
   issueId: string;
   index: number;
   alt: string;
   width?: string;
   lazy?: boolean;
+  collection?: "issues" | "roomInspections";
 }) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -32,7 +34,7 @@ export function IssuePhoto({
           key={attempt}
           component="img"
           className="photo-preview"
-          src={`/api/photos/${issueId}?index=${index}${attempt ? `&retry=${attempt}` : ""}`}
+          src={`/api/photos/${issueId}?index=${index}&collection=${collection}${attempt ? `&retry=${attempt}` : ""}`}
           alt={alt}
           loading={lazy ? "lazy" : "eager"}
           decoding="async"

@@ -58,7 +58,7 @@ export function PageTitle({
   );
 }
 export function ConnectionBar() {
-  const { mode, error, refresh, busy, logout, role } = useAppContext();
+  const { mode, error, refresh, busy, logout, role, cachedAt } = useAppContext();
   return (
     <Box sx={{ mb: 3 }}>
       <Stack
@@ -90,6 +90,7 @@ export function ConnectionBar() {
           </Button>
         </Stack>
       </Stack>
+      {cachedAt && <Alert severity="warning" sx={{ mt: 1 }}>Copie enregistrée sur cet appareil le {new Date(cachedAt).toLocaleString("fr-FR")}. Les données peuvent avoir changé. Actualisez dès que la connexion le permet.</Alert>}
       {error && (
         <Alert severity="error" sx={{ mt: 1 }}>
           {error}

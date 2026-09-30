@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { entrySchema, type Entry, type EntryChange } from "./rooms";
+import { today } from "./domain";
 import { ReadCache } from "./readCache";
 import {
   applyCommand,
@@ -162,21 +164,65 @@ function replace(state: State, change: Change) {
       change.record,
     ];
 }
-export async function readPhoto(issueId: string, index = 0): Promise<Buffer> {
+export async function readPhoto(issueId: string, index = 0, collection: "issues" | "roomInspections" = "issues"): Promise<Buffer> {
   if (!/^[\da-f-]{36}$/i.test(issueId) || !Number.isInteger(index) || index < 0 || index >= MAX_ISSUE_PHOTOS)
     throw new DomainError("Photo introuvable.", 404);
   if (storageMode() === "sheets") {
     // Apps Script checks that this index belongs to the issue. No extra list call.
-    return photoCache.get(`${googleScope()}:${issueId}:${index}`, async () => {
-      const result = await google<{ base64: string }>({ action: "photo", issueId, index });
+    return photoCache.get(`${googleScope()}:${collection}:${issueId}:${index}`, async () => {
+      const result = await google<{ base64: string }>({ action: "photo", issueId, index, collection });
       return Buffer.from(result.base64, "base64");
     });
   }
-  const issue = (await readState()).issues.find((i) => i.id === issueId);
+  const issue = ((await readState())[collection] || []).find((i) => i.id === issueId);
   const photoId = issue && issuePhotoIds(issue)[index];
   if (!Number.isInteger(index) || index < 0 || !photoId)
     throw new DomainError("Photo introuvable.", 404);
   if (!/^[\da-f-]{36}(?:-[0-2])?$/i.test(photoId))
     throw new DomainError("Photo invalide.");
   return readFileSync(path.join(directory(), "photos", photoId + ".jpg"));
+}
+
+// New entries are immutable and idempotent: a retry returns the original receipt.
+// One Google request per save, with no full hotel download before or after it.
+export async function executeEntry(input: Entry): Promise<EntryChange> {
+  const entry = entrySchema.parse(input);
+  if (entry.type === "createRoomInspection" && entry.date > today())
+    throw new DomainError("La date du contrôle ne peut pas être dans le futur.");
+  const submissionHash = createHash("sha256").update(JSON.stringify(entry)).digest("hex");
+  const { photosData, ...fields } = entry.type === "createRoomInspection" ? entry : { ...entry, photosData: [] };
+  const record = { ...fields, version: 1, updatedAt: new Date().toISOString(), submissionHash,
+    ...(entry.type === "createRoomInspection" ? { photoIds: [], photoId: null } : {}) };
+  const collection = entry.type === "createRoomInspection" ? "roomInspections" : "familyEvents";
+  const change = { collection, record } as EntryChange;
+  if (storageMode() === "sheets") {
+    try {
+      const receipt = await google<EntryChange>({ action: "commitEntry", ...change, expectedVersion: 0, photosData });
+      if (receipt?.collection !== collection || receipt.record?.id !== entry.id || receipt.record?.submissionHash !== submissionHash)
+        throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
+      return receipt;
+    } finally { stateCache.clear(); }
+  }
+  const state = localState();
+  const existing = (state[collection] || []).find(item => item.id === entry.id);
+  if (existing) {
+    if (existing.submissionHash !== submissionHash) throw new DomainError("Ce numéro d’enregistrement existe avec un contenu différent.", 409);
+    return { collection, record: existing } as EntryChange;
+  }
+  mkdirSync(directory(), { recursive: true });
+  if (change.collection === "roomInspections" && photosData.length) {
+    mkdirSync(path.join(directory(), "photos"), { recursive: true });
+    change.record.photoIds = photosData.map((photo, index) => {
+      const id = `${record.id}-${index}`;
+      writeFileSync(path.join(directory(), "photos", id + ".jpg"), Buffer.from(photo.split(",")[1], "base64"), { mode: 0o600 });
+      return id;
+    });
+    change.record.photoId = change.record.photoIds[0];
+  }
+  if (change.collection === "roomInspections") state.roomInspections = [...(state.roomInspections || []), change.record];
+  else state.familyEvents = [...(state.familyEvents || []), change.record];
+  const temp = path.join(directory(), "hotel." + crypto.randomUUID() + ".tmp");
+  writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
+  renameSync(temp, path.join(directory(), "hotel.json"));
+  return change;
 }

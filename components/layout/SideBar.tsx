@@ -17,9 +17,11 @@ const menuItems = [
     path: "/",
   },
   {
-    label: "Checklist du jour",
+    label: "Checklist des chambres",
     path: "/checklist",
   },
+  { label: "Absences et départs", path: "/familles" },
+  { label: "Tâches du jour", path: "/quotidien" },
   {
     label: "Ronde quotidienne",
     path: "/rondes",

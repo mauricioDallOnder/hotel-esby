@@ -377,6 +377,8 @@ export default function DailyChecklistPage() {
   const [toastOpen, setToastOpen] =
     useState(false);
 
+  const loadedDate = useRef("");
+
   const previouslyComplete =
     useRef(false);
 
@@ -385,7 +387,13 @@ export default function DailyChecklistPage() {
       const fresh = new Date();
 
       setNow(fresh);
-      setDateKey(localDateKey(fresh));
+      const nextDate = localDateKey(fresh);
+      setDateKey(nextDate);
+      if (loadedDate.current !== nextDate) {
+        loadedDate.current = nextDate;
+        setChecks(loadChecks(nextDate));
+        previouslyComplete.current = false;
+      }
     }
 
     refresh();
@@ -399,17 +407,6 @@ export default function DailyChecklistPage() {
       window.clearInterval(interval);
     };
   }, []);
-
-  useEffect(() => {
-    if (!dateKey) {
-      return;
-    }
-
-    const stored = loadChecks(dateKey);
-
-    setChecks(stored);
-    previouslyComplete.current = false;
-  }, [dateKey]);
 
   const binTasks = useMemo(() => {
     if (!now) {
