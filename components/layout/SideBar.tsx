@@ -21,7 +21,7 @@ const menuItems = [
     path: "/checklist",
   },
   { label: "Absences et départs", path: "/familles" },
-  { label: "Tâches du jour", path: "/quotidien" },
+  
   {
     label: "Ronde quotidienne",
     path: "/rondes",
@@ -214,3 +214,7 @@ export function Sidebar({
     </>
   );
 }
+
+/*
+ { label: "Tâches du jour", path: "/quotidien" },
+*/
