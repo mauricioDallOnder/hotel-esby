@@ -1,12 +1,32 @@
 # Hôtel Contrôle
 
+## Atualização: quartos livres, PDF e anomalias
+
+No checklist, **Chambre occupée → Non** abre o campo obrigatório de ménage
+(feito/não feito). Micro-ondas e frigobar presentes têm campos próprios de
+limpeza. **Absent** em **Minibar fonctionnel** informa que não há frigobar.
+
+Em `/checklist`, use **Exporter en PDF → Chambres libres**. O relatório inclui
+o último controle de cada quarto livre, sua data, estado geral, ménage,
+presença e limpeza dos equipamentos e problemas. Controles antigos sem esses
+dados aparecem como não informados; registros aguardando envio são identificados.
+
+Problemas, observações ou fotos do checklist geram uma anomalia após a
+sincronização, com a descrição e as mesmas fotos. Reenvios não duplicam a
+anomalia e preservam seu andamento/resolução. Registros históricos já salvos
+não são convertidos retroativamente.
+
+**Para o modo Google Sheets, atualize e reimplante `google-apps-script/Code.gs`
+antes de publicar esta versão do aplicativo.** A integração grava a anomalia
+na aba **Anomalies** e reutiliza os arquivos de fotos. A atualização dos
+arquivos locais não modifica a implantação online.
+
 ## Atualização: quartos, famílias e conexão lenta
 
 A interface continua em francês. As rotas disponíveis são:
 
-- `/checklist`: **Checklist des chambres**, com os 89 quartos nos grupos
-  112–126, 101–111, 217–232, 201–216, 316–332 e 302–315. O quarto 301 não existe
-  no cadastro. Há pesquisa, filtros e histórico individual.
+- `/checklist`: **Checklist des chambres**, com os 85 quartos cadastrados,
+  agrupados por andar. Há pesquisa, filtros e histórico individual.
 - `/familles`: **Absences et départs**, com quarto, família, ausência temporária
   ou saída definitiva, data, retorno previsto opcional, responsável e observações.
 - `/quotidien`: as tarefas diárias que antes estavam em `/checklist`.

@@ -6,7 +6,7 @@ import CancelRounded from "@mui/icons-material/CancelRounded";
 import HelpOutlineRounded from "@mui/icons-material/HelpOutlineRounded";
 import { IssuePhoto } from "./IssuePhoto";
 import { displayDate, issuePhotoIds } from "@/lib/domain";
-import { carpetLabels, cleaningText, conditionLabels, roomChecks, type RoomEntry, type RoomInspection } from "@/lib/rooms";
+import { applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels, roomChecks, type RoomEntry, type RoomInspection } from "@/lib/rooms";
 
 type Record = RoomEntry | RoomInspection;
 function Result({ label, text, status }: { label: string; text: string; status: "ok" | "bad" | "neutral" }) {
@@ -43,7 +43,7 @@ export function RoomHistoryDialog({ room, history, onClose }: { room: string; hi
         <Typography>Inspecteur : {record.actor}</Typography>
         <Result label="Chambre occupée" text={record.occupied === true ? "Oui" : record.occupied === false ? "Non" : "Non renseignée"} status="neutral" />
         <Result label="État général" text={conditionLabels[record.condition] || "Non renseigné"} status={record.condition === "bon" ? "ok" : record.condition ? "bad" : "neutral"} />
-        <Result label="Ménage" text={cleaningText(record)} status={record.occupied === false || !record.cleaning ? "neutral" : record.cleaning === "faite" ? "ok" : "bad"} />
+        <Result label="Ménage" text={cleaningText(record)} status={record.occupied === true || !record.cleaning ? "neutral" : record.cleaning === "faite" ? "ok" : "bad"} />
         {roomChecks.map(check => {
           const result = record.checks.find(c => c.key === check.key)?.result;
           return <Result key={check.key} label={check.label} text={result === "ok" ? "OK" : result === "probleme" ? "Problème" : result === "absent" ? "Absent" : result === "non_verifie" ? "Non vérifié" : "Non renseigné"} status={result === "ok" ? "ok" : result === "probleme" || result === "absent" ? "bad" : "neutral"} />;
@@ -51,6 +51,8 @@ export function RoomHistoryDialog({ room, history, onClose }: { room: string; hi
         <Result label="Moquette" text={carpetLabels[record.carpet] || "Non renseignée"} status={record.carpet === "ok" ? "ok" : record.carpet ? "bad" : "neutral"} />
         {record.carpetNotes && <Typography sx={{ whiteSpace: "pre-wrap" }}>{record.carpetNotes}</Typography>}
         <Result label="Micro-ondes" text={record.microwave === "oui" ? "Oui" : record.microwave === "non" ? "Non" : "Non vérifié"} status={record.microwave === "oui" ? "ok" : record.microwave === "non" ? "bad" : "neutral"} />
+        {record.microwave === "oui" && <Result label="Propreté du micro-ondes" text={record.microwaveCleaning ? applianceCleaningLabels[record.microwaveCleaning] : "Non renseignée"} status={record.microwaveCleaning === "propre" ? "ok" : record.microwaveCleaning === "sale" ? "bad" : "neutral"} />}
+        {record.checks.some(c => c.key === "fridge" && (c.result === "ok" || c.result === "probleme")) && <Result label="Propreté du minibar" text={record.fridgeCleaning ? applianceCleaningLabels[record.fridgeCleaning] : "Non renseignée"} status={record.fridgeCleaning === "propre" ? "ok" : record.fridgeCleaning === "sale" ? "bad" : "neutral"} />}
         <Typography variant="h6">Photos</Typography>
         {"photoIds" in record ? (issuePhotoIds(record).length ? issuePhotoIds(record).map((_, index) => <IssuePhoto key={`${record.id}:${index}`} issueId={record.id} index={index} collection="roomInspections" alt={`Chambre ${record.room} · photo ${index + 1}`} />) : <Typography>Aucune photo</Typography>) : (record.photosData.length ? record.photosData.map((src, index) => <Box component="img" key={`${record.id}:${index}`} src={src} alt={`Photo ${index + 1}`} sx={{ width: "100%", maxWidth: "100%", objectFit: "contain" }} />) : <Typography>Aucune photo</Typography>)}
         <Typography variant="h6">Observations</Typography>

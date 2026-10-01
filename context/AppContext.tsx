@@ -175,7 +175,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const mergeEntry = useCallback((change: EntryChange) => {
     setData(current => change.collection === "familyEvents"
       ? { ...current, familyEvents: [...(current.familyEvents || []).filter(r => r.id !== change.record.id), ...(current.deletedFamilyEventIds?.includes(change.record.id) ? [] : [change.record])] }
-      : { ...current, roomInspections: [...(current.roomInspections || []).filter(r => r.id !== change.record.id), change.record] });
+      : { ...current, roomInspections: [...(current.roomInspections || []).filter(r => r.id !== change.record.id), change.record],
+          issues: change.issue ? [...current.issues.filter(i => i.id !== change.issue!.id), change.issue] : current.issues });
   }, []);
   const deleteAbsence = useCallback(async (id: string) => {
     const receipt = await request("/api/entries", {

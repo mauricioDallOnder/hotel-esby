@@ -1,18 +1,26 @@
 import { expect, test, type Page } from "@playwright/test";
+import { roomChecks } from "../../lib/rooms";
 async function login(page: Page) { await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } }); }
 async function select(page: Page, label: string, option: string) {
   await page.getByRole("combobox", { name: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?: ?\\*)?$") }).click();
   await page.getByRole("option", { name: option, exact: true }).click();
 }
-test("mobile room inspection validates carpet, compresses photos, and shows saved history", async ({ page }) => {
+test("mobile room checklist opens cleaning for free rooms, exports PDF and shares problems and photos with anomalies", async ({ page }) => {
+  test.setTimeout(90000);
   await page.setViewportSize({ width: 390, height: 844 }); await login(page);
   await page.goto("/checklist");
-  await expect(page.getByRole("button", { name: "Contrôler la chambre", exact: false })).toHaveCount(89);
-  await page.getByRole("button", { name: "Contrôler la chambre 112", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Contrôler la chambre", exact: false })).toHaveCount(85);
+  await page.getByRole("button", { name: "Contrôler la chambre 114", exact: true }).click();
   await page.getByLabel("Inspecteur").fill("Test mobile");
   await select(page, "État général de la chambre", "À revoir");
+  await select(page, "Chambre occupée", "Oui");
+  await expect(page.getByRole("combobox", { name: /Nettoyage/ })).toHaveCount(0);
+  await select(page, "Chambre occupée", "Non");
   await select(page, "Nettoyage / ménage", "Non faite");
-  await select(page, "Robinets fonctionnels", "Problème");
+  for (const check of roomChecks) await select(page, check.label, check.key === "taps" ? "Problème" : "Oui / OK");
+  await select(page, "Propreté du minibar", "Propre");
+  await select(page, "Micro-ondes présent ?", "Oui");
+  await select(page, "Propreté du micro-ondes", "Sale");
   await select(page, "État de la moquette", "Sale");
   await page.getByLabel("Précisez les taches ou salissures").fill("Boue près de la fenêtre");
   await page.getByLabel("Observations et problèmes constatés").fill("Robinet bloqué");
@@ -22,11 +30,25 @@ test("mobile room inspection validates carpet, compresses photos, and shows save
   await page.getByRole("button", { name: "Enregistrer le contrôle" }).click();
   expect((await send).status()).toBe(200);
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "Voir le contrôle" }).first().click();
-  await expect(page.getByText("Moquette : Sale Boue près de la fenêtre")).toBeVisible();
-  await page.getByRole("button", { name: "Afficher les 1 photo(s)" }).click();
-  await expect(page.getByRole("img", { name: "Chambre 112 · photo 1" })).toHaveJSProperty("naturalWidth", 1);
+  await page.getByRole("button", { name: "Historique de la chambre 114", exact: true }).click();
+  await page.getByRole("button", { name: /Test mobile/ }).click();
+  await expect(page.getByText("Boue près de la fenêtre", { exact: true })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Chambre 114 · photo 1" })).toHaveJSProperty("naturalWidth", 1);
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await page.getByRole("button", { name: "Fermer", exact: true }).click();
+  await page.getByRole("button", { name: "Exporter en PDF", exact: true }).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: /Chambres libres/ }).click();
+  expect((await download).suggestedFilename()).toMatch(/^chambres-libres-.*\.pdf$/);
+  const state = await (await page.request.get("/api/hotel")).json();
+  const issue = state.issues.find((i: { reportedBy: string }) => i.reportedBy === "Test mobile");
+  expect(issue.description).toContain("Robinet bloqué");
+  expect(issue.description).toContain("Micro-ondes sale");
+  expect(issue.photoIds).toHaveLength(1);
+  await page.goto("/anomalies");
+  await page.getByRole("button", { name: "Consulter", exact: true }).last().click();
+  await expect(page.getByRole("dialog").getByLabel("Description du problème")).toHaveValue(/Robinet bloqué/);
+  await expect(page.getByRole("dialog").locator("img").first()).toHaveJSProperty("naturalWidth", 1);
 });
 test("family drafts survive reload and offline entries synchronize without losing data", async ({ page, context }) => {
   await login(page); await page.goto("/familles");

@@ -97,7 +97,7 @@ function doPost(e) {
     const records = records_(input.collection);
     const current = records.find(item => item.id === record.id);
     if (input.collection === 'familyEvents' && deletedAbsences_().includes(record.id)) return json_({ ok: false, code: 409, error: 'Cette absence a été supprimée.' });
-    if (isEntry && current && current.submissionHash === record.submissionHash) return json_({ ok: true, data: { collection: input.collection, record: current } });
+    if (isEntry && current && current.submissionHash === record.submissionHash) return json_({ ok: true, data: { collection: input.collection, record: current, issue: syncRoomIssue_(input, current) } });
     if ((current ? current.version : 0) !== input.expectedVersion) return json_({ ok: false, code: 409, error: 'Modifié par un autre utilisateur. Actualisez avant de réessayer.' });
     if (input.collection === 'inspections' && current && current.completed) throw new Error('Ronde déjà terminée.');
     // The trusted Next.js server validates the full business schema before commit.
@@ -119,6 +119,25 @@ function doPost(e) {
       }
       record.photoId = record.photoIds[0] || null;
     }
+    writeRecord_(input.collection, record, isEntry, current);
+    const issue = syncRoomIssue_(input, record);
+    return json_({ ok: true, data: isEntry ? { collection: input.collection, record: record, issue: issue } : { id: record.id, version: record.version } });
+  } catch (error) { return json_({ ok: false, code: 400, error: String(error.message || error) }); }
+  finally { if (lock && lock.hasLock()) lock.releaseLock(); }
+}
+// Called under the same script lock. A retry repairs a partial write and never
+// overwrites an anomaly that has already been assigned or resolved.
+function syncRoomIssue_(input, record) {
+  if (input.collection !== 'roomInspections' || !input.issue) return;
+  const current = records_('issues').find(item => item.id === record.id);
+  if (current) return current;
+  const issue = Object.assign({}, input.issue, { id: record.id, photoIds: photoIds_(record), photoId: record.photoId });
+  if (issue.version !== 1) throw new Error('Anomalie de chambre invalide.');
+  writeRecord_('issues', issue, false, null);
+  return issue;
+}
+function writeRecord_(collection, record, isEntry, current) {
+    const sheet = table_(collection);
     const serialized = JSON.stringify(record);
     if (serialized.length > 420000) throw new Error('Historique trop volumineux.');
     const chunks = Array.from({length: 12}, (_, i) => serialized.slice(i * 35000, (i + 1) * 35000));
@@ -126,18 +145,15 @@ function doPost(e) {
     let row = [record.id, record.version, record.date, record.location || record.area, record.title || record.inspector, record.status || (record.completed ? 'Terminée' : 'Brouillon'), record.priority || '', record.assignee || '', photoIds_(record).map(id => 'https://drive.google.com/file/d/' + id + '/view').join('\n'), record.updatedAt].map(safe).concat(chunks.map(chunk => 'j' + chunk));
     if (isEntry) {
       const photos = photoIds_(record).map(id => 'https://drive.google.com/file/d/' + id + '/view').join('\n');
-      const visible = input.collection === 'familyEvents'
+      const visible = collection === 'familyEvents'
         ? [record.id, record.version, record.date, record.room, record.family, record.kind === 'absence' ? 'Absence' : 'Départ', record.actor, record.notes, photos, record.updatedAt]
         : [record.id, record.version, record.date, record.room, record.actor, record.condition, record.cleaning, record.notes, photos, record.updatedAt];
-      const extra = input.collection === 'familyEvents' ? [record.returnDate || ''] : [record.carpet, record.carpetNotes, record.microwave].concat(ROOM_CHECK_KEYS.map(key => { const check = record.checks.find(c => c.key === key); return check ? check.result : ''; }));
+      const extra = collection === 'familyEvents' ? [record.returnDate || ''] : [record.carpet, record.carpetNotes, record.microwave].concat(ROOM_CHECK_KEYS.map(key => { const check = record.checks.find(c => c.key === key); return check ? check.result : ''; }));
       row = visible.map(safe).concat(chunks.map(chunk => 'j' + chunk), extra.map(safe));
     }
     const rowNumber = current ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().findIndex(row => row[0] === record.id) + 2 : sheet.getLastRow() + 1;
     sheet.getRange(rowNumber, 1, 1, row.length).setNumberFormat('@').setValues([row]);
     SpreadsheetApp.flush();
-    return json_({ ok: true, data: isEntry ? { collection: input.collection, record: record } : { id: record.id, version: record.version } });
-  } catch (error) { return json_({ ok: false, code: 400, error: String(error.message || error) }); }
-  finally { if (lock && lock.hasLock()) lock.releaseLock(); }
 }
 function photoIds_(record) {
   return record.photoIds && record.photoIds.length ? record.photoIds : record.photoId ? [record.photoId] : [];

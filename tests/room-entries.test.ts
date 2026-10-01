@@ -6,11 +6,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
 import { mergeHotel } from "../lib/mergeHotel";
-import { entrySchema, roomChecks, roomGroups, rooms, parseEntry, roomEntrySchema, normalizeRoomDraft, countRoomsOnDate, cleaningText, type RoomEntry, type FamilyEntry } from "../lib/rooms";
+import { entrySchema, roomChecks, roomGroups, rooms, parseEntry, roomEntrySchema, roomIssue, normalizeRoomDraft, countRoomsOnDate, cleaningText, type RoomEntry, type FamilyEntry } from "../lib/rooms";
 import { createId, today } from "../lib/domain";
 import { deleteAbsence, executeEntry, readPhoto, readState } from "../lib/storage";
 
-const roomEntry = (): RoomEntry => ({ type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", condition: "bon", occupied: true, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", notes: "", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
+const roomEntry = (): RoomEntry => ({ type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", condition: "bon", occupied: true, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "propre", notes: "", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
 const familyEntry = (): FamilyEntry => ({ type: "createFamilyEvent", id: createId(), room: "332", date: today(), actor: "Marie", family: "Famille test", notes: "", kind: "absence", returnDate: "" });
 
 test("exactly the 85 requested rooms", () => {
@@ -25,10 +25,13 @@ test("exactly the 85 requested rooms", () => {
   }
   assert.equal(entrySchema.safeParse({ ...roomEntry(), room: "233" }).success, true);
 });
-test("new room controls require all answers except cleaning and clear inapplicable cleaning", () => {
+test("free rooms require cleaning, occupied rooms clear it, and all equipment must be checked", () => {
   for (const occupied of [null, undefined]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), occupied }).success, false);
   for (const cleaning of [null, undefined, "faite", "non_faite"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), cleaning }).success, true);
-  for (const cleaning of [null, "faite", "non_faite"]) assert.equal(roomEntrySchema.parse({ ...roomEntry(), occupied: false, cleaning }).cleaning, null);
+  for (const cleaning of [null, undefined]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), occupied: false, cleaning }).success, false);
+  for (const cleaning of ["faite", "non_faite"]) assert.equal(roomEntrySchema.parse({ ...roomEntry(), occupied: false, cleaning }).cleaning, cleaning);
+  assert.equal(roomEntrySchema.parse(roomEntry()).cleaning, null);
+  for (const field of ["microwaveCleaning", "fridgeCleaning"]) for (const value of [null, undefined, "non_verifie"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), [field]: value }).success, false);
   for (const check of roomChecks) {
     const entry = roomEntry(); entry.checks.find(c => c.key === check.key)!.result = "non_verifie";
     assert.equal(roomEntrySchema.safeParse(entry).success, false, check.key);
@@ -40,8 +43,8 @@ test("new room controls require all answers except cleaning and clear inapplicab
   assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), microwave: "non_verifie" }).success, false);
   for (const carpet of ["sale", "tachee"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), carpet }).success, false);
   for (const condition of ["a_revoir", "mauvais"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), condition }).success, false);
-  assert.equal(cleaningText({ occupied: true }), "Non renseigné");
-  assert.equal(cleaningText({ occupied: false, cleaning: "faite" }), "Non applicable");
+  assert.equal(cleaningText({ occupied: true }), "Non applicable");
+  assert.equal(cleaningText({ occupied: false, cleaning: "faite" }), "Faite");
   assert.equal(cleaningText({ cleaning: "faite" }), "Faite");
 });
 test("legacy drafts gain unanswered fields without changing existing values or photos", () => {
@@ -95,7 +98,9 @@ test("local entries persist, retries are idempotent, changed retries conflict an
   await assert.rejects(executeEntry({ ...entry, notes: "different" }), { code: 409 });
   assert.equal((await readState()).roomInspections?.length, 1);
   assert.equal((await readPhoto(entry.id, 1, "roomInspections")).toString(), "b");
-  await assert.rejects(readPhoto(entry.id, 0), { code: 404 });
+  assert.equal((await readPhoto(entry.id, 0)).toString(), "a");
+  assert.equal((await readState()).issues.length, 1);
+  assert.deepEqual((await readState()).issues[0].photoIds, (await readState()).roomInspections?.[0].photoIds);
   const family = familyEntry();
   await executeEntry(family); await executeEntry(family);
   assert.equal((await readState()).familyEvents?.length, 1);
@@ -155,9 +160,15 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   const old = JSON.stringify(tables.get("Anomalies"));
   context.setup(); assert.equal(JSON.stringify(tables.get("Anomalies")), old);
   const entry = roomEntry();
-  const input = { action: "commitEntry", collection: "roomInspections", expectedVersion: 0, record: { ...entry, photosData: undefined, version: 1, submissionHash: "a".repeat(64) }, photosData: ["data:image/jpeg;base64,YQ=="] };
+  const record = { ...entry, photosData: undefined, version: 1, updatedAt: new Date().toISOString(), submissionHash: "a".repeat(64), photoIds: [], photoId: null };
+  const input = { action: "commitEntry", collection: "roomInspections", expectedVersion: 0, record, issue: roomIssue(record, true), photosData: ["data:image/jpeg;base64,YQ=="] };
   const result = call(input);
   assert.equal(result.ok, true, result.error);
+  assert.deepEqual(call(input), result);
+  assert.equal(files.size, 1);
+  assert.equal(call({ action: "photo", collection: "issues", issueId: entry.id, index: 0 }).data.base64, "YQ==");
+  // A missing anomaly after an interrupted write is repaired by the same retry.
+  tables.get("Anomalies")!.pop();
   assert.deepEqual(call(input), result);
   assert.equal(files.size, 1);
   assert.equal(call({ ...input, record: { ...input.record, submissionHash: "b".repeat(64) } }).code, 409);
@@ -166,7 +177,7 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(call({ action: "commitEntry", collection: "familyEvents", expectedVersion: 0, record: { ...fam, version: 1, submissionHash: "c".repeat(64) } }).ok, true);
   assert.equal(tables.get("Absences et départs")?.[1][7], "'=IMPORTXML(test)");
   const state = call({ action: "list" }).data;
-  assert.equal(state.issues.length, 1); assert.equal(state.roomInspections.length, 1); assert.equal(state.familyEvents.length, 1);
+  assert.equal(state.issues.length, 2); assert.equal(state.roomInspections.length, 1); assert.equal(state.familyEvents.length, 1);
   assert.equal(state.familyEvents[0].notes, fam.notes);
   assert.equal(state.roomInspections[0].occupied, true);
   assert.equal(state.roomInspections[0].checks.at(-1).key, "door_handle_clear");
@@ -184,7 +195,7 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(after.deletedFamilyEventIds[0], fam.id);
   assert.equal(call({ action: "commitEntry", collection: "familyEvents", expectedVersion: 0, record: { ...fam, version: 1, submissionHash: "c".repeat(64) } }).code, 409);
   assert.equal(after.roomInspections.length, 1);
-  assert.equal(JSON.stringify(tables.get("Anomalies")), old);
+  assert.equal(JSON.stringify(tables.get("Anomalies")!.slice(0, 2)), old);
 });
 
 test("Google entry save uses one request and requires a matching receipt", async () => {

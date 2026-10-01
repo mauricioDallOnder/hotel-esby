@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { absenceDeleteSchema, parseEntry, type Entry, type EntryChange } from "./rooms";
+import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChange } from "./rooms";
 import { today } from "./domain";
 import { ReadCache } from "./readCache";
 import {
@@ -195,11 +195,14 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
     ...(entry.type === "createRoomInspection" ? { photoIds: [], photoId: null } : {}) };
   const collection = entry.type === "createRoomInspection" ? "roomInspections" : "familyEvents";
   const change = { collection, record } as EntryChange;
+  if (change.collection === "roomInspections") change.issue = roomIssue(change.record, photosData.length > 0);
   if (storageMode() === "sheets") {
     try {
       const receipt = await google<EntryChange>({ action: "commitEntry", ...change, expectedVersion: 0, photosData });
       if (receipt?.collection !== collection || receipt.record?.id !== entry.id || receipt.record?.submissionHash !== submissionHash)
         throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
+      if (change.collection === "roomInspections" && change.issue && (receipt.collection !== "roomInspections" || receipt.issue?.id !== change.issue.id))
+        throw new DomainError("Mettez à jour le déploiement Apps Script pour synchroniser les anomalies des chambres.", 503);
       return receipt;
     } finally { stateCache.clear(); }
   }
@@ -209,7 +212,7 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   const existing = (state[collection] || []).find(item => item.id === entry.id);
   if (existing) {
     if (existing.submissionHash !== submissionHash) throw new DomainError("Ce numéro d’enregistrement existe avec un contenu différent.", 409);
-    return { collection, record: existing } as EntryChange;
+    return { collection, record: existing, ...(collection === "roomInspections" ? { issue: state.issues.find(i => i.id === existing.id) } : {}) } as EntryChange;
   }
   mkdirSync(directory(), { recursive: true });
   if (change.collection === "roomInspections" && photosData.length) {
@@ -221,7 +224,14 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
     });
     change.record.photoId = change.record.photoIds[0];
   }
-  if (change.collection === "roomInspections") state.roomInspections = [...(state.roomInspections || []), change.record];
+  if (change.collection === "roomInspections") {
+    state.roomInspections = [...(state.roomInspections || []), change.record];
+    if (change.issue) {
+      change.issue.photoIds = change.record.photoIds;
+      change.issue.photoId = change.record.photoId;
+      state.issues.push(change.issue);
+    }
+  }
   else state.familyEvents = [...(state.familyEvents || []), change.record];
   const temp = path.join(directory(), "hotel." + crypto.randomUUID() + ".tmp");
   writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });

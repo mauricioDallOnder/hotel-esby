@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Alert, Box, Button, Chip, Dialog, DialogContent, DialogTitle, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Dialog, DialogContent, DialogTitle, Menu, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { RoomHistoryDialog } from "@/components/RoomHistoryDialog";
 import { createId, displayDate, today } from "@/lib/domain";
-import { carpetLabels, cleaningLabels, cleaningText, countRoomsOnDate, normalizeRoomDraft, conditionLabels, resultLabels, roomChecks, roomEntrySchema, roomGroups, rooms, type RoomEntry, type RoomInspection } from "@/lib/rooms";
+import { applianceCleaningLabels, carpetLabels, cleaningLabels, cleaningText, countRoomsOnDate, latestRoomRecords, normalizeRoomDraft, conditionLabels, resultLabels, roomChecks, roomEntrySchema, roomGroups, roomProblems, rooms, type RoomEntry, type RoomInspection } from "@/lib/rooms";
 import { compressPhoto } from "@/lib/photos";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
@@ -14,7 +14,7 @@ type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["c
 function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
   const { enqueue } = useEntries();
   const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
-    type: "createRoomInspection", id: createId(), room, date: today(), actor: "", notes: "", condition: "", occupied: null, cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", photosData: [],
+    type: "createRoomInspection", schemaVersion: 3, id: createId(), room, date: today(), actor: "", notes: "", condition: "", occupied: null, cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", photosData: [],
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })),
   }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
   const value = draft.value;
@@ -62,10 +62,10 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
           <TextField select required {...validation("condition")} label="État général de la chambre" value={value.condition} onChange={e => draft.update({ ...value, condition: e.target.value as Draft["condition"] })}>
             {Object.entries(conditionLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
           </TextField>
-          <TextField select required {...validation("occupied")} label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} onChange={e => draft.update({ ...value, occupied: e.target.value === "oui", cleaning: e.target.value === "non" ? null : value.cleaning })}>
+          <TextField select required {...validation("occupied")} label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} onChange={e => draft.update({ ...value, occupied: e.target.value === "oui", cleaning: e.target.value === "oui" ? null : value.cleaning })}>
             <MenuItem value="oui">Oui</MenuItem><MenuItem value="non">Non</MenuItem>
           </TextField>
-          {value.occupied === true && <TextField select label="Nettoyage / ménage" value={value.cleaning || ""} onChange={e => draft.update({ ...value, cleaning: (e.target.value || null) as Draft["cleaning"] })}>
+          {value.occupied === false && <TextField select required {...validation("cleaning")} label="Nettoyage / ménage" value={value.cleaning || ""} onChange={e => draft.update({ ...value, cleaning: (e.target.value || null) as Draft["cleaning"] })}>
             <MenuItem value="">Non renseigné</MenuItem>
             {Object.entries(cleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
           </TextField>}
@@ -74,6 +74,9 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
           {roomChecks.map(check => <TextField key={check.key} select required {...validation(`checks.${check.key}`)} label={check.label} value={value.checks.find(c => c.key === check.key)?.result || "non_verifie"} onChange={e => draft.update({ ...value, checks: value.checks.map(c => c.key === check.key ? { ...c, result: e.target.value as RoomEntry["checks"][number]["result"] } : c) })}>
             {Object.entries(resultLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
           </TextField>)}
+          {value.checks.some(c => c.key === "fridge" && (c.result === "ok" || c.result === "probleme")) && <TextField select required {...validation("fridgeCleaning")} label="Propreté du minibar" value={value.fridgeCleaning || "non_verifie"} onChange={e => draft.update({ ...value, fridgeCleaning: e.target.value as Draft["fridgeCleaning"] })}>
+            {Object.entries(applianceCleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
+          </TextField>}
           <TextField select required {...validation("carpet")} label="État de la moquette" value={value.carpet} onChange={e => draft.update({ ...value, carpet: e.target.value as Draft["carpet"] })}>
             {Object.entries(carpetLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
           </TextField>
@@ -81,7 +84,11 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
           <TextField select required {...validation("microwave")} label="Micro-ondes présent ?" value={value.microwave} onChange={e => draft.update({ ...value, microwave: e.target.value as RoomEntry["microwave"] })}>
             <MenuItem value="non_verifie">Non vérifié</MenuItem><MenuItem value="oui">Oui</MenuItem><MenuItem value="non">Non</MenuItem>
           </TextField>
+          {value.microwave === "oui" && <TextField select required {...validation("microwaveCleaning")} label="Propreté du micro-ondes" value={value.microwaveCleaning || "non_verifie"} onChange={e => draft.update({ ...value, microwaveCleaning: e.target.value as Draft["microwaveCleaning"] })}>
+            {Object.entries(applianceCleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
+          </TextField>}
           <TextField {...validation("notes")} label="Observations et problèmes constatés" required={value.condition === "a_revoir" || value.condition === "mauvais" || value.checks.some(c => c.result === "probleme")} multiline minRows={3} value={value.notes} onChange={e => draft.update({ ...value, notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />
+          <Typography variant="body2" color="text.secondary">Les problèmes, observations et photos de ce contrôle seront également enregistrés dans les anomalies après synchronisation.</Typography>
           <Typography variant="h6">Photos du problème · {value.photosData.length}/3</Typography>
           <Typography variant="caption">Facultatives. Les photos sont réduites avant l’envoi pour économiser la connexion.</Typography>
           <Stack direction="row" spacing={1}>
@@ -101,7 +108,7 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
   </Dialog>;
 }
 export default function RoomsPage() {
-  const { roomInspections = [] } = useAppContext();
+  const { roomInspections = [], hotelName } = useAppContext();
   const { pending } = useEntries();
   const [room, setRoom] = useState<string | null>(null);
   const [historyRoom, setHistoryRoom] = useState<string | null>(null);
@@ -116,29 +123,48 @@ export default function RoomsPage() {
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState("all");
   const [filter, setFilter] = useState("all");
+  const [exportMenu, setExportMenu] = useState<HTMLElement | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const queued = pending.filter(p => p.entry.type === "createRoomInspection").map(p => p.entry as RoomEntry);
   const history = [...queued, ...roomInspections.filter(i => !queued.some(q => q.id === i.id))].sort((a, b) => b.date.localeCompare(a.date) || ("updatedAt" in b ? b.updatedAt : "z").localeCompare("updatedAt" in a ? a.updatedAt : "z"));
-  const latest = new Map<string, RoomEntry | RoomInspection>();
-  history.forEach(record => { if (!latest.has(record.room)) latest.set(record.room, record); });
-  function hasProblem(record: RoomEntry | RoomInspection) { return record.condition !== "bon" || record.carpet !== "ok" || record.checks.some(c => c.result === "probleme" || (c.key === "smoke" && c.result === "absent")); }
+  const latest = latestRoomRecords(history);
+  const freeRooms = [...latest.values()].filter(record => record.occupied === false);
+  function hasProblem(record: RoomEntry | RoomInspection) { return roomProblems(record).length > 0; }
+  async function exportFreeRooms() {
+    setExportMenu(null); setExporting(true); setExportError("");
+    try {
+      const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport");
+      downloadFreeRoomsReport({ hotelName, history });
+    } catch (error) { setExportError((error as Error).message); }
+    finally { setExporting(false); }
+  }
   return <>
     <ConnectionBar />
     <PageTitle title="Checklist des chambres" description={`${rooms.length} chambres · État, ménage, équipements et photos des problèmes.`} />
     <Stack spacing={3}>
+      <Box>
+        <Button variant="outlined" disabled={exporting} aria-haspopup="menu" aria-expanded={Boolean(exportMenu)} onClick={e => setExportMenu(e.currentTarget)}>{exporting ? "Préparation du PDF…" : "Exporter en PDF"}</Button>
+        <Menu anchorEl={exportMenu} open={Boolean(exportMenu)} onClose={() => setExportMenu(null)}>
+          <MenuItem disabled={!freeRooms.length} onClick={() => void exportFreeRooms()}>Chambres libres · {freeRooms.length}</MenuItem>
+        </Menu>
+        <Typography variant="caption" sx={{ display: "block", mt: 1 }}>Dernier checklist de chaque chambre libre : état, ménage, micro-ondes et minibar. Les données en attente d’envoi sont signalées dans le PDF.</Typography>
+      </Box>
+      {exportError && <Alert severity="error">{exportError}</Alert>}
       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}><Chip label={`${countRoomsOnDate(history, day)}/${rooms.length} chambres contrôlées`} /><Chip label={`${[...latest.values()].filter(r => rooms.includes(r.room)).filter(hasProblem).length} à revoir`} color="warning" variant="outlined" /></Stack>
       <Paper variant="outlined" sx={{ p: 2 }}><Stack direction={{ xs: "column", md: "row" }} spacing={2}>
         <TextField fullWidth label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} />
         <TextField fullWidth select label="Groupe de chambres" value={group} onChange={e => setGroup(e.target.value)}><MenuItem value="all">Tous les groupes</MenuItem>{roomGroups.map(g => <MenuItem key={g.label} value={g.label}>{g.label}</MenuItem>)}</TextField>
-        <TextField fullWidth select label="Afficher" value={filter} onChange={e => setFilter(e.target.value)}><MenuItem value="all">Toutes les chambres</MenuItem><MenuItem value="missing">Jamais contrôlées</MenuItem><MenuItem value="problems">À revoir</MenuItem><MenuItem value="cleaning">Ménage non fait</MenuItem></TextField>
+        <TextField fullWidth select label="Afficher" value={filter} onChange={e => setFilter(e.target.value)}><MenuItem value="all">Toutes les chambres</MenuItem><MenuItem value="free">Chambres libres</MenuItem><MenuItem value="missing">Jamais contrôlées</MenuItem><MenuItem value="problems">À revoir</MenuItem><MenuItem value="cleaning">Ménage non fait</MenuItem></TextField>
       </Stack></Paper>
       {roomGroups.filter(g => group === "all" || group === g.label).map(g => {
-        const numbers = g.rooms.filter(n => n.includes(search.trim())).filter(n => { const r = latest.get(n); return filter === "all" || (filter === "missing" ? !r : !!r && (filter === "problems" ? hasProblem(r) : r.occupied !== false && r.cleaning === "non_faite")); });
+        const numbers = g.rooms.filter(n => n.includes(search.trim())).filter(n => { const r = latest.get(n); return filter === "all" || (filter === "missing" ? !r : !!r && (filter === "problems" ? hasProblem(r) : filter === "free" ? r.occupied === false : r.occupied === false && r.cleaning === "non_faite")); });
         if (!numbers.length) return null;
         return <Box key={g.label}><Typography variant="h6" sx={{ mb: 1.5 }}>{g.label}</Typography><Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 1.5 }}>
           {numbers.map(n => { const record = latest.get(n); return <Paper key={n} variant="outlined" sx={{ p: 2 }}><Stack spacing={1}>
             <Typography variant="h5">{n}</Typography>
             <Typography variant="caption">{record ? `Dernier contrôle : ${displayDate(record.date)}` : "Pas encore contrôlée"}</Typography>
-            {record && <><Chip size="small" label={hasProblem(record) ? "À revoir" : record.checks.some(c => c.result === "non_verifie") || record.microwave === "non_verifie" ? "Vérification partielle" : "Contrôlée"} color={hasProblem(record) ? "warning" : "default"} /><Typography variant="caption">{record.occupied === false ? "Chambre non occupée" : `Ménage : ${cleaningText(record)}`}{queued.some(q => q.id === record.id) ? " · En attente d’envoi" : ""}</Typography></>}
+            {record && <><Chip size="small" label={hasProblem(record) ? "À revoir" : record.checks.some(c => c.result === "non_verifie") || record.microwave === "non_verifie" ? "Vérification partielle" : "Contrôlée"} color={hasProblem(record) ? "warning" : "default"} /><Typography variant="caption">{record.occupied === false ? `Chambre libre · Ménage : ${cleaningText(record)}` : record.occupied === true ? "Chambre occupée" : "Occupation non renseignée"}{queued.some(q => q.id === record.id) ? " · En attente d’envoi" : ""}</Typography></>}
             <Button variant="contained" color="primary" onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`}>Contrôler</Button>
             <Button size="small" aria-label={`Historique de la chambre ${n}`} onClick={() => setHistoryRoom(n)}>Historique</Button>
           </Stack></Paper>; })}

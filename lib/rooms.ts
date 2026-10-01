@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Issue } from "./domain";
 
 export const roomGroups = [
   { label: "1er étage", rooms: ["101", "102", "103", "104", "105", "106", "107", "108", "109", "110", "114", "115", "116", "117", "118", "119", "120", "121", "122", "123", "124", "125", "126"] },
@@ -51,7 +52,7 @@ function validateNotes(v: z.infer<typeof roomFields>, ctx: z.RefinementCtx) {
   if (v.carpet !== "ok" && !v.carpetNotes) ctx.addIssue({ code: "custom", path: ["carpetNotes"], message: "Précisez les taches ou salissures de la moquette." });
   if ((v.checks.some(c => c.result === "probleme") || v.condition !== "bon") && !v.notes) ctx.addIssue({ code: "custom", path: ["notes"], message: "Décrivez les problèmes constatés." });
 }
-export const roomEntrySchema = roomFields.extend({
+const roomEntryV2Schema = roomFields.extend({
   occupied: z.boolean(), schemaVersion: z.literal(2).default(2),
 }).superRefine((v, ctx) => {
   validateNotes(v, ctx);
@@ -63,9 +64,32 @@ export const roomEntrySchema = roomFields.extend({
   });
   if (v.microwave === "non_verifie") ctx.addIssue({ code: "custom", path: ["microwave"], message: "Vérifiez la présence du micro-ondes." });
 }).transform(v => v.occupied ? v : { ...v, cleaning: null });
+export const applianceCleaningLabels = { propre: "Propre", sale: "Sale", non_verifie: "Non vérifié" } as const;
+const applianceCleaning = z.enum(["propre", "sale", "non_verifie"]).nullable();
+export const roomEntrySchema = roomFields.extend({
+  occupied: z.boolean(), schemaVersion: z.literal(3).default(3),
+  microwaveCleaning: applianceCleaning,
+  fridgeCleaning: applianceCleaning,
+}).superRefine((v, ctx) => {
+  validateNotes(v, ctx);
+  if (v.checks.length !== roomChecks.length || new Set(v.checks.map(c => c.key)).size !== roomChecks.length)
+    ctx.addIssue({ code: "custom", path: ["checks"], message: "Vérifiez chaque point une seule fois." });
+  roomChecks.forEach(check => {
+    if (!v.checks.some(c => c.key === check.key && c.result !== "non_verifie"))
+      ctx.addIssue({ code: "custom", path: ["checks", check.key], message: "Ce point est obligatoire." });
+  });
+  if (v.microwave === "non_verifie") ctx.addIssue({ code: "custom", path: ["microwave"], message: "Vérifiez la présence du micro-ondes." });
+  if (!v.occupied && !v.cleaning) ctx.addIssue({ code: "custom", path: ["cleaning"], message: "Renseignez le ménage de la chambre libre." });
+  for (const [present, field] of [[v.microwave === "oui", "microwaveCleaning"], [v.checks.some(c => c.key === "fridge" && c.result !== "absent"), "fridgeCleaning"]] as const) {
+    if (present && (!v[field] || v[field] === "non_verifie")) ctx.addIssue({ code: "custom", path: [field], message: "Vérifiez la propreté de cet équipement." });
+  }
+}).transform(v => ({ ...v, cleaning: v.occupied ? null : v.cleaning,
+  microwaveCleaning: v.microwave === "oui" ? v.microwaveCleaning : null,
+  fridgeCleaning: v.checks.some(c => c.key === "fridge" && c.result === "absent") ? null : v.fridgeCleaning,
+}));
 export const entrySchema = z.union([familyEntrySchema, roomEntrySchema]);
 export type FamilyEntry = z.infer<typeof familyEntrySchema>;
-export type RoomEntry = z.infer<typeof roomFields> & { occupied?: boolean | null; schemaVersion?: 2 };
+export type RoomEntry = z.infer<typeof roomFields> & { occupied?: boolean | null; schemaVersion?: 2 | 3; microwaveCleaning?: z.infer<typeof applianceCleaning>; fridgeCleaning?: z.infer<typeof applianceCleaning> };
 export type Entry = FamilyEntry | RoomEntry;
 
 // Only transport of a previously queued v1 entry uses this schema. Preserve
@@ -82,24 +106,51 @@ const legacyRoomSchema = roomFields.extend({
 });
 const legacyFamilySchema = familyEntrySchema.safeExtend({ room: legacyRoom });
 export function parseEntry(input: unknown, legacy = false): Entry {
+  if (input && typeof input === "object" && "schemaVersion" in input && input.schemaVersion === 2) return roomEntryV2Schema.parse(input);
   if (!legacy) return entrySchema.parse(input);
   // Never downgrade a v2 payload or silently discard its new answers.
   if (input && typeof input === "object" && ("schemaVersion" in input || "occupied" in input)) return entrySchema.parse(input);
   return z.discriminatedUnion("type", [legacyFamilySchema, legacyRoomSchema]).parse(input);
 }
 
-export function normalizeRoomDraft<T extends { occupied?: boolean | null; checks: RoomEntry["checks"] }>(draft: T): T {
-  return { ...draft, occupied: draft.occupied ?? null, checks: [...draft.checks,
+export function normalizeRoomDraft<T extends { occupied?: boolean | null; checks: RoomEntry["checks"]; schemaVersion?: 2 | 3 }>(draft: T): T {
+  return { microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", ...draft, schemaVersion: 3, occupied: draft.occupied ?? null, checks: [...draft.checks,
     ...roomChecks.filter(check => !draft.checks.some(c => c.key === check.key)).map(check => ({ key: check.key, result: "non_verifie" as const }))] };
 }
 export function countRoomsOnDate(history: { room: string; date: string }[], date: string) {
   return new Set(history.filter(r => r.date === date && rooms.includes(r.room)).map(r => r.room)).size;
 }
 export function cleaningText(record: Pick<RoomEntry, "occupied" | "cleaning">) {
-  return record.occupied === false ? "Non applicable" : record.cleaning ? cleaningLabels[record.cleaning] : "Non renseigné";
+  return record.occupied === true ? "Non applicable" : record.cleaning ? cleaningLabels[record.cleaning] : "Non renseigné";
+}
+export function roomProblems(record: RoomEntry | RoomInspection): string[] {
+  return [
+    ...(record.condition !== "bon" ? [conditionLabels[record.condition]] : []),
+    ...record.checks.filter(c => c.result === "probleme" || (c.key === "smoke" && c.result === "absent")).map(c => `${roomChecks.find(check => check.key === c.key)?.label} : ${resultLabels[c.result]}`),
+    ...(record.carpet !== "ok" ? [`Moquette ${carpetLabels[record.carpet].toLowerCase()} : ${record.carpetNotes}`] : []),
+    ...(record.microwave === "oui" && record.microwaveCleaning === "sale" ? ["Micro-ondes sale"] : []),
+    ...(record.checks.some(c => c.key === "fridge" && c.result !== "absent") && record.fridgeCleaning === "sale" ? ["Minibar sale"] : []),
+  ];
+}
+export function roomIssue(record: RoomInspection, hasPhotos = false): Issue | undefined {
+  const problems = roomProblems(record);
+  if (!problems.length && !record.notes.trim() && !record.photoIds.length && !hasPhotos) return;
+  return { id: record.id, version: 1, date: record.date, createdAt: record.updatedAt, updatedAt: record.updatedAt,
+    title: `Chambre ${record.room} · Problème constaté`, location: `Chambre ${record.room}`, category: "Équipements", priority: "normale", status: "ouvert", assignee: "",
+    description: [...problems, record.notes].filter(Boolean).join("\n") || "Problème photographié lors du contrôle de la chambre.", reportedBy: record.actor,
+    photoIds: record.photoIds, photoId: record.photoId,
+    history: [{ at: record.updatedAt, actor: record.actor, note: "Signalé depuis le checklist de la chambre.", status: "ouvert", priority: "normale", assignee: "" }],
+  };
+}
+export function latestRoomRecords(history: (RoomEntry | RoomInspection)[]) {
+  const latest = new Map<string, RoomEntry | RoomInspection>();
+  [...history].sort((a, b) => b.date.localeCompare(a.date) || ("updatedAt" in b ? b.updatedAt : "z").localeCompare("updatedAt" in a ? a.updatedAt : "z")).forEach(record => {
+    if (rooms.includes(record.room) && !latest.has(record.room)) latest.set(record.room, record);
+  });
+  return latest;
 }
 export const absenceDeleteSchema = z.object({ collection: z.literal("familyEvents"), id: z.string().uuid() }).strict();
 type Saved = { version: number; updatedAt: string; submissionHash: string };
 export type FamilyEvent = FamilyEntry & Saved;
 export type RoomInspection = Omit<RoomEntry, "photosData"> & Saved & { photoIds: string[]; photoId: string | null };
-export type EntryChange = { collection: "familyEvents"; record: FamilyEvent } | { collection: "roomInspections"; record: RoomInspection };
+export type EntryChange = { collection: "familyEvents"; record: FamilyEvent } | { collection: "roomInspections"; record: RoomInspection; issue?: Issue };

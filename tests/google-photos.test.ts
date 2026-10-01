@@ -33,6 +33,7 @@ test("Apps Script stores all photo links, serves each photo and preserves legacy
   });
   vm.runInContext(readFileSync("google-apps-script/Code.gs", "utf8"), context);
   context.records_ = () => saved ? [saved] : [];
+  context.deletedAbsences_ = () => [];
   context.table_ = () => ({
     getLastRow: () => saved ? 2 : 1,
     getRange: () => ({
