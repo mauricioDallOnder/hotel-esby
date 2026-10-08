@@ -67,7 +67,8 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
         body: JSON.stringify({ ...payload, token }),
         cache: "no-store",
         redirect: "follow",
-        signal: AbortSignal.timeout(Math.max(1, Math.min(readOnly ? 25_000 : 55_000, 55_000 - (Date.now() - started)))),
+        // No modo leitura (fotos), aborta em 8s para evitar o timeout 503 da Vercel
+        signal: AbortSignal.timeout(Math.max(1, Math.min(readOnly ? 8_000 : 55_000, 55_000 - (Date.now() - started)))),
       });
       
       if (!response.ok) {
@@ -193,7 +194,7 @@ function replace(state: State, change: Change) {
 // OTIMIZAÇÃO: Fila (Semáforo) para evitar congestionamento no Google Drive ao ler múltiplas fotos
 const photoQueue: (() => void)[] = [];
 let activePhotos = 0;
-const MAX_CONCURRENT_PHOTOS = 2; // O Google tolera bem 2 pedidos simultâneos sem rate limiting agressivo
+const MAX_CONCURRENT_PHOTOS = 3; // O Google tolera bem 2 pedidos simultâneos sem rate limiting agressivo
 
 async function acquirePhotoToken() {
   if (activePhotos < MAX_CONCURRENT_PHOTOS) {
