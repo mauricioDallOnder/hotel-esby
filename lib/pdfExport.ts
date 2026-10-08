@@ -1,18 +1,5 @@
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-
-import {
-  checklist,
-  checkLabels,
-  displayDate,
-  eventAt,
-  monthlySummary,
-  priorities,
-  statuses,
-  today,
-  type Issue,
-  type State,
-} from "./domain";
+import { displayDate, eventAt, monthlySummary, today, type Issue, type State } from "./domain";
 
 export function dailyIssues(state: State, date: string): Issue[] {
   const linked = new Set(
@@ -38,44 +25,32 @@ type ReportOptions = {
   state: State;
 };
 
-// Alterado para permitir retornar null se a foto falhar, evitando que o PDF inteiro "quebre"
 type PhotoLoader = (issue: Issue) => Promise<string | null>;
 
 export async function buildReport(
-  { kind, period, hotelName, state }: ReportOptions,
+  { kind, period, state }: ReportOptions,
   photoLoader: PhotoLoader = loadPhoto
 ): Promise<jsPDF> {
-  // =====================================================
-  // CONFIGURAÇÃO A4 (PAGINAÇÃO AUTOMÁTICA)
-  // =====================================================
-  const doc = new jsPDF({
-    unit: "mm",
-    format: "a4",
-    orientation: "portrait",
-    compress: true,
-  });
-
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
+  
   const PAGE_WIDTH = 210;
   const PAGE_HEIGHT = 297;
   const LEFT = 14;
   const RIGHT = 14;
-  const CONTENT_WIDTH = PAGE_WIDTH - LEFT - RIGHT;
-  const BOTTOM_MARGIN = 20;
+  const BOTTOM_MARGIN = 15;
   
   let y = 0;
 
   function checkPage(neededSpace: number) {
     if (y + neededSpace > PAGE_HEIGHT - BOTTOM_MARGIN) {
       doc.addPage();
-      y = 20;
+      y = 20; // Margem superior na nova página
     }
   }
 
   const monthly = kind === "monthly" ? monthlySummary(state, period) : null;
   const end = monthly?.end || period;
   const issues = monthly?.issues || dailyIssues(state, period);
-  const rounds = monthly?.inspections || state.inspections.filter((inspection) => inspection.date === period);
-  const generatedAt = new Date().toLocaleString("fr-FR", { timeZone: "Europe/Paris" });
 
   const photoCache = new Map<string, string>();
 
@@ -88,277 +63,142 @@ export async function buildReport(
   }
 
   function normalizeText(value: string): string {
-    return String(value ?? "")
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u2013\u2014]/g, "-");
+    return String(value ?? "").replace(/[\u2018\u2019]/g, "'").replace(/[\u2013\u2014]/g, "-");
   }
 
   // =====================================================
-  // RENDERIZAÇÃO
+  // CABEÇALHO SIMPLES
   // =====================================================
+  doc.setFillColor(23, 62, 54);
+  doc.rect(0, 0, PAGE_WIDTH, 20, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("Hôtel Contrôle", LEFT, 13);
+  
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const subtitle = kind === "daily" 
+    ? `Rapport anomalies · ${displayDate(period)}` 
+    : `Anomalies du mois · ${period.split("-").reverse().join("/")}`;
+  doc.text(normalizeText(subtitle), PAGE_WIDTH - RIGHT, 13, { align: "right" });
 
-  function header() {
-    doc.setFillColor(23, 62, 54);
-    doc.rect(0, 0, PAGE_WIDTH, 27, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("Hôtel Contrôle", LEFT, 12);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    const subtitle =
-      kind === "daily"
-        ? `Rapport quotidien · ${displayDate(period)}`
-        : `Bilan mensuel · ${period.split("-").reverse().join("/")}`;
-
-    doc.text(normalizeText(subtitle), LEFT, 20);
-    doc.setTextColor(35, 50, 45);
-    y = 37;
-  }
-
-  function write(value: string, size = 10, bold = false) {
-    doc.setFont("helvetica", bold ? "bold" : "normal");
-    doc.setFontSize(size);
-    doc.setTextColor(35, 50, 45);
-
-    const lines = doc.splitTextToSize(normalizeText(value), CONTENT_WIDTH) as string[];
-
-    for (const line of lines) {
-      checkPage(size * 0.46);
-      doc.text(line, LEFT, y);
-      y += size * 0.46;
-    }
-    y += 3;
-  }
-
-  function table(head: string[], body: string[][]) {
-    if (!body.length) return;
-
-    autoTable(doc, {
-      startY: y,
-      head: [head.map(normalizeText)],
-      body: body.map((row) => row.map((value) => normalizeText(value ?? ""))),
-      margin: { left: LEFT, right: RIGHT, top: 20, bottom: BOTTOM_MARGIN },
-      styles: {
-        font: "helvetica",
-        fontSize: 8,
-        cellPadding: 2.2,
-        overflow: "linebreak",
-        valign: "top",
-        textColor: [35, 50, 45],
-      },
-      headStyles: { fillColor: [36, 91, 79], textColor: [255, 255, 255], fontStyle: "bold" },
-      alternateRowStyles: { fillColor: [245, 247, 242] },
-    });
-
-    const result = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
-    if (result) y = result.finalY + 7;
-  }
-
-  header();
-
-  write(hotelName, 18, true);
-  write(`Édité le ${generatedAt} · Heure de Paris`, 9);
-
-  if (end >= today()) {
-    write("Période en cours : situation à l'heure de génération du rapport.", 9);
-  }
-
-  const completedRounds = rounds.filter((round) => round.completed).length;
-  const unfinished = rounds.filter((round) => !round.completed).length;
-
-  write(`${completedRounds} ronde(s) terminée(s) · ${unfinished} brouillon(s)`, 11, true);
-
-  if (unfinished) {
-    write("Les rondes en brouillon ne constituent pas des vérifications terminées.", 9);
-  }
-
-  if (monthly) {
-    table(
-      ["Indicateur", "Total"],
-      [
-        ["Anomalies reportées du mois précédent", String(monthly.pendingStart.length)],
-        ["Nouvelles anomalies", String(monthly.newIssues.length)],
-        ["Anomalies ayant été résolues dans le mois", String(monthly.resolvedCount)],
-        ["Interventions / modifications consignées", String(monthly.interventions.length)],
-        ["Anomalies restant ouvertes en fin de période", String(monthly.pendingEnd.length)],
-      ]
-    );
-    write("Une anomalie résolue puis rouverte reste dans les anomalies ouvertes. Les résolutions incluent les problèmes signalés les mois précédents.", 9);
-  } else {
-    const newIssues = state.issues.filter((issue) => issue.date === period).length;
-    const unresolved = issues.filter((issue) => (eventAt(issue, end)?.status ?? "ouvert") !== "resolu").length;
-    write(`${newIssues} nouvelle(s) anomalie(s) · ${unresolved} non résolue(s) à cette date`);
-    write("Ce rapport inclut les problèmes du jour, les anomalies associées aux rondes, les interventions du jour et les anciennes anomalies encore ouvertes.", 9);
-  }
-
-  write("Rondes de la période", 13, true);
-
-  if (!rounds.length) {
-    write("Aucune ronde enregistrée pour cette période.");
-  } else {
-    table(
-      ["Date", "Zone", "Inspecteur", "État"],
-      rounds.map((round) => [
-        displayDate(round.date),
-        round.area,
-        round.inspector,
-        round.completed ? "Terminée" : "Brouillon",
-      ])
-    );
-  }
-
-  if (kind === "daily") {
-    for (const round of rounds) {
-      write(`Checklist · ${round.area}`, 15, true);
-      write(`${round.inspector} · ${round.completed ? "Terminée" : "BROUILLON"}`);
-
-      table(
-        ["Point contrôlé", "Constat", "Observation / anomalie"],
-        round.checks.map((check) => {
-          const item = checklist.find((task) => task.id === check.key);
-          const linkedIssue = check.issueId ? state.issues.find((issue) => issue.id === check.issueId) : undefined;
-          return [
-            item?.label || check.key,
-            checkLabels[check.result],
-            [check.note, linkedIssue?.title || (check.issueId ? check.issueId : "")].filter(Boolean).join(" · "),
-          ];
-        })
-      );
-
-      if (round.notes) write(`Notes : ${round.notes}`);
-    }
-  }
-
-  if (monthly) {
-    checkPage(20);
-    write("Travaux et interventions du mois", 15, true);
-
-    if (!monthly.interventions.length) {
-      write("Aucune intervention consignée pour ce mois.");
-    } else {
-      table(
-        ["Date / auteur", "Anomalie / lieu", "Travail effectué", "État après intervention"],
-        monthly.interventions.map(({ issue, event }) => [
-          `${displayDate(today(new Date(event.at)))}\n${event.actor}`,
-          `${issue.title}\n${issue.location}`,
-          event.note,
-          statuses[event.status],
-        ])
-      );
-    }
-  }
+  y = 32;
+  doc.setTextColor(35, 50, 45);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Problèmes à traiter", LEFT, y);
+  y += 12;
 
   // ===================================================
   // ANOMALIAS (APENAS NÃO RESOLVIDAS)
   // ===================================================
-
   const unresolvedIssues = issues.filter((issue) => {
     const stateAtDate = eventAt(issue, end);
     const status = stateAtDate?.status ?? "ouvert";
     return status !== "resolu";
   });
 
-  checkPage(20);
   if (!unresolvedIssues.length) {
-    write("Aucune anomalie en attente à présenter pour cette période.");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.text("Aucun problème en attente.", LEFT, y);
+    return doc;
   }
 
-  for (const [index, issue] of unresolvedIssues.entries()) {
-    const stateAtDate = eventAt(issue, end);
+  // Configurações do Layout Lado a Lado
+  const TEXT_WIDTH = 125; // Espaço para o texto na esquerda
+  const IMAGE_X = 145;    // Posição X onde a imagem começa na direita
+  const IMAGE_MAX_W = 50; // Largura máxima da imagem (5 cm)
+  const IMAGE_MAX_H = 40; // Altura máxima da imagem (4 cm)
 
-    checkPage(40); 
-    
-    write(`Anomalie ${index + 1} / ${unresolvedIssues.length}`, 10);
-    write(issue.title, 16, true);
-    write(`${issue.location} · ${issue.category}`);
-
-    const priority = stateAtDate?.priority ?? issue.history[0]?.priority;
-    const status = stateAtDate?.status ?? "ouvert";
-
-    write(`Priorité : ${priority ? priorities[priority] : "-"} · État à la fin de période : ${statuses[status]}`, 10, true);
-    write(`Constat : ${displayDate(issue.date)} · Signalé par : ${issue.reportedBy}`);
-    write(`Responsable : ${stateAtDate?.assignee || "Non attribué"}`);
+  for (const issue of unresolvedIssues) {
+    // 1. Preparar a Imagem e calcular o seu tamanho
+    let photoData = null;
+    let imgW = 0, imgH = 0;
 
     if (issue.photoId) {
-      const data = await getPhoto(issue);
-      
-      if (data) {
-        // A foto carregou com sucesso
-        const props = doc.getImageProperties(data);
-        const maxWidth = 150;
-        const maxHeight = 75;
-        let width = maxWidth;
-        let height = (width * props.height) / props.width;
-
-        if (height > maxHeight) {
-          height = maxHeight;
-          width = (height * props.width) / props.height;
+      photoData = await getPhoto(issue);
+      if (photoData) {
+        const props = doc.getImageProperties(photoData);
+        imgW = IMAGE_MAX_W;
+        imgH = (imgW * props.height) / props.width;
+        
+        // Se a foto for muito alta, limita a altura e ajusta a largura
+        if (imgH > IMAGE_MAX_H) {
+          imgH = IMAGE_MAX_H;
+          imgW = (imgH * props.width) / props.height;
         }
-
-        checkPage(height + 6);
-        const imageX = LEFT + (CONTENT_WIDTH - width) / 2;
-        doc.addImage(data, imageX, y, width, height);
-        y += height + 6;
-      } else {
-        // A foto falhou mesmo após várias tentativas, mas o PDF continua!
-        write("Photo indisponible au moment de l'export.", 9);
       }
-      
-    } else {
-      write("Aucune photo jointe.", 9);
     }
 
-    write("Description du problème", 11, true);
-    write(issue.description);
-
-    const history = issue.history.filter((event) => today(new Date(event.at)) <= end);
-
-    if (history.length) {
-      write("Historique jusqu'à la fin de période", 11, true);
-      table(
-        ["Date / auteur", "Intervention", "État"],
-        history.map((event) => [
-          `${displayDate(today(new Date(event.at)))}\n${event.actor}`,
-          event.note,
-          statuses[event.status],
-        ])
-      );
-    }
-
-    write(`Référence : ${issue.id}`, 8);
-
-    if (index < unresolvedIssues.length - 1) {
-      checkPage(15);
-      doc.setDrawColor(220, 225, 222);
-      doc.line(LEFT, y, PAGE_WIDTH - RIGHT, y);
-      y += 7;
-    }
-  }
-
-  // =====================================================
-  // RODAPÉ EM TODAS AS PÁGINAS
-  // =====================================================
-  const pageCount = doc.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
+    // 2. Preparar os Textos
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    const titleLines = doc.splitTextToSize(normalizeText(issue.title), TEXT_WIDTH);
+    
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(9);
+    const metaText = normalizeText(`${issue.location} · Constat du ${displayDate(issue.date)}`);
+    
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(115, 115, 115);
-    doc.text("Hôtel Contrôle · Document interne", LEFT, PAGE_HEIGHT - 8);
-    doc.text(`Page ${i} / ${pageCount}`, PAGE_WIDTH - RIGHT, PAGE_HEIGHT - 8, { align: "right" });
+    doc.setFontSize(10);
+    const descLines = doc.splitTextToSize(normalizeText(issue.description), TEXT_WIDTH);
+
+    // 3. Calcular a altura total deste "bloco" para saber se cabe na página
+    // ~5.5mm por linha de título + 5mm espaço + ~4.5mm por linha de descrição
+    const textHeight = (titleLines.length * 5.5) + 5 + (descLines.length * 4.5);
+    const blockHeight = Math.max(textHeight, imgH) + 12; // Usa a maior altura (texto ou imagem) + 12mm de margem inferior
+
+    checkPage(blockHeight);
+
+    // 4. Desenhar o Texto (Esquerda)
+    let currentY = y;
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(35, 50, 45);
+    doc.text(titleLines, LEFT, currentY);
+    currentY += titleLines.length * 5.5;
+
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text(metaText, LEFT, currentY);
+    currentY += 6;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(50, 50, 50);
+    doc.text(descLines, LEFT, currentY);
+
+    // 5. Desenhar a Imagem (Direita)
+    if (photoData) {
+      doc.addImage(photoData, IMAGE_X, y - 4, imgW, imgH);
+    } else if (issue.photoId) {
+      // Caso a foto falhe os retries
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text("Photo indisponible", IMAGE_X, y);
+    }
+
+    y += blockHeight - 6;
+
+    // 6. Linha separadora entre problemas
+    doc.setDrawColor(230, 230, 230);
+    doc.line(LEFT, y, PAGE_WIDTH - RIGHT, y);
+    y += 6;
   }
 
   return doc;
 }
 
-// NOVIDADE: Esta função agora tenta várias vezes e, se falhar de vez, devolve NULL em vez de estourar um erro que destrói o PDF.
+// Mantido o Retry Anti-Crash
 async function loadPhoto(issue: Issue): Promise<string | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const response = await fetch(`/api/photos/${issue.id}`, { cache: "no-store" });
-      
       if (response.ok) {
         const blob = await response.blob();
         return await new Promise<string>((resolve, reject) => {
@@ -368,17 +208,11 @@ async function loadPhoto(issue: Issue): Promise<string | null> {
           reader.readAsDataURL(blob);
         });
       }
-      
-      // Se não deu "ok" (ex: 503), espera 1.5s e depois 3s antes da próxima tentativa
       if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
-      
     } catch (e) {
-      // Se a rede falhar completamente, tenta de novo
       if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
     }
   }
-  
-  // Se falhou as 3 vezes, devolve null (O PDF escreve "Photo indisponible" mas termina o relatório)
   return null;
 }
 
