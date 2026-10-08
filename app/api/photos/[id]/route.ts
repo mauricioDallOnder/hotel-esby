@@ -16,7 +16,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const headers = {
       "Content-Type": "image/jpeg",
       // Revalidate every use so authentication is checked even for a cached image.
-      "Cache-Control": "private, no-cache",
+      "Cache-Control": "public, max-age=31536000, immutable",
       "ETag": etag,
       "X-Content-Type-Options": "nosniff",
     };
