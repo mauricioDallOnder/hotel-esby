@@ -36,12 +36,15 @@ type Context = Data & {
   mutate: (command: Command) => Promise<Data>;
   logout: () => Promise<void>;
 };
+
 const AppContext = createContext<Context | null>(null);
+
 export function useAppContext() {
   const value = useContext(AppContext);
   if (!value) throw new Error("AppProvider manquant");
   return value;
 }
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<Data>({
     issues: [],
@@ -55,6 +58,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     role: Role | null;
     availableRoles: Role[];
   } | null>(null);
+  
   const [loaded, setLoaded] = useState(false);
   const [cachedAt, setCachedAt] = useState("");
   const hasLoaded = useRef(false);
@@ -63,6 +67,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [password, setPassword] = useState("");
   const [loginRole, setLoginRole] = useState<Role>("employe");
   const inFlight = useRef(false);
+
   const request = useCallback(async (url: string, options?: RequestInit) => {
     let response: Response;
     try {
@@ -81,33 +86,62 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!response.ok) throw new Error(result.error || "Erreur de connexion.");
     return result;
   }, []);
+
   const refresh = useCallback(async (fresh = true) => {
     if (inFlight.current) return;
     inFlight.current = true;
-    setBusy(true);
+    
+    // O SEGREDO: Só bloqueia a app se a tela estiver totalmente vazia (primeiro carregamento).
+    if (!hasLoaded.current) {
+      setBusy(true);
+    }
+
     try {
-      setError("");
-      // Restore only after /api/session has authenticated the current user.
       if (!hasLoaded.current) {
         try {
           const snapshot = await deviceStore<{ data: Data; at: string } | undefined>("get", "snapshot");
           if (snapshot?.data && Array.isArray(snapshot.data.issues) && Array.isArray(snapshot.data.inspections)) {
-            setData(snapshot.data); setCachedAt(snapshot.at); setLoaded(true); hasLoaded.current = true;
+            setData(snapshot.data); 
+            setCachedAt(snapshot.at); 
+            setLoaded(true); 
+            hasLoaded.current = true;
+            setBusy(false); // Desbloqueia o ecrã imediatamente ao ler o cache!
           }
         } catch { /* A cache failure must not prevent a live read. */ }
       }
+      
       const result: Data = await request(fresh ? "/api/hotel?fresh=1" : "/api/hotel");
       setData(current => mergeHotel(current, result));
       setLoaded(true);
       hasLoaded.current = true;
-      setCachedAt("");
+      setCachedAt(""); // Sucesso na rede! Remove a mensagem amarela.
+      setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Connexion impossible.");
+      // Se a rede falhar, mas já temos dados do cache, falha silenciosamente sem mostrar erro vermelho.
+      if (!hasLoaded.current) {
+        setError(e instanceof Error ? e.message : "Connexion impossible.");
+      }
     } finally {
       inFlight.current = false;
       setBusy(false);
     }
   }, [request]);
+
+  // NOVIDADE: Tentativa de atualização em segundo plano.
+  // Se estivermos presos no cache, a app tenta atualizar sozinha a cada 20 segundos de forma invisível.
+  useEffect(() => {
+    if (!loaded || !cachedAt || !session?.authenticated) return;
+    
+    const interval = window.setInterval(() => {
+      // Só tenta se tiver rede e se não houver outro pedido a acontecer
+      if (navigator.onLine && !inFlight.current) {
+        void refresh(false); 
+      }
+    }, 20_000);
+    
+    return () => window.clearInterval(interval);
+  }, [loaded, cachedAt, session?.authenticated, refresh]);
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/session", { cache: "no-store" })
@@ -129,11 +163,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [request, refresh]);
+
   useEffect(() => {
     if (!loaded || cachedAt || !session?.authenticated) return;
     // Records only; photo bytes are downloaded on demand and never included here.
     void deviceStore("put", "snapshot", { data, at: new Date().toISOString() }).catch(() => {});
   }, [data, loaded, cachedAt, session?.authenticated]);
+
   async function login(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -153,6 +189,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setBusy(false);
     }
   }
+
   async function mutate(command: Command): Promise<Data> {
     if (inFlight.current)
       throw new Error("Un enregistrement est déjà en cours.");
@@ -172,12 +209,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setBusy(false);
     }
   }
+
   const mergeEntry = useCallback((change: EntryChange) => {
     setData(current => change.collection === "familyEvents"
       ? { ...current, familyEvents: [...(current.familyEvents || []).filter(r => r.id !== change.record.id), ...(current.deletedFamilyEventIds?.includes(change.record.id) ? [] : [change.record])] }
       : { ...current, roomInspections: [...(current.roomInspections || []).filter(r => r.id !== change.record.id), change.record],
           issues: change.issue ? [...current.issues.filter(i => i.id !== change.issue!.id), change.issue] : current.issues });
   }, []);
+
   const deleteAbsence = useCallback(async (id: string) => {
     const receipt = await request("/api/entries", {
       method: "DELETE", headers: { "Content-Type": "application/json" },
@@ -189,6 +228,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deletedFamilyEventIds: [...new Set([...(current.deletedFamilyEventIds || []), id])],
     }));
   }, [request]);
+
   async function logout() {
     await request("/api/session", { method: "DELETE" });
     setLoaded(false);
@@ -197,6 +237,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setData({ issues: [], inspections: [], mode: "local" });
     setSession(await request("/api/session"));
   }
+
   if (!session || (session.authenticated && !loaded))
     return (
       <Box sx={{ p: 5, textAlign: "center" }}>
@@ -219,6 +260,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         )}
       </Box>
     );
+
   if (!session.authenticated)
     return (
       <Box
@@ -276,6 +318,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         </Paper>
       </Box>
     );
+
   return (
     <AppContext.Provider
       value={{
