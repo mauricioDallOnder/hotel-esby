@@ -38,7 +38,8 @@ type ReportOptions = {
   state: State;
 };
 
-type PhotoLoader = (issue: Issue) => Promise<string>;
+// Alterado para permitir retornar null se a foto falhar, evitando que o PDF inteiro "quebre"
+type PhotoLoader = (issue: Issue) => Promise<string | null>;
 
 export async function buildReport(
   { kind, period, hotelName, state }: ReportOptions,
@@ -63,11 +64,10 @@ export async function buildReport(
   
   let y = 0;
 
-  // Função auxiliar que salta para a próxima página se não houver espaço
   function checkPage(neededSpace: number) {
     if (y + neededSpace > PAGE_HEIGHT - BOTTOM_MARGIN) {
       doc.addPage();
-      y = 20; // Margem superior nas novas páginas
+      y = 20;
     }
   }
 
@@ -79,11 +79,11 @@ export async function buildReport(
 
   const photoCache = new Map<string, string>();
 
-  async function getPhoto(issue: Issue): Promise<string> {
+  async function getPhoto(issue: Issue): Promise<string | null> {
     const cached = photoCache.get(issue.id);
     if (cached) return cached;
     const data = await photoLoader(issue);
-    photoCache.set(issue.id, data);
+    if (data) photoCache.set(issue.id, data);
     return data;
   }
 
@@ -135,7 +135,6 @@ export async function buildReport(
   function table(head: string[], body: string[][]) {
     if (!body.length) return;
 
-    // autoTable lida com paginação sozinho!
     autoTable(doc, {
       startY: y,
       head: [head.map(normalizeText)],
@@ -156,10 +155,6 @@ export async function buildReport(
     const result = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable;
     if (result) y = result.finalY + 7;
   }
-
-  // =====================================================
-  // INÍCIO DA CONSTRUÇÃO
-  // =====================================================
 
   header();
 
@@ -273,7 +268,7 @@ export async function buildReport(
   for (const [index, issue] of unresolvedIssues.entries()) {
     const stateAtDate = eventAt(issue, end);
 
-    checkPage(40); // Espaço mínimo para começar uma anomalia (títulos + informações básicas)
+    checkPage(40); 
     
     write(`Anomalie ${index + 1} / ${unresolvedIssues.length}`, 10);
     write(issue.title, 16, true);
@@ -288,22 +283,29 @@ export async function buildReport(
 
     if (issue.photoId) {
       const data = await getPhoto(issue);
-      const props = doc.getImageProperties(data);
       
-      const maxWidth = 150;
-      const maxHeight = 75;
-      let width = maxWidth;
-      let height = (width * props.height) / props.width;
+      if (data) {
+        // A foto carregou com sucesso
+        const props = doc.getImageProperties(data);
+        const maxWidth = 150;
+        const maxHeight = 75;
+        let width = maxWidth;
+        let height = (width * props.height) / props.width;
 
-      if (height > maxHeight) {
-        height = maxHeight;
-        width = (height * props.width) / props.height;
+        if (height > maxHeight) {
+          height = maxHeight;
+          width = (height * props.width) / props.height;
+        }
+
+        checkPage(height + 6);
+        const imageX = LEFT + (CONTENT_WIDTH - width) / 2;
+        doc.addImage(data, imageX, y, width, height);
+        y += height + 6;
+      } else {
+        // A foto falhou mesmo após várias tentativas, mas o PDF continua!
+        write("Photo indisponible au moment de l'export.", 9);
       }
-
-      checkPage(height + 6); // Verifica se a imagem cabe nesta página
-      const imageX = LEFT + (CONTENT_WIDTH - width) / 2;
-      doc.addImage(data, imageX, y, width, height);
-      y += height + 6;
+      
     } else {
       write("Aucune photo jointe.", 9);
     }
@@ -351,18 +353,33 @@ export async function buildReport(
   return doc;
 }
 
-async function loadPhoto(issue: Issue): Promise<string> {
-  const response = await fetch(`/api/photos/${issue.id}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Photo inaccessible pour « ${issue.title} ». Actualisez et réessayez.`);
+// NOVIDADE: Esta função agora tenta várias vezes e, se falhar de vez, devolve NULL em vez de estourar um erro que destrói o PDF.
+async function loadPhoto(issue: Issue): Promise<string | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(`/api/photos/${issue.id}`, { cache: "no-store" });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        return await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error("Lecture de la photo impossible."));
+          reader.readAsDataURL(blob);
+        });
+      }
+      
+      // Se não deu "ok" (ex: 503), espera 1.5s e depois 3s antes da próxima tentativa
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+      
+    } catch (e) {
+      // Se a rede falhar completamente, tenta de novo
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+    }
   }
-  const blob = await response.blob();
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("Lecture de la photo impossible."));
-    reader.readAsDataURL(blob);
-  });
+  
+  // Se falhou as 3 vezes, devolve null (O PDF escreve "Photo indisponible" mas termina o relatório)
+  return null;
 }
 
 export async function downloadReport(options: ReportOptions) {
