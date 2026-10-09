@@ -226,23 +226,45 @@ export default function RoomsPage() {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontWeight: 700 }}>
                 Recommandation intelligente : {targetRooms.length} chambre(s) à faire maintenant
               </Typography>
-              <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                {targetRooms.map(n => {
-                  const isReview = needsReviewRooms.includes(n);
+              
+              {/* AGRUPAMENTO POR ANDAR NAS RECOMENDAÇÕES */}
+              <Stack spacing={2.5}>
+                {roomGroups.map(group => {
+                  const groupTargetRooms = group.rooms.filter(r => targetRooms.includes(r));
+                  if (groupTargetRooms.length === 0) return null;
+
                   return (
-                    <Button
-                      key={n}
-                      variant={isReview ? "contained" : "outlined"}
-                      color={isReview ? "warning" : "primary"}
-                      size="medium"
-                      onClick={() => setRoom(n)}
-                      sx={{ borderRadius: 2, fontWeight: 700 }}
-                    >
-                      {n} {isReview ? " (À revoir)" : ""}
-                    </Button>
+                    <Box key={group.label}>
+                      <Typography 
+                        variant="caption" 
+                        sx={{ 
+                          fontWeight: 800, display: "block", mb: 1, 
+                          color: "primary.main", textTransform: "uppercase", letterSpacing: "0.05em" 
+                        }}
+                      >
+                        {group.label}
+                      </Typography>
+                      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                        {groupTargetRooms.map(n => {
+                          const isReview = needsReviewRooms.includes(n);
+                          return (
+                            <Button
+                              key={n}
+                              variant={isReview ? "contained" : "outlined"}
+                              color={isReview ? "warning" : "primary"}
+                              size="medium"
+                              onClick={() => setRoom(n)}
+                              sx={{ borderRadius: 2, fontWeight: 700 }}
+                            >
+                              {n} {isReview ? " (À revoir)" : ""}
+                            </Button>
+                          );
+                        })}
+                      </Box>
+                    </Box>
                   );
                 })}
-              </Box>
+              </Stack>
             </Box>
           )}
           
@@ -311,7 +333,6 @@ export default function RoomsPage() {
               
               return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor: isTarget ? "primary.main" : (isDoneToday ? "success.light" : "divider"), bgcolor: isDoneToday ? "#fafdfa" : "inherit" }}>
                 <Stack spacing={1}>
-                  {/* CORREÇÃO DO ERRO DO TYPESCRIPT (sx aplicado ao Stack) */}
                   <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
                     <Typography variant="h5" color={isDoneToday ? "success.main" : "text.primary"}>{n}</Typography>
                     {isTarget && <Chip label="Priorité" size="small" color="primary" />}
