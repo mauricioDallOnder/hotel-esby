@@ -20,7 +20,6 @@ import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | "" };
 
-// Função auxiliar para calcular dias passados (para mostrar "Il y a X jours")
 function getDaysDiff(pastDateStr: string, todayStr: string) {
   const past = new Date(pastDateStr);
   const present = new Date(todayStr);
@@ -255,7 +254,6 @@ export default function RoomsPage() {
                           const isReview = needsReviewRooms.includes(n);
                           const isNever = neverInspectedRooms.includes(n);
                           
-                          // Calcular há quantos dias foi inspecionado, caso não seja "Jamais" nem "À revoir"
                           let ageText = "";
                           if (!isReview && !isNever) {
                             const recordDate = latest.get(n)?.date;
@@ -358,7 +356,6 @@ export default function RoomsPage() {
               const isDoneToday = inspectedTodayRooms.includes(n);
               const daysDiff = record ? getDaysDiff(record.date, day) : -1;
               
-              // Definir cores para as bordas e fundos baseado no estado
               let borderColor = "divider";
               let bgColor = "inherit";
               if (isTarget) {
@@ -367,7 +364,7 @@ export default function RoomsPage() {
                 borderColor = "success.light";
                 bgColor = "#fafdfa";
               } else if (!record) {
-                borderColor = "divider"; // Jamais feito fica neutro
+                borderColor = "divider"; 
                 bgColor = "#fcfcfc";
               } else if (hasProblem(record)) {
                 borderColor = "warning.light";
@@ -377,12 +374,12 @@ export default function RoomsPage() {
               return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor, bgcolor: bgColor }}>
                 <Stack spacing={1}>
                   
-                  {/* TÍTULO E ETIQUETA VISUAL (NOVIDADE) */}
+                  {/* TÍTULO E ETIQUETA VISUAL */}
                   <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                     <Typography variant="h5" color={isDoneToday ? "success.main" : !record ? "text.disabled" : "text.primary"}>
                       {n}
                     </Typography>
-                    <Stack alignItems="flex-end" spacing={0.5}>
+                    <Stack sx={{ alignItems: "flex-end" }} spacing={0.5}>
                       {isTarget && <Chip label="Objectif" size="small" color="primary" />}
                       {isDoneToday && <Chip label="Aujourd'hui" size="small" color="success" variant="outlined" />}
                       {!isDoneToday && !record && <Chip label="Jamais fait" size="small" sx={{ bgcolor: "action.hover", color: "text.secondary" }} />}
