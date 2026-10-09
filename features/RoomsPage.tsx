@@ -20,6 +20,13 @@ import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | "" };
 
+// Função auxiliar para calcular dias passados (para mostrar "Il y a X jours")
+function getDaysDiff(pastDateStr: string, todayStr: string) {
+  const past = new Date(pastDateStr);
+  const present = new Date(todayStr);
+  return Math.round((present.getTime() - past.getTime()) / (1000 * 3600 * 24));
+}
+
 function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
   const { enqueue } = useEntries();
   const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
@@ -227,7 +234,6 @@ export default function RoomsPage() {
                 Recommandation intelligente : {targetRooms.length} chambre(s) à faire maintenant
               </Typography>
               
-              {/* AGRUPAMENTO POR ANDAR NAS RECOMENDAÇÕES */}
               <Stack spacing={2.5}>
                 {roomGroups.map(group => {
                   const groupTargetRooms = group.rooms.filter(r => targetRooms.includes(r));
@@ -247,16 +253,36 @@ export default function RoomsPage() {
                       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                         {groupTargetRooms.map(n => {
                           const isReview = needsReviewRooms.includes(n);
+                          const isNever = neverInspectedRooms.includes(n);
+                          
+                          // Calcular há quantos dias foi inspecionado, caso não seja "Jamais" nem "À revoir"
+                          let ageText = "";
+                          if (!isReview && !isNever) {
+                            const recordDate = latest.get(n)?.date;
+                            if (recordDate) {
+                              const diff = getDaysDiff(recordDate, day);
+                              ageText = diff === 1 ? "Hier" : `${diff}j`;
+                            }
+                          }
+
                           return (
                             <Button
                               key={n}
                               variant={isReview ? "contained" : "outlined"}
-                              color={isReview ? "warning" : "primary"}
-                              size="medium"
+                              color={isReview ? "warning" : (isNever ? "secondary" : "primary")}
                               onClick={() => setRoom(n)}
-                              sx={{ borderRadius: 2, fontWeight: 700 }}
+                              sx={{ 
+                                borderRadius: 2, 
+                                display: "flex", 
+                                flexDirection: "column", 
+                                p: 1,
+                                minWidth: 64
+                              }}
                             >
-                              {n} {isReview ? " (À revoir)" : ""}
+                              <span style={{ fontWeight: 800, fontSize: "1.1em", lineHeight: 1 }}>{n}</span>
+                              <span style={{ fontSize: "0.65em", opacity: 0.85, marginTop: 4, fontWeight: 600 }}>
+                                {isReview ? "À revoir" : (isNever ? "Jamais" : ageText)}
+                              </span>
                             </Button>
                           );
                         })}
@@ -330,20 +356,53 @@ export default function RoomsPage() {
               const record = latest.get(n); 
               const isTarget = targetRooms.includes(n);
               const isDoneToday = inspectedTodayRooms.includes(n);
+              const daysDiff = record ? getDaysDiff(record.date, day) : -1;
               
-              return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor: isTarget ? "primary.main" : (isDoneToday ? "success.light" : "divider"), bgcolor: isDoneToday ? "#fafdfa" : "inherit" }}>
+              // Definir cores para as bordas e fundos baseado no estado
+              let borderColor = "divider";
+              let bgColor = "inherit";
+              if (isTarget) {
+                borderColor = "primary.main";
+              } else if (isDoneToday) {
+                borderColor = "success.light";
+                bgColor = "#fafdfa";
+              } else if (!record) {
+                borderColor = "divider"; // Jamais feito fica neutro
+                bgColor = "#fcfcfc";
+              } else if (hasProblem(record)) {
+                borderColor = "warning.light";
+                bgColor = "#fffbf7";
+              }
+
+              return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor, bgcolor: bgColor }}>
                 <Stack spacing={1}>
-                  <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-                    <Typography variant="h5" color={isDoneToday ? "success.main" : "text.primary"}>{n}</Typography>
-                    {isTarget && <Chip label="Priorité" size="small" color="primary" />}
-                    {isDoneToday && <Chip label="Fait" size="small" color="success" variant="outlined" />}
+                  
+                  {/* TÍTULO E ETIQUETA VISUAL (NOVIDADE) */}
+                  <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <Typography variant="h5" color={isDoneToday ? "success.main" : !record ? "text.disabled" : "text.primary"}>
+                      {n}
+                    </Typography>
+                    <Stack alignItems="flex-end" spacing={0.5}>
+                      {isTarget && <Chip label="Objectif" size="small" color="primary" />}
+                      {isDoneToday && <Chip label="Aujourd'hui" size="small" color="success" variant="outlined" />}
+                      {!isDoneToday && !record && <Chip label="Jamais fait" size="small" sx={{ bgcolor: "action.hover", color: "text.secondary" }} />}
+                      {!isDoneToday && record && hasProblem(record) && <Chip label="À revoir" size="small" color="warning" />}
+                      {!isDoneToday && record && !hasProblem(record) && (
+                        <Chip 
+                          label={daysDiff === 1 ? "Hier" : `Il y a ${daysDiff}j`} 
+                          size="small" 
+                          color={daysDiff > 5 ? "default" : "info"} 
+                          variant={daysDiff > 5 ? "filled" : "outlined"} 
+                          sx={daysDiff > 5 ? { bgcolor: "action.hover", color: "text.secondary" } : undefined}
+                        />
+                      )}
+                    </Stack>
                   </Stack>
-                  <Typography variant="caption">{record ? `Dernier contrôle : ${displayDate(record.date)}` : "Pas encore contrôlée"}</Typography>
+
                   {record && <>
-                    <Chip size="small" label={hasProblem(record) ? "À revoir" : record.checks.some(c => c.result === "non_verifie") || record.microwave === "non_verifie" ? "Vérification partielle" : "Contrôlée"} color={hasProblem(record) && !isDoneToday ? "warning" : "default"} />
                     <Typography variant="caption">{record.occupied === false ? `Chambre libre · Ménage : ${cleaningText(record)}` : record.occupied === true ? "Chambre occupée" : "Occupation non renseignée"}{queued.some(q => q.id === record.id) ? " · En attente d’envoi" : ""}</Typography>
                   </>}
-                  <Button variant="contained" color={isDoneToday ? "inherit" : "primary"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`}>
+                  <Button variant="contained" color={isDoneToday ? "inherit" : "primary"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ mt: 1 }}>
                     {isDoneToday ? "Recontrôler" : "Contrôler"}
                   </Button>
                   <Button size="small" aria-label={`Historique de la chambre ${n}`} onClick={() => setHistoryRoom(n)}>Historique</Button>
