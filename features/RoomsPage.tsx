@@ -167,33 +167,22 @@ export default function RoomsPage() {
   }
 
   // ==============================================================
-  // ALGORITMO: PLANO DO DIA (ROTAÇÃO E PRIORIDADES)
+  // ALGORITMO: PLANO DE ROTAÇÃO SEM LIMITE DE COTAS
   // ==============================================================
-  const DAILY_QUOTA = 15;
-
-  // 1. O que já foi feito hoje?
   const inspectedTodayRecords = [...latest.values()].filter(r => r.date === day && rooms.includes(r.room));
   const inspectedTodayCount = inspectedTodayRecords.length;
   const inspectedTodayRooms = inspectedTodayRecords.map(r => r.room);
 
-  // 2. Quartos NUNCA inspecionados (Prioridade 1 na rotação normal)
   const neverInspectedRooms = rooms.filter(r => !latest.has(r) && !inspectedTodayRooms.includes(r));
 
-  // 3. Quartos normais, do mais antigo para o mais recente (Rotação - Prioridade 2)
-  // NOTA: Os quartos com problemas (!hasProblem) são propositadamente removidos daqui.
   const oldInspectedRooms = [...latest.values()]
     .filter(r => r.date < day && rooms.includes(r.room) && !hasProblem(r) && !inspectedTodayRooms.includes(r.room))
     .sort((a, b) => a.date.localeCompare(b.date)) 
     .map(r => r.room);
 
-  // A fila de prioridade agora SÓ CONTÉM a rotação normal (Jamais feito + Antigos normais)
-  const priorityQueue = [...neverInspectedRooms, ...oldInspectedRooms];
-
-  const remainingQuota = Math.max(0, DAILY_QUOTA - inspectedTodayCount);
-  const targetRooms = priorityQueue.slice(0, remainingQuota);
-
-  // A meta é batida apenas baseada no número, ignorando as pendências de "À revoir"
-  const isComplete = inspectedTodayCount >= DAILY_QUOTA;
+  // A lista completa do que precisa ser feito (rotação)
+  const targetRooms = [...neverInspectedRooms, ...oldInspectedRooms];
+  const isComplete = targetRooms.length === 0;
 
   return <>
     <ConnectionBar />
@@ -214,15 +203,15 @@ export default function RoomsPage() {
           <Box>
             <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
               <Typography variant="h6" color={isComplete ? "success.main" : "primary.main"} sx={{ fontWeight: 800 }}>
-                {isComplete ? "Objectif du jour atteint ! 🎉" : "Objectif de rotation"}
+                {isComplete ? "Toutes les chambres sont à jour ! 🎉" : "Plan de rotation"}
               </Typography>
               <Typography variant="h6" color={isComplete ? "success.main" : "primary.main"} sx={{ fontWeight: 800 }}>
-                {inspectedTodayCount} / {DAILY_QUOTA}
+                {inspectedTodayCount} / {rooms.length}
               </Typography>
             </Stack>
             <LinearProgress
               variant="determinate"
-              value={Math.min(100, (inspectedTodayCount / DAILY_QUOTA) * 100)}
+              value={Math.min(100, (inspectedTodayCount / rooms.length) * 100)}
               color={isComplete ? "success" : "primary"}
               sx={{ height: 10, borderRadius: 4, mt: 1.5 }}
             />
@@ -231,7 +220,7 @@ export default function RoomsPage() {
           {!isComplete && targetRooms.length > 0 && (
             <Box>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontWeight: 700 }}>
-                Recommandation intelligente : {targetRooms.length} chambre(s) à faire aujourd'hui
+                {targetRooms.length} chambre(s) restante(s) dans la rotation
               </Typography>
               
               <Stack spacing={2.5}>
@@ -306,7 +295,8 @@ export default function RoomsPage() {
       
       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
         <Chip label={`${countRoomsOnDate(history, day)}/${rooms.length} contrôlées aujourd'hui`} />
-        <Chip label={`${[...latest.values()].filter(r => rooms.includes(r.room)).filter(hasProblem).length} à revoir au total`} color="warning" variant="outlined" />
+        {/* CORREÇÃO PARA VERMELHO */}
+        <Chip label={`${[...latest.values()].filter(r => rooms.includes(r.room)).filter(hasProblem).length} à revoir au total`} color="error" variant="outlined" />
       </Stack>
       
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -318,7 +308,7 @@ export default function RoomsPage() {
           </TextField>
           <TextField fullWidth select label="Afficher" value={filter} onChange={e => setFilter(e.target.value)}>
             <MenuItem value="all">Toutes les chambres</MenuItem>
-            <MenuItem value="target">Objectif du jour 🎯</MenuItem>
+            <MenuItem value="target">Plan de rotation 🎯</MenuItem>
             <MenuItem value="free">Chambres libres</MenuItem>
             <MenuItem value="missing">Jamais contrôlées</MenuItem>
             <MenuItem value="problems">À revoir</MenuItem>
@@ -361,8 +351,9 @@ export default function RoomsPage() {
                 borderColor = "divider"; 
                 bgColor = "#fcfcfc";
               } else if (hasProblem(record)) {
-                borderColor = "warning.light";
-                bgColor = "#fffbf7";
+                // CORREÇÃO PARA VERMELHO
+                borderColor = "error.main"; 
+                bgColor = "#fff5f5";
               }
 
               return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor, bgcolor: bgColor }}>
@@ -376,7 +367,8 @@ export default function RoomsPage() {
                       {isTarget && <Chip label="Objectif" size="small" color="primary" />}
                       {isDoneToday && <Chip label="Aujourd'hui" size="small" color="success" variant="outlined" />}
                       {!isDoneToday && !record && <Chip label="Jamais fait" size="small" sx={{ bgcolor: "action.hover", color: "text.secondary" }} />}
-                      {!isDoneToday && record && hasProblem(record) && <Chip label="À revoir" size="small" color="warning" />}
+                      {/* CORREÇÃO PARA VERMELHO */}
+                      {!isDoneToday && record && hasProblem(record) && <Chip label="À revoir" size="small" color="error" />}
                       {!isDoneToday && record && !hasProblem(record) && (
                         <Chip 
                           label={daysDiff === 1 ? "Hier" : `Il y a ${daysDiff}j`} 
