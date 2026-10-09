@@ -171,28 +171,29 @@ export default function RoomsPage() {
   // ==============================================================
   const DAILY_QUOTA = 15;
 
+  // 1. O que já foi feito hoje?
   const inspectedTodayRecords = [...latest.values()].filter(r => r.date === day && rooms.includes(r.room));
   const inspectedTodayCount = inspectedTodayRecords.length;
   const inspectedTodayRooms = inspectedTodayRecords.map(r => r.room);
 
-  const needsReviewRooms = [...latest.values()]
-    .filter(r => r.date < day && rooms.includes(r.room) && hasProblem(r) && !inspectedTodayRooms.includes(r.room))
-    .sort((a, b) => a.date.localeCompare(b.date)) 
-    .map(r => r.room);
-
+  // 2. Quartos NUNCA inspecionados (Prioridade 1 na rotação normal)
   const neverInspectedRooms = rooms.filter(r => !latest.has(r) && !inspectedTodayRooms.includes(r));
 
+  // 3. Quartos normais, do mais antigo para o mais recente (Rotação - Prioridade 2)
+  // NOTA: Os quartos com problemas (!hasProblem) são propositadamente removidos daqui.
   const oldInspectedRooms = [...latest.values()]
     .filter(r => r.date < day && rooms.includes(r.room) && !hasProblem(r) && !inspectedTodayRooms.includes(r.room))
     .sort((a, b) => a.date.localeCompare(b.date)) 
     .map(r => r.room);
 
-  const priorityQueue = [...needsReviewRooms, ...neverInspectedRooms, ...oldInspectedRooms];
+  // A fila de prioridade agora SÓ CONTÉM a rotação normal (Jamais feito + Antigos normais)
+  const priorityQueue = [...neverInspectedRooms, ...oldInspectedRooms];
 
   const remainingQuota = Math.max(0, DAILY_QUOTA - inspectedTodayCount);
   const targetRooms = priorityQueue.slice(0, remainingQuota);
 
-  const isComplete = inspectedTodayCount >= DAILY_QUOTA && needsReviewRooms.length === 0;
+  // A meta é batida apenas baseada no número, ignorando as pendências de "À revoir"
+  const isComplete = inspectedTodayCount >= DAILY_QUOTA;
 
   return <>
     <ConnectionBar />
@@ -213,7 +214,7 @@ export default function RoomsPage() {
           <Box>
             <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
               <Typography variant="h6" color={isComplete ? "success.main" : "primary.main"} sx={{ fontWeight: 800 }}>
-                {isComplete ? "Objectif du jour atteint ! 🎉" : "Objectif du jour"}
+                {isComplete ? "Objectif du jour atteint ! 🎉" : "Objectif de rotation"}
               </Typography>
               <Typography variant="h6" color={isComplete ? "success.main" : "primary.main"} sx={{ fontWeight: 800 }}>
                 {inspectedTodayCount} / {DAILY_QUOTA}
@@ -230,7 +231,7 @@ export default function RoomsPage() {
           {!isComplete && targetRooms.length > 0 && (
             <Box>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontWeight: 700 }}>
-                Recommandation intelligente : {targetRooms.length} chambre(s) à faire maintenant
+                Recommandation intelligente : {targetRooms.length} chambre(s) à faire aujourd'hui
               </Typography>
               
               <Stack spacing={2.5}>
@@ -251,11 +252,10 @@ export default function RoomsPage() {
                       </Typography>
                       <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                         {groupTargetRooms.map(n => {
-                          const isReview = needsReviewRooms.includes(n);
                           const isNever = neverInspectedRooms.includes(n);
                           
                           let ageText = "";
-                          if (!isReview && !isNever) {
+                          if (!isNever) {
                             const recordDate = latest.get(n)?.date;
                             if (recordDate) {
                               const diff = getDaysDiff(recordDate, day);
@@ -266,8 +266,8 @@ export default function RoomsPage() {
                           return (
                             <Button
                               key={n}
-                              variant={isReview ? "contained" : "outlined"}
-                              color={isReview ? "warning" : (isNever ? "secondary" : "primary")}
+                              variant="outlined"
+                              color={isNever ? "secondary" : "primary"}
                               onClick={() => setRoom(n)}
                               sx={{ 
                                 borderRadius: 2, 
@@ -279,7 +279,7 @@ export default function RoomsPage() {
                             >
                               <span style={{ fontWeight: 800, fontSize: "1.1em", lineHeight: 1 }}>{n}</span>
                               <span style={{ fontSize: "0.65em", opacity: 0.85, marginTop: 4, fontWeight: 600 }}>
-                                {isReview ? "À revoir" : (isNever ? "Jamais" : ageText)}
+                                {isNever ? "Jamais" : ageText}
                               </span>
                             </Button>
                           );
@@ -290,12 +290,6 @@ export default function RoomsPage() {
                 })}
               </Stack>
             </Box>
-          )}
-          
-          {isComplete && needsReviewRooms.length > 0 && (
-            <Alert severity="warning" sx={{ borderRadius: 2 }}>
-              Vous avez atteint votre quota, mais il reste {needsReviewRooms.length} chambre(s) avec des problèmes à vérifier en priorité demain (ou aujourd'hui si vous avez le temps).
-            </Alert>
           )}
         </Stack>
       </Paper>
@@ -374,7 +368,6 @@ export default function RoomsPage() {
               return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor, bgcolor: bgColor }}>
                 <Stack spacing={1}>
                   
-                  {/* TÍTULO E ETIQUETA VISUAL */}
                   <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                     <Typography variant="h5" color={isDoneToday ? "success.main" : !record ? "text.disabled" : "text.primary"}>
                       {n}
