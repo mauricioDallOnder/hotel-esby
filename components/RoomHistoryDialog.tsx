@@ -16,11 +16,13 @@ function Result({ label, text, status }: { label: string; text: string; status: 
     <Typography sx={{ minWidth: 0 }}>{label} : <strong>{text}</strong></Typography>
   </Stack>;
 }
+
 export function RoomHistoryDialog({ room, history, onClose }: { room: string; history: Record[]; onClose: () => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const records = [...new Map(history.filter(r => r.room === room).map(r => [r.id, r])).values()]
     .sort((a, b) => b.date.localeCompare(a.date) || ("updatedAt" in b ? b.updatedAt : "z").localeCompare("updatedAt" in a ? a.updatedAt : "z") || a.id.localeCompare(b.id));
   const record = records.find(r => r.id === selectedId);
+  
   function dateLabel(r: Record) {
     const date = displayDate(r.date);
     if (!("updatedAt" in r)) return `${date} · En attente d’envoi`;
@@ -28,6 +30,7 @@ export function RoomHistoryDialog({ room, history, onClose }: { room: string; hi
       return `${date} · ${new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" }).format(new Date(r.updatedAt))}`;
     return date;
   }
+  
   return <Dialog open fullWidth maxWidth="sm" onClose={onClose} aria-labelledby="room-history-title" slotProps={{ paper: { sx: { m: 2, width: "calc(100% - 32px)", overflowWrap: "anywhere" } } }}>
     <DialogTitle id="room-history-title">Historique · chambre {room}</DialogTitle>
     <DialogContent dividers>
@@ -41,20 +44,30 @@ export function RoomHistoryDialog({ room, history, onClose }: { room: string; hi
         <Typography variant="h6">Détail du contrôle · {dateLabel(record)}</Typography>
         {!("updatedAt" in record) && <Chip label="En attente d’envoi" />}
         <Typography>Inspecteur : {record.actor}</Typography>
+        
         <Result label="Chambre occupée" text={record.occupied === true ? "Oui" : record.occupied === false ? "Non" : "Non renseignée"} status="neutral" />
         <Result label="État général" text={conditionLabels[record.condition] || "Non renseigné"} status={record.condition === "bon" ? "ok" : record.condition ? "bad" : "neutral"} />
         <Result label="Ménage" text={cleaningText(record)} status={record.occupied === true || !record.cleaning ? "neutral" : record.cleaning === "faite" ? "ok" : "bad"} />
+        
+        {/* Adicionado o indicador explícito de Cafards no histórico */}
+        <Result label="Cafards / nuisibles" text={record.bugs === "oui" ? "Détectés (Problème)" : record.bugs === "non" ? "Aucun" : "Non vérifié"} status={record.bugs === "non" ? "ok" : record.bugs === "oui" ? "bad" : "neutral"} />
+        
         {roomChecks.map(check => {
           const result = record.checks.find(c => c.key === check.key)?.result;
           return <Result key={check.key} label={check.label} text={result === "ok" ? "OK" : result === "probleme" ? "Problème" : result === "absent" ? "Absent" : result === "non_verifie" ? "Non vérifié" : "Non renseigné"} status={result === "ok" ? "ok" : result === "probleme" || result === "absent" ? "bad" : "neutral"} />;
         })}
+        
         <Result label="Moquette" text={carpetLabels[record.carpet] || "Non renseignée"} status={record.carpet === "ok" ? "ok" : record.carpet ? "bad" : "neutral"} />
         {record.carpetNotes && <Typography sx={{ whiteSpace: "pre-wrap" }}>{record.carpetNotes}</Typography>}
+        
         <Result label="Micro-ondes" text={record.microwave === "oui" ? "Oui" : record.microwave === "non" ? "Non" : "Non vérifié"} status={record.microwave === "oui" ? "ok" : record.microwave === "non" ? "bad" : "neutral"} />
         {record.microwave === "oui" && <Result label="Propreté du micro-ondes" text={record.microwaveCleaning ? applianceCleaningLabels[record.microwaveCleaning] : "Non renseignée"} status={record.microwaveCleaning === "propre" ? "ok" : record.microwaveCleaning === "sale" ? "bad" : "neutral"} />}
+        
         {record.checks.some(c => c.key === "fridge" && (c.result === "ok" || c.result === "probleme")) && <Result label="Propreté du minibar" text={record.fridgeCleaning ? applianceCleaningLabels[record.fridgeCleaning] : "Non renseignée"} status={record.fridgeCleaning === "propre" ? "ok" : record.fridgeCleaning === "sale" ? "bad" : "neutral"} />}
+        
         <Typography variant="h6">Photos</Typography>
         {"photoIds" in record ? (issuePhotoIds(record).length ? issuePhotoIds(record).map((_, index) => <IssuePhoto key={`${record.id}:${index}`} issueId={record.id} index={index} collection="roomInspections" alt={`Chambre ${record.room} · photo ${index + 1}`} />) : <Typography>Aucune photo</Typography>) : (record.photosData.length ? record.photosData.map((src, index) => <Box component="img" key={`${record.id}:${index}`} src={src} alt={`Photo ${index + 1}`} sx={{ width: "100%", maxWidth: "100%", objectFit: "contain" }} />) : <Typography>Aucune photo</Typography>)}
+        
         <Typography variant="h6">Observations</Typography>
         <Typography sx={{ whiteSpace: "pre-wrap" }}>{record.notes || "Aucune observation"}</Typography>
       </Stack>}

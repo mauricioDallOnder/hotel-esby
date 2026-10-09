@@ -18,7 +18,7 @@ import {
 import { compressPhoto } from "@/lib/photos";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
-type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | "" };
+type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | ""; bugs: RoomEntry["bugs"] | "non_verifie" };
 
 function getDaysDiff(pastDateStr: string, todayStr: string) {
   const past = new Date(pastDateStr);
@@ -31,6 +31,7 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
   const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
     type: "createRoomInspection", schemaVersion: 3, id: createId(), room, date: today(), actor: "", notes: "", condition: "", occupied: null, cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", photosData: [],
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })),
+    bugs: "non_verifie"
   }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
   
   const value = draft.value;
@@ -89,6 +90,14 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
             <MenuItem value="">Non renseigné</MenuItem>
             {Object.entries(cleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
           </TextField>}
+          
+          {/* CAMPO DE CAFARDS ADICIONADO AQUI */}
+          <TextField select required {...validation("bugs")} label="Présence de cafards ou nuisibles" value={value.bugs || "non_verifie"} onChange={e => draft.update({ ...value, bugs: e.target.value as Draft["bugs"] })}>
+            <MenuItem value="non_verifie">Non vérifié</MenuItem>
+            <MenuItem value="non">Non</MenuItem>
+            <MenuItem value="oui">Oui (Problème)</MenuItem>
+          </TextField>
+
           <Typography variant="h6">Points de contrôle</Typography>
           <Typography variant="body2" color="text.secondary">Vérifiez tous les points avant d’enregistrer. Aucun équipement n’est déclaré conforme automatiquement.</Typography>
           {roomChecks.map(check => <TextField key={check.key} select required {...validation(`checks.${check.key}`)} label={check.label} value={value.checks.find(c => c.key === check.key)?.result || "non_verifie"} onChange={e => draft.update({ ...value, checks: value.checks.map(c => c.key === check.key ? { ...c, result: e.target.value as RoomEntry["checks"][number]["result"] } : c) })}>
@@ -107,7 +116,8 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
           {value.microwave === "oui" && <TextField select required {...validation("microwaveCleaning")} label="Propreté du micro-ondes" value={value.microwaveCleaning || "non_verifie"} onChange={e => draft.update({ ...value, microwaveCleaning: e.target.value as Draft["microwaveCleaning"] })}>
             {Object.entries(applianceCleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
           </TextField>}
-          <TextField {...validation("notes")} label="Observations et problèmes constatés" required={value.condition === "a_revoir" || value.condition === "mauvais" || value.checks.some(c => c.result === "probleme")} multiline minRows={3} value={value.notes} onChange={e => draft.update({ ...value, notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />
+          
+          <TextField {...validation("notes")} label="Observations et problèmes constatés" required={value.condition === "a_revoir" || value.condition === "mauvais" || value.checks.some(c => c.result === "probleme") || value.bugs === "oui"} multiline minRows={3} value={value.notes} onChange={e => draft.update({ ...value, notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />
           <Typography variant="body2" color="text.secondary">Les problèmes, observations et photos de ce contrôle seront également enregistrés dans les anomalies après synchronisation.</Typography>
           <Typography variant="h6">Photos du problème · {value.photosData.length}/3</Typography>
           <Typography variant="caption">Facultatives. Les photos sont réduites avant l’envoi pour économiser la connexion.</Typography>
@@ -166,9 +176,6 @@ export default function RoomsPage() {
     finally { setExporting(false); }
   }
 
-  // ==============================================================
-  // ALGORITMO: PLANO DE ROTAÇÃO SEM LIMITE DE COTAS
-  // ==============================================================
   const inspectedTodayRecords = [...latest.values()].filter(r => r.date === day && rooms.includes(r.room));
   const inspectedTodayCount = inspectedTodayRecords.length;
   const inspectedTodayRooms = inspectedTodayRecords.map(r => r.room);
@@ -180,7 +187,6 @@ export default function RoomsPage() {
     .sort((a, b) => a.date.localeCompare(b.date)) 
     .map(r => r.room);
 
-  // A lista completa do que precisa ser feito (rotação)
   const targetRooms = [...neverInspectedRooms, ...oldInspectedRooms];
   const isComplete = targetRooms.length === 0;
 
@@ -189,7 +195,6 @@ export default function RoomsPage() {
     <PageTitle title="Checklist des chambres" description={`${rooms.length} chambres · Planification automatique, ménage et suivi.`} />
     
     <Stack spacing={3}>
-      
       <Paper 
         variant="outlined" 
         sx={{ 
@@ -295,7 +300,6 @@ export default function RoomsPage() {
       
       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
         <Chip label={`${countRoomsOnDate(history, day)}/${rooms.length} contrôlées aujourd'hui`} />
-        {/* CORREÇÃO PARA VERMELHO */}
         <Chip label={`${[...latest.values()].filter(r => rooms.includes(r.room)).filter(hasProblem).length} à revoir au total`} color="error" variant="outlined" />
       </Stack>
       
@@ -351,7 +355,6 @@ export default function RoomsPage() {
                 borderColor = "divider"; 
                 bgColor = "#fcfcfc";
               } else if (hasProblem(record)) {
-                // CORREÇÃO PARA VERMELHO
                 borderColor = "error.main"; 
                 bgColor = "#fff5f5";
               }
@@ -367,7 +370,6 @@ export default function RoomsPage() {
                       {isTarget && <Chip label="Objectif" size="small" color="primary" />}
                       {isDoneToday && <Chip label="Aujourd'hui" size="small" color="success" variant="outlined" />}
                       {!isDoneToday && !record && <Chip label="Jamais fait" size="small" sx={{ bgcolor: "action.hover", color: "text.secondary" }} />}
-                      {/* CORREÇÃO PARA VERMELHO */}
                       {!isDoneToday && record && hasProblem(record) && <Chip label="À revoir" size="small" color="error" />}
                       {!isDoneToday && record && !hasProblem(record) && (
                         <Chip 
