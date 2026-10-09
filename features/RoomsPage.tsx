@@ -345,3 +345,4 @@ export default function RoomsPage() {
     {historyRoom && <RoomHistoryDialog key={historyRoom} room={historyRoom} history={history} onClose={() => setHistoryRoom(null)} />}
   </>;
 }
+//
