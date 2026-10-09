@@ -165,30 +165,24 @@ export default function RoomsPage() {
   // ==============================================================
   const DAILY_QUOTA = 15;
 
-  // 1. O que já foi feito hoje?
   const inspectedTodayRecords = [...latest.values()].filter(r => r.date === day && rooms.includes(r.room));
   const inspectedTodayCount = inspectedTodayRecords.length;
   const inspectedTodayRooms = inspectedTodayRecords.map(r => r.room);
 
-  // 2. Quartos com problemas de dias anteriores que AINDA NÃO foram revistos hoje (Prioridade 1)
   const needsReviewRooms = [...latest.values()]
     .filter(r => r.date < day && rooms.includes(r.room) && hasProblem(r) && !inspectedTodayRooms.includes(r.room))
-    .sort((a, b) => a.date.localeCompare(b.date)) // Os problemas mais antigos primeiro
+    .sort((a, b) => a.date.localeCompare(b.date)) 
     .map(r => r.room);
 
-  // 3. Quartos NUNCA inspecionados (Prioridade 2)
   const neverInspectedRooms = rooms.filter(r => !latest.has(r) && !inspectedTodayRooms.includes(r));
 
-  // 4. Quartos que não têm problemas, ordenados do mais ANTIGO para o mais recente (Rotação)
   const oldInspectedRooms = [...latest.values()]
     .filter(r => r.date < day && rooms.includes(r.room) && !hasProblem(r) && !inspectedTodayRooms.includes(r.room))
-    .sort((a, b) => a.date.localeCompare(b.date)) // Vistorias mais antigas primeiro
+    .sort((a, b) => a.date.localeCompare(b.date)) 
     .map(r => r.room);
 
-  // 5. Juntar as filas por prioridade
   const priorityQueue = [...needsReviewRooms, ...neverInspectedRooms, ...oldInspectedRooms];
 
-  // 6. Pegar apenas o que falta para fechar a cota diária de 15 quartos
   const remainingQuota = Math.max(0, DAILY_QUOTA - inspectedTodayCount);
   const targetRooms = priorityQueue.slice(0, remainingQuota);
 
@@ -200,9 +194,6 @@ export default function RoomsPage() {
     
     <Stack spacing={3}>
       
-      {/* ========================================================= */}
-      {/* NOVA SEÇÃO: OBJECTIF DU JOUR (PLAN DO DIA)                */}
-      {/* ========================================================= */}
       <Paper 
         variant="outlined" 
         sx={{ 
@@ -320,7 +311,8 @@ export default function RoomsPage() {
               
               return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor: isTarget ? "primary.main" : (isDoneToday ? "success.light" : "divider"), bgcolor: isDoneToday ? "#fafdfa" : "inherit" }}>
                 <Stack spacing={1}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  {/* CORREÇÃO DO ERRO DO TYPESCRIPT (sx aplicado ao Stack) */}
+                  <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
                     <Typography variant="h5" color={isDoneToday ? "success.main" : "text.primary"}>{n}</Typography>
                     {isTarget && <Chip label="Priorité" size="small" color="primary" />}
                     {isDoneToday && <Chip label="Fait" size="small" color="success" variant="outlined" />}
@@ -345,4 +337,3 @@ export default function RoomsPage() {
     {historyRoom && <RoomHistoryDialog key={historyRoom} room={historyRoom} history={history} onClose={() => setHistoryRoom(null)} />}
   </>;
 }
-//
