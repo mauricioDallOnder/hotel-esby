@@ -13,7 +13,8 @@ import { execute, executeEntry, readState } from "../lib/storage";
 const entry = (): RoomEntry => ({ type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", occupied: false, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "sale", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
 const saved = (overrides: Partial<RoomInspection> = {}): RoomInspection => ({ ...entry(), version: 1, updatedAt: "2026-10-01T10:00:00Z", submissionHash: "hash", photoIds: [], photoId: null, ...overrides });
 
-test("PDF selects the latest checklist, excludes occupied/unknown rooms, and labels missing and pending answers", () => {
+// NOTA: Adicionada a palavra-chave 'async'
+test("PDF selects the latest checklist, excludes occupied/unknown rooms, and labels missing and pending answers", async () => {
   const oldFree = saved({ date: "2026-09-29" });
   const nowOccupied = saved({ occupied: true, date: "2026-09-30" });
   const unknown = saved({ room: "115", occupied: null });
@@ -22,21 +23,29 @@ test("PDF selects the latest checklist, excludes occupied/unknown rooms, and lab
   const pending = { ...entry(), room: "117" };
   const history = [oldFree, nowOccupied, unknown, legacy, pending, absent];
   const rows = freeRoomRows(history);
-  assert.deepEqual(rows.map(r => r[0]), ["116", "117", "118"]);
+  
+  // Tipagem forte para `r` ser `string[]` e parar o TS7006
+  assert.deepEqual(rows.map((r: string[]) => r[0]), ["116", "117", "118"]);
   assert.match(rows[0][4], /Non renseignée/);
   assert.match(rows[1][1], /En attente d’envoi/);
   assert.match(rows[1][5], /Sale/);
   assert.equal(rows[2][4], "Absent"); assert.equal(rows[2][5], "Absent");
-  const doc = buildFreeRoomsReport({ hotelName: "Hôtel test", history });
+  
+  // NOTA: Adicionado o `await`
+  const doc = await buildFreeRoomsReport({ hotelName: "Hôtel test", history });
   assert.match(doc.output(), /^%PDF/);
   const stream = doc.output().match(/stream\n([\s\S]*?)\nendstream/)![1];
   assert.match(inflateSync(Buffer.from(stream, "binary")).toString("latin1"), /Minibar/);
   assert.ok(doc.output("arraybuffer").byteLength > 1000);
 });
 
-test("PDF paginates a full hotel and long observations", () => {
+// NOTA: Adicionada a palavra-chave 'async'
+test("PDF paginates a full hotel and long observations", async () => {
   const history = roomChecks.flatMap((_, index) => [saved({ room: String(101 + index), notes: "Observation longue. ".repeat(100) })]);
-  assert.ok(buildFreeRoomsReport({ hotelName: "Test", history }).getNumberOfPages() > 1);
+  
+  // NOTA: Adicionado o `await`
+  const doc = await buildFreeRoomsReport({ hotelName: "Test", history });
+  assert.ok(doc.getNumberOfPages() > 1);
 });
 
 test("v2 pending payloads keep their original hash and cleaning answers", () => {

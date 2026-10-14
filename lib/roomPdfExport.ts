@@ -11,13 +11,30 @@ export function freeRoomRecords(history: Options["history"]) {
     .sort((a, b) => a.room.localeCompare(b.room, "fr", { numeric: true }));
 }
 
+// RESTAURADO PARA OS TESTES FUNCIONAREM (TS2305)
+export function freeRoomRows(history: Options["history"]) {
+  return freeRoomRecords(history).map(record => {
+      const fridge = record.checks.find(check => check.key === "fridge")?.result;
+      const cleanliness = (value: RoomEntry["microwaveCleaning"]) => value ? applianceCleaningLabels[value] : "Non renseignée";
+      
+      return [
+        record.room,
+        `${displayDate(record.date)}\n${record.actor}${"updatedAt" in record ? "" : "\nEn attente d’envoi"}`,
+        conditionLabels[record.condition],
+        cleaningText(record),
+        record.microwave === "oui" ? `Présent\n${cleanliness(record.microwaveCleaning)}` : record.microwave === "non" ? "Absent" : "Non vérifié",
+        fridge === "absent" ? "Absent" : fridge === "ok" || fridge === "probleme" ? `Présent${fridge === "probleme" ? " · Problème" : ""}\n${cleanliness(record.fridgeCleaning)}` : "Non vérifié",
+        [...roomProblems(record), record.notes].filter(Boolean).join("\n") || "Aucun problème signalé",
+        "" // Colonne vide réservée pour dessiner l'image
+      ];
+  });
+}
+
 // Fonction pour télécharger la 1ère photo avec le système de retry (anti-crash)
 async function loadFirstPhoto(record: RoomEntry | RoomInspection): Promise<string | null> {
-  // S'il s'agit d'un brouillon local
   if ("photosData" in record && record.photosData && record.photosData.length > 0) {
      return record.photosData[0];
   }
-  // S'il s'agit d'un contrôle enregistré sur le serveur
   if ("photoIds" in record && record.photoIds && record.photoIds.length > 0) {
      for (let attempt = 0; attempt < 3; attempt++) {
          try {
@@ -42,6 +59,7 @@ async function loadFirstPhoto(record: RoomEntry | RoomInspection): Promise<strin
 
 export async function buildFreeRoomsReport({ hotelName, history }: Options) {
   const records = freeRoomRecords(history);
+  const rows = freeRoomRows(history); // Agora usamos a função separada
   const photoMap = new Map<string, string>();
 
   // Étape 1 : Télécharger les photos des chambres libres qui ont des problèmes
@@ -53,23 +71,6 @@ export async function buildFreeRoomsReport({ hotelName, history }: Options) {
          }
      }
   }
-
-  // Étape 2 : Préparer les lignes du tableau
-  const rows = records.map(record => {
-      const fridge = record.checks.find(check => check.key === "fridge")?.result;
-      const cleanliness = (value: RoomEntry["microwaveCleaning"]) => value ? applianceCleaningLabels[value] : "Non renseignée";
-      
-      return [
-        record.room,
-        `${displayDate(record.date)}\n${record.actor}${"updatedAt" in record ? "" : "\nEn attente d’envoi"}`,
-        conditionLabels[record.condition],
-        cleaningText(record),
-        record.microwave === "oui" ? `Présent\n${cleanliness(record.microwaveCleaning)}` : record.microwave === "non" ? "Absent" : "Non vérifié",
-        fridge === "absent" ? "Absent" : fridge === "ok" || fridge === "probleme" ? `Présent${fridge === "probleme" ? " · Problème" : ""}\n${cleanliness(record.fridgeCleaning)}` : "Non vérifié",
-        [...roomProblems(record), record.notes].filter(Boolean).join("\n") || "Aucun problème signalé",
-        "" // Colonne vide réservée pour dessiner l'image
-      ];
-  });
 
   const doc = new jsPDF({ orientation: "landscape", compress: true });
   doc.setFontSize(18);
@@ -99,7 +100,6 @@ export async function buildFreeRoomsReport({ hotelName, history }: Options) {
     
     didParseCell: (data) => {
         if (data.section === "body" && data.column.index === 7) {
-            // CORREÇÃO TYPESCRIPT: Asserção de tipo para string[]
             const roomNumber = (data.row.raw as string[])[0];
             if (photoMap.has(roomNumber)) {
                 data.cell.styles.minCellHeight = 30; // Espace de 3 cm de hauteur pour la photo
@@ -109,7 +109,6 @@ export async function buildFreeRoomsReport({ hotelName, history }: Options) {
     
     didDrawCell: (data) => {
         if (data.section === "body" && data.column.index === 7) {
-            // CORREÇÃO TYPESCRIPT: Asserção de tipo para string[]
             const roomNumber = (data.row.raw as string[])[0];
             const photoData = photoMap.get(roomNumber);
             if (photoData) {
