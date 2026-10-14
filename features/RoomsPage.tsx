@@ -91,7 +91,6 @@ function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
             {Object.entries(cleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
           </TextField>}
           
-          {/* CAMPO DE CAFARDS ADICIONADO AQUI */}
           <TextField select required {...validation("bugs")} label="Présence de cafards ou nuisibles" value={value.bugs || "non_verifie"} onChange={e => draft.update({ ...value, bugs: e.target.value as Draft["bugs"] })}>
             <MenuItem value="non_verifie">Non vérifié</MenuItem>
             <MenuItem value="non">Non</MenuItem>
@@ -171,7 +170,8 @@ export default function RoomsPage() {
     setExportMenu(null); setExporting(true); setExportError("");
     try {
       const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport");
-      downloadFreeRoomsReport({ hotelName, history });
+      // ATTENTION : Ajout du mot-clé "await" ici pour bloquer l'UI pendant le téléchargement des images
+      await downloadFreeRoomsReport({ hotelName, history });
     } catch (error) { setExportError((error as Error).message); }
     finally { setExporting(false); }
   }
