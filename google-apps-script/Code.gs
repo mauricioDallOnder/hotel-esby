@@ -1,5 +1,6 @@
 // Hôtel Contrôle — paste into the Apps Script project bound to your spreadsheet.
 // Run setup() once, then deploy as a web app. Never put API_TOKEN in client code.
+//https://script.google.com/macros/s/AKfycby8og5t12Q7D9_Nspi-CPu0j5bXygWcoCqPKeOP0sMy5mrRvQPkMfUd96cucJqrT7Xg/exec
 const SPREADSHEET_ID = '1mF0nUV0FihRnNJD0V6KnK7iJAjUleksrW-sPZvSd61I';
 const TABLES = { issues: 'Anomalies', inspections: 'Rondes', familyEvents: 'Absences et départs', roomInspections: 'Contrôles chambres' };
 const HEADERS = ['ID', 'Version', 'Date', 'Lieu / zone', 'Titre / inspecteur', 'Statut', 'Priorité', 'Responsable', 'Photo Drive', 'Modifié le'].concat(Array.from({length: 12}, (_, i) => 'Données ' + (i + 1)));
