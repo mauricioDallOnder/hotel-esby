@@ -32,9 +32,12 @@ function table_(collection) {
   }
   if (headers.length > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   const existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  // The only supported upgrade appends the new check. Never shift old cells.
-  if (collection === 'roomInspections' && existing.slice(0, -1).join('|') === headers.slice(0, -1).join('|') && !existing[headers.length - 1]) {
-    sheet.getRange(1, headers.length, 1, 1).setValues([[headers[headers.length - 1]]]).setFontWeight('bold');
+  // Append-only upgrades preserve existing columns and every historical row.
+  if (collection === 'roomInspections') {
+    const firstMissing = existing.findIndex(value => !value);
+    if (firstMissing >= 0 && firstMissing >= headers.length - 2 && existing.slice(0, firstMissing).join('|') === headers.slice(0, firstMissing).join('|') && existing.slice(firstMissing).every(value => !value)) {
+      sheet.getRange(1, firstMissing + 1, 1, headers.length - firstMissing).setValues([headers.slice(firstMissing)]).setFontWeight('bold');
+    }
   }
   if (sheet.getRange(1, 1, 1, headers.length).getValues()[0].join('|') !== headers.join('|')) throw new Error('En-têtes incompatibles dans ' + name + '. Ne modifiez pas la structure.');
   return sheet;
@@ -54,7 +57,7 @@ function doPost(e) {
     const input = JSON.parse(e.postData.contents);
     const token = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
     if (!token || input.token !== token) return json_({ ok: false, code: 401, error: 'Accès refusé.' });
-    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), maxIssuePhotos: 3, entryVersion: 2, deletedFamilyEventIds: deletedAbsences_() } });
+    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), maxIssuePhotos: 3, entryVersion: 3, deletedFamilyEventIds: deletedAbsences_() } });
     if (input.action === 'photo') {
       const collection = input.collection === 'roomInspections' ? 'roomInspections' : 'issues';
       const issue = records_(collection).find(item => item.id === input.issueId);
@@ -85,10 +88,11 @@ function doPost(e) {
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (input.action !== 'commit' && input.action !== 'commitEntry') throw new Error('Action invalide.');
+    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection') throw new Error('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
-    const isEntry = input.action === 'commitEntry';
+    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection';
+    if (input.action === 'commitRoomInspection' && input.collection !== 'roomInspections') throw new Error('Collection invalide.');
     if (isEntry && !['familyEvents', 'roomInspections'].includes(input.collection)) throw new Error('Collection invalide.');
     if (!isEntry && ['familyEvents', 'roomInspections'].includes(input.collection)) throw new Error('Utilisez commitEntry.');
     if (isEntry && (input.expectedVersion !== 0 || !/^[a-f0-9]{64}$/.test(input.record && input.record.submissionHash))) throw new Error('Enregistrement invalide.');
@@ -98,7 +102,20 @@ function doPost(e) {
     const records = records_(input.collection);
     const current = records.find(item => item.id === record.id);
     if (input.collection === 'familyEvents' && deletedAbsences_().includes(record.id)) return json_({ ok: false, code: 409, error: 'Cette absence a été supprimée.' });
-    if (isEntry && current && current.submissionHash === record.submissionHash) return json_({ ok: true, data: { collection: input.collection, record: current, issue: syncRoomIssue_(input, current) } });
+    if (isEntry && current && current.submissionHash === record.submissionHash) {
+      if (input.collection === 'roomInspections') {
+        const migrated = current.issueSyncVersion !== 2;
+        // Historical same-ID anomalies must retain their existing identity.
+        const previous = records_('issues').find(item => item.id === current.id);
+        if (migrated && previous) {
+          current.issueSyncVersion = 2; current.createdIssue = true;
+          current.relatedIssueIds = []; current.newIssueFindingKeys = (input.issue && input.issue.roomFindings || []).map(f => f.key);
+        }
+        input.issue = RoomIssueMatching.prepareRoomIssue(input.issue, current, records_('issues'));
+        if (migrated) writeRecord_('roomInspections', current, true, current);
+      }
+      return json_({ ok: true, data: { collection: input.collection, record: current, issue: syncRoomIssue_(input, current) } });
+    }
     if ((current ? current.version : 0) !== input.expectedVersion) return json_({ ok: false, code: 409, error: 'Modifié par un autre utilisateur. Actualisez avant de réessayer.' });
     if (input.collection === 'inspections' && current && current.completed) throw new Error('Ronde déjà terminée.');
     // The trusted Next.js server validates the full business schema before commit.
@@ -119,6 +136,9 @@ function doPost(e) {
         });
       }
       record.photoId = record.photoIds[0] || null;
+    }
+    if (input.collection === 'roomInspections') {
+      input.issue = RoomIssueMatching.prepareRoomIssue(input.issue, record, records_('issues'));
     }
     writeRecord_(input.collection, record, isEntry, current);
     const issue = syncRoomIssue_(input, record);
@@ -160,11 +180,11 @@ function photoIds_(record) {
   return record.photoIds && record.photoIds.length ? record.photoIds : record.photoId ? [record.photoId] : [];
 }
 
-const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear'];
+const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear', 'door_closer'];
 function headers_(collection) {
   const data = HEADERS.slice(10);
   if (collection === 'familyEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Famille', 'Événement', 'Signalé par', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Retour prévu']);
-  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée']);
+  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée', 'Ferme-porte']);
   return HEADERS;
 }
 function deletionTable_() {
@@ -196,3 +216,111 @@ function setupRooms_() {
   if (previousRows > rows.length) sheet.getRange(rows.length + 1, 1, previousRows - rows.length, 2).clearContent();
   sheet.setFrozenRows(1);
 }
+// BEGIN GENERATED ROOM ISSUE MATCHING — npm run build:apps-script
+var RoomIssueMatching = (function () {
+var exports = {};
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.normalizeIssueText = normalizeIssueText;
+exports.issueRoom = issueRoom;
+exports.openRoomIssues = openRoomIssues;
+exports.matchesRoomFinding = matchesRoomFinding;
+exports.planRoomIssue = planRoomIssue;
+exports.prepareRoomIssue = prepareRoomIssue;
+function normalizeIssueText(text) {
+    return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function issueRoom(issue) {
+    if (issue.room)
+        return issue.room;
+    const location = normalizeIssueText(issue.location || "");
+    if (/^\d{3}$/.test(location))
+        return location;
+    const matches = [...location.matchAll(/\b(?:chambre|ch)\s+(\d{3})\b/g)];
+    return matches.length === 1 && (location.match(/\b\d{3}\b/g) || []).length === 1 ? matches[0][1] : undefined;
+}
+function openRoomIssues(issues, room) {
+    return issues.filter(issue => issue.status !== "resolu" && issueRoom(issue) === room);
+}
+const keywords = {
+    taps: /\b(robinet\w*|mitigeur\w*)\b/,
+    switches: /\binterrupteur\w*\b/,
+    leaks: /\b(fuite\w*|infiltration\w*)\b/,
+    lights: /\b(eclair\w*|ampoule\w*|lumiere\w*|lampe\w*)\b/,
+    smoke: /\b(detecteur\w*|fumee)\b/,
+    window: /\b(fenetre\w*|vitrage\w*)\b/,
+    bed: /\b(lit|lits|sommier\w*)\b/,
+    mattress: /\bmatelas\b/,
+    fridge: /\b(minibar\w*|frigo\w*|refrigerateur\w*)\b/,
+    door_handle_clear: /\bpoignee\w*\b/,
+    door_closer: /\b(ferme porte\w*|groom\w*|fermeture automatique)\b/,
+    bugs: /\b(cafard\w*|nuisible\w*|punaise\w*|blatte\w*)\b/,
+    carpet: /\bmoquette\w*\b/,
+    cleaning: /\b(menage|nettoyage chambre)\b/,
+};
+function matchesRoomFinding(issue, finding) {
+    var _a, _b;
+    if ((_a = issue.roomFindings) === null || _a === void 0 ? void 0 : _a.length)
+        return issue.roomFindings.some(item => item.key === finding.key &&
+            (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
+    const text = normalizeIssueText(`${issue.title || ""} ${issue.description || ""}`);
+    const dirty = /\b(sale\w*|salete\w*|nettoy\w*|proprete)\b/.test(text);
+    if (finding.key === "microwave_cleaning")
+        return /\bmicro ondes?\b/.test(text) && dirty;
+    if (finding.key === "fridge_cleaning")
+        return keywords.fridge.test(text) && dirty;
+    if (finding.key === "fridge" && dirty && !/\b(panne|hs|fonction\w*|casse\w*|refroid\w*)\b/.test(text))
+        return false;
+    if (finding.key === "observation")
+        return normalizeIssueText(issue.description || "") === normalizeIssueText(finding.label);
+    return ((_b = keywords[finding.key]) === null || _b === void 0 ? void 0 : _b.test(text)) || false;
+}
+function planRoomIssue(candidate, record, issues) {
+    var _a;
+    if (!candidate)
+        return { issue: undefined, relatedIssueIds: [] };
+    const open = openRoomIssues(issues, record.room);
+    const related = new Set();
+    const remaining = (candidate.roomFindings || []).filter(finding => {
+        var _a, _b;
+        if ((_a = record.distinctProblemKeys) === null || _a === void 0 ? void 0 : _a.includes(finding.key))
+            return true;
+        const explicit = (_b = record.issueLinks) === null || _b === void 0 ? void 0 : _b.find(link => link.key === finding.key);
+        const existing = open.find(issue => (explicit === null || explicit === void 0 ? void 0 : explicit.issueId) === issue.id) || open.find(issue => matchesRoomFinding(issue, finding));
+        if (existing) {
+            related.add(existing.id);
+            return false;
+        }
+        return true;
+    });
+    if (((_a = candidate.roomFindings) === null || _a === void 0 ? void 0 : _a.length) && !remaining.length)
+        return { issue: undefined, relatedIssueIds: [...related] };
+    const issue = { ...candidate, roomFindings: remaining,
+        description: remaining.length ? [...remaining.map(finding => finding.label), ...(record.notes && !remaining.some(f => f.label === record.notes) ? [record.notes] : [])].join("\n").slice(0, 4000) : candidate.description };
+    return { issue, relatedIssueIds: [...related] };
+}
+// Persist the decision before either write. Replays keep that decision even if
+// a linked issue was resolved after the inspection or a write was interrupted.
+function prepareRoomIssue(candidate, record, issues) {
+    var _a, _b;
+    if (record.issueSyncVersion === 2) {
+        if (!record.createdIssue || !candidate)
+            return undefined;
+        const existing = issues.find(issue => issue.id === record.id);
+        if (existing)
+            return existing;
+        const findings = (candidate.roomFindings || []).filter(f => { var _a; return (_a = record.newIssueFindingKeys) === null || _a === void 0 ? void 0 : _a.includes(f.key); });
+        return { ...candidate, roomFindings: findings,
+            description: findings.length ? [...findings.map(f => f.label), ...(record.notes && !findings.some(f => f.label === record.notes) ? [record.notes] : [])].join("\n").slice(0, 4000) : candidate.description };
+    }
+    const plan = planRoomIssue(candidate, record, issues);
+    record.relatedIssueIds = plan.relatedIssueIds;
+    record.createdIssue = !!plan.issue;
+    record.newIssueFindingKeys = ((_b = (_a = plan.issue) === null || _a === void 0 ? void 0 : _a.roomFindings) === null || _b === void 0 ? void 0 : _b.map(f => f.key)) || [];
+    record.issueSyncVersion = 2;
+    return plan.issue;
+}
+
+return exports;
+})();
+// END GENERATED ROOM ISSUE MATCHING

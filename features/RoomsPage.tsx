@@ -1,149 +1,35 @@
 "use client";
 import { useEffect, useState } from "react";
-import { 
-  Alert, Box, Button, Chip, Dialog, DialogContent, DialogTitle, 
-  Menu, MenuItem, Paper, Stack, TextField, Typography, LinearProgress 
-} from "@mui/material";
+import { Alert, Box, Button, Chip, LinearProgress, Paper, Stack, TextField, Typography } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { RoomHistoryDialog } from "@/components/RoomHistoryDialog";
-import { createId, displayDate, today } from "@/lib/domain";
-import { 
-  applianceCleaningLabels, carpetLabels, cleaningLabels, cleaningText, 
-  countRoomsOnDate, latestRoomRecords, normalizeRoomDraft, conditionLabels, 
-  resultLabels, roomChecks, roomEntrySchema, roomGroups, roomProblems, 
-  rooms, type RoomEntry, type RoomInspection 
-} from "@/lib/rooms";
-import { compressPhoto } from "@/lib/photos";
+import { RoomInspectionDialog } from "@/components/RoomInspectionDialog";
+import { displayDate, today } from "@/lib/domain";
+import { cleaningText, latestRoomRecords, roomGroups, rooms, type RoomEntry } from "@/lib/rooms";
+import { daysSince, roomRotation } from "@/lib/roomRotation";
+import { openRoomIssues } from "@/lib/roomIssueMatching";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
-type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | ""; bugs: RoomEntry["bugs"] | "non_verifie" };
-
-function getDaysDiff(pastDateStr: string, todayStr: string) {
-  const past = new Date(pastDateStr);
-  const present = new Date(todayStr);
-  return Math.round((present.getTime() - past.getTime()) / (1000 * 3600 * 24));
-}
-
-function RoomForm({ room, onClose }: { room: string; onClose: () => void }) {
-  const { enqueue } = useEntries();
-  const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
-    type: "createRoomInspection", schemaVersion: 3, id: createId(), room, date: today(), actor: "", notes: "", condition: "", occupied: null, cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", photosData: [],
-    checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })),
-    bugs: "non_verifie"
-  }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
-  
-  const value = draft.value;
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [compressing, setCompressing] = useState(false);
-  const [invalid, setInvalid] = useState<string[]>([]);
-  
-  const validation = (field: string) => ({ error: invalid.includes(field), helperText: invalid.includes(field) ? "Veuillez renseigner ce point." : undefined });
-  
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    const parsed = roomEntrySchema.safeParse(value);
-    if (!parsed.success) {
-      setInvalid(parsed.error.issues.map(i => i.path.join(".")));
-      setError("Veuillez vérifier tous les points obligatoires avant d’enregistrer le contrôle.");
-      setTimeout(() => document.querySelector<HTMLElement>('[role="dialog"] [aria-invalid="true"]')?.focus(), 0);
-      return;
-    }
-    setInvalid([]);
-    setBusy(true);
-    try { await enqueue(parsed.data); await draft.clear(); onClose(); }
-    catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }
-  
-  async function addPhotos(files: File[]) {
-    if (!value || !files.length) return;
-    if (value.photosData.length + files.length > 3) { setError("Ajoutez au maximum 3 photos."); return; }
-    setCompressing(true); setError("");
-    try {
-      const photos = [];
-      for (const file of files) photos.push(await compressPhoto(file, true));
-      draft.update({ ...value, photosData: [...value.photosData, ...photos] });
-    } catch (e) { setError((e as Error).message); }
-    finally { setCompressing(false); }
-  }
-  
-  return <Dialog open fullWidth maxWidth="sm" onClose={busy || compressing ? undefined : onClose}>
-    <DialogTitle>Contrôle · chambre {room}</DialogTitle>
-    <DialogContent>
-      <Stack component="form" noValidate onSubmit={submit} spacing={2} sx={{ pt: 1 }}>
-        {error && <Alert severity="error">{error}</Alert>}
-        {draft.error && <Alert severity="error">{draft.error}</Alert>}
-        {value ? <Box component="fieldset" disabled={busy || compressing} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}><Stack spacing={2}>
-          <TextField required {...validation("date")} label="Date du contrôle" type="date" value={value.date} onChange={e => draft.update({ ...value, date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today() } }} />
-          <TextField required {...validation("actor")} label="Inspecteur" value={value.actor} onChange={e => draft.update({ ...value, actor: e.target.value })} slotProps={{ htmlInput: { maxLength: 200 } }} />
-          <TextField select required {...validation("condition")} label="État général de la chambre" value={value.condition} onChange={e => draft.update({ ...value, condition: e.target.value as Draft["condition"] })}>
-            {Object.entries(conditionLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
-          </TextField>
-          <TextField select required {...validation("occupied")} label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} onChange={e => draft.update({ ...value, occupied: e.target.value === "oui", cleaning: e.target.value === "oui" ? null : value.cleaning })}>
-            <MenuItem value="oui">Oui</MenuItem><MenuItem value="non">Non</MenuItem>
-          </TextField>
-          {value.occupied === false && <TextField select required {...validation("cleaning")} label="Nettoyage / ménage" value={value.cleaning || ""} onChange={e => draft.update({ ...value, cleaning: (e.target.value || null) as Draft["cleaning"] })}>
-            <MenuItem value="">Non renseigné</MenuItem>
-            {Object.entries(cleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
-          </TextField>}
-          
-          <TextField select required {...validation("bugs")} label="Présence de cafards ou nuisibles" value={value.bugs || "non_verifie"} onChange={e => draft.update({ ...value, bugs: e.target.value as Draft["bugs"] })}>
-            <MenuItem value="non_verifie">Non vérifié</MenuItem>
-            <MenuItem value="non">Non</MenuItem>
-            <MenuItem value="oui">Oui (Problème)</MenuItem>
-          </TextField>
-
-          <Typography variant="h6">Points de contrôle</Typography>
-          <Typography variant="body2" color="text.secondary">Vérifiez tous les points avant d’enregistrer. Aucun équipement n’est déclaré conforme automatiquement.</Typography>
-          {roomChecks.map(check => <TextField key={check.key} select required {...validation(`checks.${check.key}`)} label={check.label} value={value.checks.find(c => c.key === check.key)?.result || "non_verifie"} onChange={e => draft.update({ ...value, checks: value.checks.map(c => c.key === check.key ? { ...c, result: e.target.value as RoomEntry["checks"][number]["result"] } : c) })}>
-            {Object.entries(resultLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
-          </TextField>)}
-          {value.checks.some(c => c.key === "fridge" && (c.result === "ok" || c.result === "probleme")) && <TextField select required {...validation("fridgeCleaning")} label="Propreté du minibar" value={value.fridgeCleaning || "non_verifie"} onChange={e => draft.update({ ...value, fridgeCleaning: e.target.value as Draft["fridgeCleaning"] })}>
-            {Object.entries(applianceCleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
-          </TextField>}
-          <TextField select required {...validation("carpet")} label="État de la moquette" value={value.carpet} onChange={e => draft.update({ ...value, carpet: e.target.value as Draft["carpet"] })}>
-            {Object.entries(carpetLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
-          </TextField>
-          {value.carpet && value.carpet !== "ok" && <TextField required {...validation("carpetNotes")} label="Précisez les taches ou salissures" multiline minRows={2} value={value.carpetNotes} onChange={e => draft.update({ ...value, carpetNotes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />}
-          <TextField select required {...validation("microwave")} label="Micro-ondes présent ?" value={value.microwave} onChange={e => draft.update({ ...value, microwave: e.target.value as RoomEntry["microwave"] })}>
-            <MenuItem value="non_verifie">Non vérifié</MenuItem><MenuItem value="oui">Oui</MenuItem><MenuItem value="non">Non</MenuItem>
-          </TextField>
-          {value.microwave === "oui" && <TextField select required {...validation("microwaveCleaning")} label="Propreté du micro-ondes" value={value.microwaveCleaning || "non_verifie"} onChange={e => draft.update({ ...value, microwaveCleaning: e.target.value as Draft["microwaveCleaning"] })}>
-            {Object.entries(applianceCleaningLabels).map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
-          </TextField>}
-          
-          <TextField {...validation("notes")} label="Observations et problèmes constatés" required={value.condition === "a_revoir" || value.condition === "mauvais" || value.checks.some(c => c.result === "probleme") || value.bugs === "oui"} multiline minRows={3} value={value.notes} onChange={e => draft.update({ ...value, notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />
-          <Typography variant="body2" color="text.secondary">Les problèmes, observations et photos de ce contrôle seront également enregistrés dans les anomalies après synchronisation.</Typography>
-          <Typography variant="h6">Photos du problème · {value.photosData.length}/3</Typography>
-          <Typography variant="caption">Facultatives. Les photos sont réduites avant l’envoi pour économiser la connexion.</Typography>
-          <Stack direction="row" spacing={1}>
-            <Button component="label" variant="outlined" disabled={compressing || value.photosData.length >= 3}>Prendre une photo<input hidden type="file" accept="image/*" capture="environment" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
-            <Button component="label" disabled={compressing || value.photosData.length >= 3}>Galerie<input hidden multiple type="file" accept="image/*" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
-          </Stack>
-          {value.photosData.map((photo, i) => <Box key={i}>
-            <Box component="img" src={photo} alt={`Photo du problème ${i + 1}`} sx={{ width: "100%", maxHeight: 220, objectFit: "contain" }} />
-            <Button color="error" onClick={() => draft.update({ ...value, photosData: value.photosData.filter((_, index) => index !== i) })}>Retirer la photo {i + 1}</Button>
-          </Box>)}
-          <Typography variant="caption">{compressing ? "Compression des photos…" : draft.saving ? "Sauvegarde du brouillon…" : "Brouillon conservé sur cet appareil pendant la saisie."}</Typography>
-          <Button variant="contained" type="submit" disabled={busy || compressing}>Enregistrer le contrôle</Button>
-        </Stack></Box> : <Typography>Chargement du brouillon…</Typography>}
-        <Button disabled={busy || compressing} onClick={onClose}>Fermer · garder le brouillon</Button>
-      </Stack>
-    </DialogContent>
-  </Dialog>;
-}
-
+type Preferences = { dailyGoal: number; intervalDays: number; deferredDay: string; deferred: string[] };
+const filters = { all: "Toutes", target: "Tournée du jour", due: "À contrôler", problems: "Anomalies ouvertes", free: "Libres", cleaning: "Ménage à faire" };
 export default function RoomsPage() {
-  const { roomInspections = [], hotelName } = useAppContext();
+  const { roomInspections = [], issues, hotelName } = useAppContext();
   const { pending } = useEntries();
   const [room, setRoom] = useState<string | null>(null);
   const [historyRoom, setHistoryRoom] = useState<string | null>(null);
   const [day, setDay] = useState(today);
-  
+  const [search, setSearch] = useState("");
+  const [group, setGroup] = useState("all");
+  const [filter, setFilter] = useState<keyof typeof filters>("all");
+  const [settings, setSettings] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [message, setMessage] = useState("");
+  const [exportError, setExportError] = useState("");
+  const preferences = useDeviceDraft<Preferences>("room-rotation-preferences", () => ({ dailyGoal: 15, intervalDays: 7, deferredDay: day, deferred: [] }));
+  const config = preferences.value;
+  const deferred = config?.deferredDay === day ? config.deferred : [];
   useEffect(() => {
     const update = () => setDay(today());
     const timer = window.setInterval(update, 30_000);
@@ -151,253 +37,100 @@ export default function RoomsPage() {
     document.addEventListener("visibilitychange", update);
     return () => { clearInterval(timer); window.removeEventListener("focus", update); document.removeEventListener("visibilitychange", update); };
   }, []);
-  
-  const [search, setSearch] = useState("");
-  const [group, setGroup] = useState("all");
-  const [filter, setFilter] = useState("all");
-  const [exportMenu, setExportMenu] = useState<HTMLElement | null>(null);
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState("");
-  
   const queued = pending.filter(p => p.entry.type === "createRoomInspection").map(p => p.entry as RoomEntry);
-  const history = [...queued, ...roomInspections.filter(i => !queued.some(q => q.id === i.id))].sort((a, b) => b.date.localeCompare(a.date) || ("updatedAt" in b ? b.updatedAt : "z").localeCompare("updatedAt" in a ? a.updatedAt : "z"));
-  const latest = latestRoomRecords(history);
-  const freeRooms = [...latest.values()].filter(record => record.occupied === false);
-  
-  function hasProblem(record: RoomEntry | RoomInspection) { return roomProblems(record).length > 0; }
-  
+  const history = [...queued, ...roomInspections.filter(i => !queued.some(q => q.id === i.id))];
+  const latest = latestRoomRecords(history.filter(r => r.date <= day));
+  const rotation = roomRotation(history.filter(r => !pending.some(p => p.entry.id === r.id && p.blocked)), day, config?.dailyGoal, config?.intervalDays, deferred);
+  const free = [...latest.values()].filter(r => r.occupied === false);
+  const nextRoom = rotation.plan.find(n => n !== room);
+  function changePreference(patch: Partial<Preferences>) { if (config) preferences.update({ ...config, ...patch }); }
+  function deferRoom() {
+    if (!room || !config) return;
+    changePreference({ deferredDay: day, deferred: [...new Set([...deferred, room])] });
+    setMessage(`Chambre ${room} reportée à demain. Son brouillon est conservé ; elle n’est pas comptée comme contrôlée.`);
+    setRoom(nextRoom || null);
+  }
   async function exportFreeRooms() {
-    setExportMenu(null); setExporting(true); setExportError("");
-    try {
-      const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport");
-      // ATTENTION : Ajout du mot-clé "await" ici pour bloquer l'UI pendant le téléchargement des images
-      await downloadFreeRoomsReport({ hotelName, history });
-    } catch (error) { setExportError((error as Error).message); }
+    setExporting(true); setExportError("");
+    try { const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport"); await downloadFreeRoomsReport({ hotelName, history }); }
+    catch (error) { setExportError((error as Error).message); }
     finally { setExporting(false); }
   }
-
-  const inspectedTodayRecords = [...latest.values()].filter(r => r.date === day && rooms.includes(r.room));
-  const inspectedTodayCount = inspectedTodayRecords.length;
-  const inspectedTodayRooms = inspectedTodayRecords.map(r => r.room);
-
-  const neverInspectedRooms = rooms.filter(r => !latest.has(r) && !inspectedTodayRooms.includes(r));
-
-  const oldInspectedRooms = [...latest.values()]
-    .filter(r => r.date < day && rooms.includes(r.room) && !hasProblem(r) && !inspectedTodayRooms.includes(r.room))
-    .sort((a, b) => a.date.localeCompare(b.date)) 
-    .map(r => r.room);
-
-  const targetRooms = [...neverInspectedRooms, ...oldInspectedRooms];
-  const isComplete = targetRooms.length === 0;
-
+  const visibleGroups = roomGroups.filter(g => group === "all" || group === g.label).map(g => ({ ...g, rooms: g.rooms.filter(n => {
+    if (!n.includes(search.trim())) return false;
+    const record = latest.get(n);
+    if (filter === "target") return rotation.plan.includes(n) || rotation.done.includes(n);
+    if (filter === "due") return rotation.due.includes(n);
+    if (filter === "problems") return openRoomIssues(issues, n).length > 0;
+    if (filter === "free") return record?.occupied === false;
+    if (filter === "cleaning") return record?.occupied === false && record.cleaning === "non_faite";
+    return true;
+  }) })).filter(g => g.rooms.length);
   return <>
     <ConnectionBar />
-    <PageTitle title="Checklist des chambres" description={`${rooms.length} chambres · Planification automatique, ménage et suivi.`} />
-    
+    <PageTitle title="Contrôle des chambres" description="Votre tournée, un contrôle rapide, un historique clair." />
     <Stack spacing={3}>
-      <Paper 
-        variant="outlined" 
-        sx={{ 
-          p: 2.5, 
-          borderColor: isComplete ? "success.main" : "primary.main", 
-          bgcolor: isComplete ? "#f2f7f4" : "#f4f8f7",
-          borderWidth: 2
-        }}
-      >
+      {message && <Alert severity="info" onClose={() => setMessage("")}>{message}</Alert>}
+      {preferences.error && <Alert severity="error">{preferences.error}</Alert>}
+      <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderColor: "primary.main", bgcolor: "#f4f8f7" }}>
         <Stack spacing={2}>
-          <Box>
-            <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-              <Typography variant="h6" color={isComplete ? "success.main" : "primary.main"} sx={{ fontWeight: 800 }}>
-                {isComplete ? "Toutes les chambres sont à jour ! 🎉" : "Plan de rotation"}
-              </Typography>
-              <Typography variant="h6" color={isComplete ? "success.main" : "primary.main"} sx={{ fontWeight: 800 }}>
-                {inspectedTodayCount} / {rooms.length}
-              </Typography>
+          <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
+            <Box><Typography variant="overline" color="primary">{displayDate(day)} · Rotation</Typography><Typography variant="h5" sx={{ fontWeight: 800 }}>Votre tournée du jour</Typography></Box>
+            <Button onClick={() => setSettings(!settings)} aria-expanded={settings}>Régler</Button>
+          </Stack>
+          <Typography><strong>{rotation.done.length} / {rotation.goal}</strong> chambres contrôlées aujourd’hui{queued.some(r => r.date === day) ? " · dont des envois en attente" : ""}</Typography>
+          <LinearProgress aria-label="Objectif du jour" variant="determinate" value={Math.min(100, rotation.done.length / rotation.goal * 100)} sx={{ height: 8, borderRadius: 4 }} />
+          <Typography variant="body2" color="text.secondary">{rotation.covered}/{rooms.length} chambres contrôlées dans les {rotation.interval} derniers jours · {rotation.due.length} à contrôler. Les chambres jamais visitées passent en premier, puis les plus anciennes. Les anomalies n’excluent aucune chambre.</Typography>
+          {settings && <Stack spacing={2}>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField label="Objectif quotidien" type="number" value={config?.dailyGoal || 15} onChange={e => changePreference({ dailyGoal: Math.max(1, Math.min(85, Number(e.target.value) || 1)) })} slotProps={{ htmlInput: { min: 1, max: 85 } }} />
+              <TextField label="Intervalle cible (jours)" type="number" value={config?.intervalDays || 7} onChange={e => changePreference({ intervalDays: Math.max(1, Math.min(60, Number(e.target.value) || 1)) })} slotProps={{ htmlInput: { min: 1, max: 60 } }} />
             </Stack>
-            <LinearProgress
-              variant="determinate"
-              value={Math.min(100, (inspectedTodayCount / rooms.length) * 100)}
-              color={isComplete ? "success" : "primary"}
-              sx={{ height: 10, borderRadius: 4, mt: 1.5 }}
-            />
-          </Box>
-
-          {!isComplete && targetRooms.length > 0 && (
-            <Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontWeight: 700 }}>
-                {targetRooms.length} chambre(s) restante(s) dans la rotation
-              </Typography>
-              
-              <Stack spacing={2.5}>
-                {roomGroups.map(group => {
-                  const groupTargetRooms = group.rooms.filter(r => targetRooms.includes(r));
-                  if (groupTargetRooms.length === 0) return null;
-
-                  return (
-                    <Box key={group.label}>
-                      <Typography 
-                        variant="caption" 
-                        sx={{ 
-                          fontWeight: 800, display: "block", mb: 1, 
-                          color: "primary.main", textTransform: "uppercase", letterSpacing: "0.05em" 
-                        }}
-                      >
-                        {group.label}
-                      </Typography>
-                      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                        {groupTargetRooms.map(n => {
-                          const isNever = neverInspectedRooms.includes(n);
-                          
-                          let ageText = "";
-                          if (!isNever) {
-                            const recordDate = latest.get(n)?.date;
-                            if (recordDate) {
-                              const diff = getDaysDiff(recordDate, day);
-                              ageText = diff === 1 ? "Hier" : `${diff}j`;
-                            }
-                          }
-
-                          return (
-                            <Button
-                              key={n}
-                              variant="outlined"
-                              color={isNever ? "secondary" : "primary"}
-                              onClick={() => setRoom(n)}
-                              sx={{ 
-                                borderRadius: 2, 
-                                display: "flex", 
-                                flexDirection: "column", 
-                                p: 1,
-                                minWidth: 64
-                              }}
-                            >
-                              <span style={{ fontWeight: 800, fontSize: "1.1em", lineHeight: 1 }}>{n}</span>
-                              <span style={{ fontSize: "0.65em", opacity: 0.85, marginTop: 4, fontWeight: 600 }}>
-                                {isNever ? "Jamais" : ageText}
-                              </span>
-                            </Button>
-                          );
-                        })}
-                      </Box>
-                    </Box>
-                  );
-                })}
-              </Stack>
-            </Box>
-          )}
+            <Typography variant="caption">À ce rythme, un tour complet demande environ {rotation.cycleWorkDays} jours de travail. L’intervalle compte les jours calendaires. Réglages et reports mémorisés sur cet appareil.</Typography>
+            {rotation.cycleWorkDays > rotation.interval && <Alert severity="warning">L’objectif quotidien est trop bas pour couvrir les 85 chambres dans cet intervalle, même en travaillant chaque jour.</Alert>}
+          </Stack>}
+          {rotation.plan.length ? <>
+            <Button variant="contained" size="large" onClick={() => setRoom(rotation.plan[0])} disabled={!config}>Continuer la tournée · chambre {rotation.plan[0]}</Button>
+            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>
+              {rotation.plan.map((n, index) => <Button key={n} variant="outlined" onClick={() => setRoom(n)} aria-label={`Ouvrir la chambre ${n} dans la tournée`} sx={{ minWidth: 60, minHeight: 48 }}><Stack><strong>{n}</strong><Typography variant="caption">{index === 0 ? "Suivante" : latest.has(n) ? `${daysSince(latest.get(n)!.date, day)} j` : "Jamais"}</Typography></Stack></Button>)}
+            </Stack>
+          </> : <Alert severity="success">{rotation.done.length >= rotation.goal ? "Objectif du jour atteint. Les chambres restantes vous attendront dans les prochaines tournées." : rotation.due.length ? "Les chambres restantes ont été reportées. Vous pouvez les reprendre ci-dessous." : "Toutes les chambres sont dans l’intervalle cible."}</Alert>}
+          {deferred.length > 0 && <details><summary style={{ cursor: "pointer" }}>{deferred.length} chambre(s) reportée(s) aujourd’hui</summary><Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1, mt: 1 }}>{deferred.map(n => <Button key={n} onClick={() => { changePreference({ deferred: deferred.filter(item => item !== n) }); setRoom(n); }}>Reprendre {n}</Button>)}</Stack></details>}
         </Stack>
       </Paper>
-
-      <Box>
-        <Button variant="outlined" disabled={exporting} aria-haspopup="menu" aria-expanded={Boolean(exportMenu)} onClick={e => setExportMenu(e.currentTarget)}>{exporting ? "Préparation du PDF…" : "Exporter en PDF"}</Button>
-        <Menu anchorEl={exportMenu} open={Boolean(exportMenu)} onClose={() => setExportMenu(null)}>
-          <MenuItem disabled={!freeRooms.length} onClick={() => void exportFreeRooms()}>Chambres libres · {freeRooms.length}</MenuItem>
-        </Menu>
-        <Typography variant="caption" sx={{ display: "block", mt: 1 }}>Dernier checklist de chaque chambre libre : état, ménage, micro-ondes et minibar. Les données en attente d’envoi sont signalées dans le PDF.</Typography>
-      </Box>
-      
-      {exportError && <Alert severity="error">{exportError}</Alert>}
-      
-      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-        <Chip label={`${countRoomsOnDate(history, day)}/${rooms.length} contrôlées aujourd'hui`} />
-        <Chip label={`${[...latest.values()].filter(r => rooms.includes(r.room)).filter(hasProblem).length} à revoir au total`} color="error" variant="outlined" />
+      <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>
+        <Button variant="outlined" onClick={() => setHistoryRoom("all")}>Historique de tous les contrôles</Button>
+        <Button variant="outlined" disabled={exporting || !free.length} onClick={() => void exportFreeRooms()}>{exporting ? "Préparation du PDF…" : `Exporter en PDF · Chambres libres (${free.length})`}</Button>
       </Stack>
-      
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-          <TextField fullWidth label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} />
-          <TextField fullWidth select label="Groupe de chambres" value={group} onChange={e => setGroup(e.target.value)}>
-            <MenuItem value="all">Tous les groupes</MenuItem>
-            {roomGroups.map(g => <MenuItem key={g.label} value={g.label}>{g.label}</MenuItem>)}
-          </TextField>
-          <TextField fullWidth select label="Afficher" value={filter} onChange={e => setFilter(e.target.value)}>
-            <MenuItem value="all">Toutes les chambres</MenuItem>
-            <MenuItem value="target">Plan de rotation 🎯</MenuItem>
-            <MenuItem value="free">Chambres libres</MenuItem>
-            <MenuItem value="missing">Jamais contrôlées</MenuItem>
-            <MenuItem value="problems">À revoir</MenuItem>
-            <MenuItem value="cleaning">Ménage non fait</MenuItem>
-          </TextField>
-        </Stack>
-      </Paper>
-      
-      {roomGroups.filter(g => group === "all" || group === g.label).map(g => {
-        const numbers = g.rooms.filter(n => n.includes(search.trim())).filter(n => { 
-          const r = latest.get(n); 
-          if (filter === "all") return true;
-          if (filter === "target") return targetRooms.includes(n) || inspectedTodayRooms.includes(n);
-          if (filter === "missing") return !r;
-          if (filter === "problems") return !!r && hasProblem(r);
-          if (filter === "free") return !!r && r.occupied === false;
-          if (filter === "cleaning") return !!r && r.occupied === false && r.cleaning === "non_faite";
-          return true;
-        });
-        
-        if (!numbers.length) return null;
-        
-        return <Box key={g.label}>
-          <Typography variant="h6" sx={{ mb: 1.5 }}>{g.label}</Typography>
-          <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 1.5 }}>
-            {numbers.map(n => { 
-              const record = latest.get(n); 
-              const isTarget = targetRooms.includes(n);
-              const isDoneToday = inspectedTodayRooms.includes(n);
-              const daysDiff = record ? getDaysDiff(record.date, day) : -1;
-              
-              let borderColor = "divider";
-              let bgColor = "inherit";
-              if (isTarget) {
-                borderColor = "primary.main";
-              } else if (isDoneToday) {
-                borderColor = "success.light";
-                bgColor = "#fafdfa";
-              } else if (!record) {
-                borderColor = "divider"; 
-                bgColor = "#fcfcfc";
-              } else if (hasProblem(record)) {
-                borderColor = "error.main"; 
-                bgColor = "#fff5f5";
-              }
-
-              return <Paper key={n} variant="outlined" sx={{ p: 2, borderColor, bgcolor: bgColor }}>
-                <Stack spacing={1}>
-                  
-                  <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <Typography variant="h5" color={isDoneToday ? "success.main" : !record ? "text.disabled" : "text.primary"}>
-                      {n}
-                    </Typography>
-                    <Stack sx={{ alignItems: "flex-end" }} spacing={0.5}>
-                      {isTarget && <Chip label="Objectif" size="small" color="primary" />}
-                      {isDoneToday && <Chip label="Aujourd'hui" size="small" color="success" variant="outlined" />}
-                      {!isDoneToday && !record && <Chip label="Jamais fait" size="small" sx={{ bgcolor: "action.hover", color: "text.secondary" }} />}
-                      {!isDoneToday && record && hasProblem(record) && <Chip label="À revoir" size="small" color="error" />}
-                      {!isDoneToday && record && !hasProblem(record) && (
-                        <Chip 
-                          label={daysDiff === 1 ? "Hier" : `Il y a ${daysDiff}j`} 
-                          size="small" 
-                          color={daysDiff > 5 ? "default" : "info"} 
-                          variant={daysDiff > 5 ? "filled" : "outlined"} 
-                          sx={daysDiff > 5 ? { bgcolor: "action.hover", color: "text.secondary" } : undefined}
-                        />
-                      )}
-                    </Stack>
-                  </Stack>
-
-                  {record && <>
-                    <Typography variant="caption">{record.occupied === false ? `Chambre libre · Ménage : ${cleaningText(record)}` : record.occupied === true ? "Chambre occupée" : "Occupation non renseignée"}{queued.some(q => q.id === record.id) ? " · En attente d’envoi" : ""}</Typography>
-                  </>}
-                  <Button variant="contained" color={isDoneToday ? "inherit" : "primary"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ mt: 1 }}>
-                    {isDoneToday ? "Recontrôler" : "Contrôler"}
-                  </Button>
-                  <Button size="small" aria-label={`Historique de la chambre ${n}`} onClick={() => setHistoryRoom(n)}>Historique</Button>
-                </Stack>
-              </Paper>; 
-            })}
-          </Box>
-        </Box>;
-      })}
+      {exportError && <Alert severity="error">{exportError}</Alert>}
+      <Stack spacing={1.5}>
+        <TextField label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
+        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{["all", ...roomGroups.map(g => g.label)].map(g => <Chip key={g} label={g === "all" ? "Tous les étages" : g} onClick={() => setGroup(g)} color={group === g ? "primary" : "default"} variant={group === g ? "filled" : "outlined"} />)}</Stack>
+        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{Object.entries(filters).map(([key, label]) => <Chip key={key} label={label} onClick={() => setFilter(key as keyof typeof filters)} color={filter === key ? "primary" : "default"} variant={filter === key ? "filled" : "outlined"} />)}</Stack>
+      </Stack>
+      {!visibleGroups.length && <Alert severity="info">Aucune chambre ne correspond à ces filtres.</Alert>}
+      {visibleGroups.map(g => <Box key={g.label}>
+        <Typography variant="h6" sx={{ mb: 1.5 }}>{g.label} · {g.rooms.length}</Typography>
+        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 1.5 }}>
+          {g.rooms.map(n => {
+            const record = latest.get(n), open = openRoomIssues(issues, n), done = rotation.done.includes(n), target = rotation.plan.includes(n);
+            return <Paper key={n} variant="outlined" sx={{ p: 1.5, borderColor: done ? "success.main" : target ? "primary.main" : "divider" }}>
+              <Stack spacing={1}>
+                <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}><Typography variant="h4" sx={{ fontWeight: 800 }}>{n}</Typography>{done && <Chip label="Fait" color="success" size="small" />}</Stack>
+                <Typography variant="caption">{record ? `Dernier : ${displayDate(record.date)}` : "Jamais contrôlée"}</Typography>
+                {record && <Typography variant="caption">{record.occupied === false ? `Libre · Ménage ${cleaningText(record).toLowerCase()}` : record.occupied === true ? "Occupée" : "Occupation inconnue"}</Typography>}
+                {open.length > 0 && <Chip label={`${open.length} anomalie(s)`} color="warning" size="small" variant="outlined" />}
+                {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">En attente d’envoi</Typography>}
+                {deferred.includes(n) && <Typography variant="caption">Reportée à demain</Typography>}
+                <Button variant={target ? "contained" : "outlined"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ minHeight: 44 }}>{done ? "Recontrôler" : "Contrôler"}</Button>
+                <Button aria-label={`Historique de la chambre ${n}`} onClick={() => setHistoryRoom(n)}>Historique</Button>
+              </Stack>
+            </Paper>;
+          })}
+        </Box>
+      </Box>)}
     </Stack>
-    {room && <RoomForm key={room} room={room} onClose={() => setRoom(null)} />}
-    {historyRoom && <RoomHistoryDialog key={historyRoom} room={historyRoom} history={history} onClose={() => setHistoryRoom(null)} />}
+    {room && <RoomInspectionDialog key={room} room={room} nextRoom={nextRoom} onClose={() => setRoom(null)} onDefer={deferRoom} onSaved={next => { setMessage(`Contrôle de la chambre ${room} conservé. Le statut d’envoi reste visible jusqu’à la confirmation du serveur.`); setRoom(next ? nextRoom || null : null); }} />}
+    {historyRoom && <RoomHistoryDialog key={historyRoom} room={historyRoom === "all" ? undefined : historyRoom} history={history} issues={issues} onClose={() => setHistoryRoom(null)} />}
   </>;
 }
