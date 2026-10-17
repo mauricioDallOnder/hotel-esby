@@ -95,8 +95,8 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
           </Box>}
           {step === 0 && <>
             <Typography variant="body2" color="text.secondary">Un toucher par résultat. « Absent » indique que l’équipement n’existe pas dans la chambre.</Typography>
-            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.result === "non_verifie" && !["smoke", "door_closer"].includes(c.key) && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
-            <Typography variant="caption" color="text.secondary">Le détecteur, le ferme-porte et les équipements déjà signalés restent à vérifier individuellement. Les réponses saisies sont conservées.</Typography>
+            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.result === "non_verifie" && c.key !== "smoke" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
+            <Typography variant="caption" color="text.secondary">Le ferme-porte est inclus. Le détecteur et les équipements déjà signalés restent à vérifier individuellement. Les réponses saisies sont conservées.</Typography>
             {roomChecks.map(check => <QuickChoice key={check.key} label={check.label} value={value.checks.find(c => c.key === check.key)?.result} error={invalidField(`checks.${check.key}`)}
               options={[{ value: "ok", label: "OK", color: "success" }, { value: "probleme", label: "Problème", color: "error" }, { value: "absent", label: "Absent" }]}
               onChange={result => update({ checks: value.checks.map(c => c.key === check.key ? { ...c, result } : c) })}

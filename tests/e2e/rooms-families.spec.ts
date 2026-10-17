@@ -99,12 +99,12 @@ test("quick controls protect known faults and safety checks, then reuse an exist
   await page.getByRole("button", { name: "Contrôler la chambre 120", exact: true }).click();
   await page.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK" }).click();
   const choose = async (label: string, answer: string) => page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click();
-  for (const key of ["smoke", "door_closer", "taps"]) {
+  for (const key of ["smoke", "taps"]) {
     await expect(page.getByRole("radiogroup", { name: roomChecks.find(c => c.key === key)!.label }).getByRole("radio", { checked: true })).toHaveCount(0);
   }
   await expect(page.getByRole("dialog").getByRole("combobox")).toHaveCount(0);
   await choose(roomChecks.find(c => c.key === "smoke")!.label, "OK");
-  await choose(roomChecks.find(c => c.key === "door_closer")!.label, "OK");
+  await expect(page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "OK", exact: true })).toHaveAttribute("aria-checked", "true");
   await choose(roomChecks.find(c => c.key === "taps")!.label, "Problème");
   await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("Chambre occupée", "Occupée"); await choose("État général de la chambre", "À revoir");
@@ -129,6 +129,8 @@ test("room draft and daily deferral survive reload without counting an inspectio
   await login(page); await page.goto("/checklist");
   await page.getByRole("button", { name: "Contrôler la chambre 121", exact: true }).click();
   await page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "Absent", exact: true }).click();
+  await page.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK" }).click();
+  await expect(page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "Absent", exact: true })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("button", { name: "Reporter à demain", exact: true }).click();
   await expect(page.getByText(/Chambre 121 reportée à demain/)).toBeVisible();
   await page.reload();
