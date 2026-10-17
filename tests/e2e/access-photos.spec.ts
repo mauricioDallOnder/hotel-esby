@@ -68,8 +68,7 @@ test("employee reports three photos; only direction changes the status", async (
   await page.getByRole("button", { name: "Se connecter", exact: true }).click();
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
   await dialog.getByLabel("Votre nom").fill("Direction test");
-  await dialog.getByLabel("État de résolution", { exact: true }).click();
-  await page.getByRole("option", { name: "Résolu", exact: true }).click();
+  await dialog.getByRole("radiogroup", { name: "État de résolution", exact: true }).getByRole("radio", { name: "Résolu", exact: true }).click();
   await dialog.getByLabel("Travaux effectués / résolution").fill("Fuite réparée");
   await dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(dialog).not.toBeVisible();

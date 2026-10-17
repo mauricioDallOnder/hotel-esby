@@ -1,5 +1,27 @@
 # Hôtel Contrôle
 
+## Anomalias: consulta e acompanhamento mais rápidos
+
+- Filtros por estado e prioridade em um toque, atalhos para pendências críticas
+  e sem responsável, busca sem acentos que também encontra notas das intervenções.
+  Números de quarto são pesquisados por inteiro: `204` não encontra `1204`.
+- Categoria, responsável não atribuído e período disponíveis nos filtros avançados.
+  Ordenação padrão por prioridade e, dentro dela, pelos registros mais antigos;
+  também é possível ordenar por data do constat ou última atualização.
+- Cartões compactos com local, idade do signalement, responsável e último acompanhamento.
+  Fotos são carregadas ao abrir a galeria; a lista mostra 24 registros por vez.
+- Ao abrir um acompanhamento como Direction, estado, responsável, nome e nota ficam
+  primeiro. A ficha, fotos e histórico podem ser expandidos. Estados e prioridades
+  usam botões; o formulário avisa antes de descartar alterações não salvas.
+  O perfil Employé continua podendo consultar e criar anomalias; só Direction
+  pode modificar o acompanhamento. As permissões da API continuam valendo.
+- No controle de quarto, **J’ai vérifié : les équipements restants sont OK**
+  agora inclui o **ferme-porte** ainda sem resposta. Respostas já escolhidas e
+  equipamentos com anomalia aberta são preservados; o detector exige resposta individual.
+
+Esta atualização utiliza os mesmos dados e endpoints. Basta publicar a nova versão
+do aplicativo; não exige outra alteração no Apps Script além das versões anteriores.
+
 ## Disponibilidade, comentários e tarefas do dia
 
 - **Quartos livres:** cada cartão em **Checklist des chambres** tem a checkbox
@@ -51,7 +73,7 @@ e o download disponível falhou. A integração com o Google real depende da imp
 
 - **Inspeção por toque:** três etapas (équipements, état/ménage, résumé), botões
   grandes OK / Problème / Absent, sem dropdowns. O atalho de validação só marca
-  equipamentos ainda sem resposta; detector, ferme-porte e itens já sinalizados
+  equipamentos ainda sem resposta, incluindo o ferme-porte; detector e itens já sinalizados
   exigem resposta individual. Nenhuma resposta é preenchida ao abrir o quarto.
 - **Ferme-porte:** verificar presença e fechamento automático. Defeito ou ausência
   entram nos constats e no acompanhamento de anomalias. Quartos antigos mostram

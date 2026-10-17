@@ -33,7 +33,8 @@ test("mobile recovers from failed data and photo loads without logging in again"
   await expect(page.getByText("Google temporairement indisponible.")).toBeVisible();
   await page.getByRole("button", { name: "Réessayer", exact: true }).click();
   await expect(page.getByText("Photo à recharger", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Réessayer la photo 1" }).click();
+  expect(photoReads).toBe(0);
+  await page.getByRole("button", { name: "Voir les photos (1)", exact: true }).click();
   await expect(page.getByRole("img", { name: "Photo à recharger · photo 1" })).toHaveJSProperty("naturalWidth", 1);
   expect(reads).toBe(2);
   expect(photoReads).toBe(2);
