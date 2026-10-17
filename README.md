@@ -1,5 +1,58 @@
 # Hôtel Contrôle
 
+## Contrôle rapide et rotation des chambres (version 4)
+
+- **Inspeção por toque:** três etapas (équipements, état/ménage, résumé), botões
+  grandes OK / Problème / Absent, sem dropdowns. O atalho de validação só marca
+  equipamentos ainda sem resposta; detector, ferme-porte e itens já sinalizados
+  exigem resposta individual. Nenhuma resposta é preenchida ao abrir o quarto.
+- **Ferme-porte:** verificar presença e fechamento automático. Defeito ou ausência
+  entram nos constats e no acompanhamento de anomalias. Quartos antigos mostram
+  este campo como não informado; rascunhos antigos o recebem como não verificado.
+- **Rotação contínua:** meta inicial de 15 quartos/dia, intervalo alvo de 7 dias,
+  ambos ajustáveis em **Régler**. Nunca inspecionados primeiro, depois os controles
+  completos mais antigos; empate por número do quarto para reduzir deslocamentos.
+  Quartos com anomalias continuam na rotação. Controles completos aguardando envio
+  contam provisoriamente; envios bloqueados, controles parciais e datas futuras não.
+  A meta diária conta quartos únicos. **Reporter à demain** mantém o rascunho sem
+  registrar uma inspeção. Preferências e reports pertencem ao navegador/aparelho.
+- **Histórico:** consulta individual ou global, busca por quarto/inspector/texto,
+  período, filtros, resumo dos constats, diferenças entre equipamentos, fotos sob
+  demanda e estado real de sincronização. Horário da visita é preservado na fila.
+- **Anomalias sem duplicação:** no salvamento, compara o quarto exato e cada
+  constat com anomalias abertas/em andamento, inclusive as criadas pelo menu
+  Anomalies. Novos registros usam chaves de equipamento; registros manuais antigos
+  usam termos reconhecidos em francês. Textos ambíguos podem ser associados
+  explicitamente no resumo. **Signaler un problème distinct** permite distinguir
+  outro defeito no mesmo equipamento. Só constats novos criam uma anomalia; vínculos,
+  observações e fotos ficam no histórico. Um controle OK não encerra uma anomalia.
+  Uma falha que reaparece depois da resolução pode gerar um novo signalement.
+- **Compatibilidade:** controles imutáveis e filas anteriores (v1/v2/v3) mantêm
+  seus IDs e hashes de reenvio. Novos controles são v4. Nenhuma inspeção antiga é
+  reescrita ou convertida retroativamente em anomalia.
+
+### Implantação desta atualização
+
+**Se usa Google Sheets, atualize o Apps Script antes de publicar o aplicativo.**
+Copie o arquivo completo `google-apps-script/Code.gs` no projeto existente, execute
+`setup()` e publique uma nova versão da implantação existente. Preserve token,
+planilha e pasta de fotos. A nova coluna Ferme-porte é adicionada ao final, sem
+mover ou apagar colunas/dados antigos.
+
+O GitHub não publica o Apps Script automaticamente. O aplicativo usa a ação
+`commitRoomInspection`, que o script antigo rejeita antes de gravar: nesse caso
+os controles permanecem na fila do aparelho, com instrução de atualização.
+Depois de atualizar a implantação, use **Réessayer**. Não limpe os dados do
+navegador enquanto houver registros pendentes. No modo `local`, não há esta etapa.
+
+O matcher é compartilhado: `lib/roomIssueMatching.ts` é a fonte e
+`npm run build:apps-script` atualiza o bloco gerado no Code.gs. Depois de modificá-lo,
+rode `npm run check:apps-script` para confirmar que o arquivo implantável está em dia.
+A comparação no Sheets acontece dentro do mesmo lock da gravação, sem baixar o
+hotel inteiro no servidor. O plano de associação é preservado para repetir envios
+ou reparar uma gravação interrompida sem duplicar ou reabrir anomalias resolvidas.
+
+
 ## Atualização: quartos livres, PDF e anomalias
 
 No checklist, **Chambre occupée → Non** abre o campo obrigatório de ménage

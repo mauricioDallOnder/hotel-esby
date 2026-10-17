@@ -173,6 +173,8 @@ export type Event = {
 };
 
 export type Issue = IssueFields & {
+  room?: string;
+  roomFindings?: { key: string; label: string }[];
   id: string;
   version: number;
   date: string;

@@ -10,7 +10,7 @@ import { entrySchema, roomChecks, roomGroups, rooms, parseEntry, roomEntrySchema
 import { createId, today } from "../lib/domain";
 import { deleteAbsence, executeEntry, readPhoto, readState } from "../lib/storage";
 
-const roomEntry = (): RoomEntry => ({ type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", condition: "bon", occupied: true, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "propre", notes: "", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
+const roomEntry = (): RoomEntry => ({ type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", bugs: "non", condition: "bon", occupied: true, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "propre", notes: "", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
 const familyEntry = (): FamilyEntry => ({ type: "createFamilyEvent", id: createId(), room: "332", date: today(), actor: "Marie", family: "Famille test", notes: "", kind: "absence", returnDate: "" });
 
 test("exactly the 85 requested rooms", () => {
@@ -39,20 +39,22 @@ test("free rooms require cleaning, occupied rooms clear it, and all equipment mu
     assert.equal(roomEntrySchema.safeParse(entry).success, true);
   }
   assert.equal(roomChecks.at(-1)?.key, "door_handle_clear");
-  assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), checks: roomEntry().checks.slice(0, -1) }).success, false);
+  assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), checks: roomEntry().checks.filter(c => !["door_handle_clear", "door_closer"].includes(c.key)) }).success, false);
   assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), microwave: "non_verifie" }).success, false);
-  for (const carpet of ["sale", "tachee"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), carpet }).success, false);
-  for (const condition of ["a_revoir", "mauvais"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), condition }).success, false);
+  for (const carpet of ["sale", "tachee"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), carpet }).success, true);
+  for (const condition of ["a_revoir", "mauvais"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), condition }).success, true);
   assert.equal(cleaningText({ occupied: true }), "Non applicable");
   assert.equal(cleaningText({ occupied: false, cleaning: "faite" }), "Faite");
   assert.equal(cleaningText({ cleaning: "faite" }), "Faite");
 });
 test("legacy drafts gain unanswered fields without changing existing values or photos", () => {
-  const draft = { ...roomEntry(), occupied: undefined, photosData: ["data:image/jpeg;base64,YQ=="], checks: roomEntry().checks.slice(0, -1) };
+  const draft = { ...roomEntry(), occupied: undefined, photosData: ["data:image/jpeg;base64,YQ=="], checks: roomEntry().checks.filter(c => !["door_handle_clear", "door_closer"].includes(c.key)) };
   const normalized = normalizeRoomDraft(draft);
   assert.equal(normalized.occupied, null);
   assert.equal(normalized.checks.at(-1)?.result, "non_verifie");
-  assert.deepEqual(normalized.checks.slice(0, -1), draft.checks);
+  assert.deepEqual(normalized.checks.filter(c => !["door_handle_clear", "door_closer"].includes(c.key)), draft.checks);
+  assert.equal(normalized.checks.find(c => c.key === "door_closer")?.result, "non_verifie");
+  assert.equal(normalized.schemaVersion, 4);
   assert.deepEqual(normalized.photosData, draft.photosData);
   assert.equal(normalized.id, draft.id);
   assert.equal(draft.checks.length, 10);
@@ -67,7 +69,7 @@ test("v1 queue preserves the old hash, IDs and removed rooms across retries", as
   process.env.STORAGE_DRIVER = "local";
   process.env.LOCAL_DATA_DIR = mkdtempSync(path.join(tmpdir(), "hotel-legacy-"));
   // The precise original Zod output order is part of the v1 hash contract.
-  const legacy = { type: "createRoomInspection" as const, id: createId(), room: "112", date: today(), actor: "Marie", notes: "", condition: "bon" as const, cleaning: "faite" as const, checks: roomEntry().checks.slice(0, -1), carpet: "ok" as const, carpetNotes: "", microwave: "non_verifie" as const, photosData: ["data:image/jpeg;base64,YQ=="] };
+  const legacy = { type: "createRoomInspection" as const, id: createId(), room: "112", date: today(), actor: "Marie", notes: "", condition: "bon" as const, cleaning: "faite" as const, checks: roomEntry().checks.filter(c => !["door_handle_clear", "door_closer"].includes(c.key)), carpet: "ok" as const, carpetNotes: "", microwave: "non_verifie" as const, photosData: ["data:image/jpeg;base64,YQ=="] };
   assert.deepEqual(parseEntry(legacy, true), legacy);
   const first = await executeEntry(legacy, true);
   assert.equal(first.record.submissionHash, createHash("sha256").update(JSON.stringify(legacy)).digest("hex"));
@@ -78,12 +80,12 @@ test("v1 queue preserves the old hash, IDs and removed rooms across retries", as
   assert.throws(() => parseEntry({ ...legacy, occupied: true, schemaVersion: 2 }, true));
 });
 test("room checks and family date validation reject incomplete or inconsistent records", () => {
-  assert.equal(entrySchema.safeParse({ ...roomEntry(), carpet: "sale" }).success, false);
+  assert.equal(entrySchema.safeParse({ ...roomEntry(), carpet: "sale" }).success, true);
   assert.equal(entrySchema.safeParse({ ...roomEntry(), carpet: "sale", carpetNotes: "Boue près de la porte" }).success, true);
   const duplicate = roomEntry(); duplicate.checks[1] = duplicate.checks[0];
   assert.equal(entrySchema.safeParse(duplicate).success, false);
   const problem = roomEntry(); problem.checks[0].result = "probleme";
-  assert.equal(entrySchema.safeParse(problem).success, false);
+  assert.equal(entrySchema.safeParse(problem).success, true);
   assert.equal(entrySchema.safeParse({ ...problem, notes: "Robinet bloqué" }).success, true);
   assert.equal(entrySchema.safeParse({ ...familyEntry(), date: "2026-10-03", returnDate: "2026-10-02" }).success, false);
   assert.equal(entrySchema.safeParse({ ...familyEntry(), kind: "depart", returnDate: "2026-12-01" }).success, false);
@@ -151,7 +153,7 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   roomTable[0].pop();
   roomTable.push(["old-history", "1", "old-date"]);
   context.setup(); context.setup();
-  assert.equal(roomTable[0].at(-1), "Poignée dégagée");
+  assert.equal(roomTable[0].at(-1), "Ferme-porte");
   assert.deepEqual(roomTable[1], ["old-history", "1", "old-date"]);
   roomTable.pop();
   const call = (input: object) => context.doPost({ postData: { contents: JSON.stringify({ ...input, token: "test-token" }) } });
@@ -196,6 +198,23 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(call({ action: "commitEntry", collection: "familyEvents", expectedVersion: 0, record: { ...fam, version: 1, submissionHash: "c".repeat(64) } }).code, 409);
   assert.equal(after.roomInspections.length, 1);
   assert.equal(JSON.stringify(tables.get("Anomalies")!.slice(0, 2)), old);
+  // The room-specific action deduplicates against manually reported anomalies under the same lock.
+  const manualIssue = { id: createId(), version: 1, date: today(), title: "Robinet 120", description: "Mitigeur cassé", location: "Chambre 120", status: "en_cours", assignee: "Technicien", priority: "haute", photoIds: [], photoId: null };
+  assert.equal(call({ action: "commit", collection: "issues", expectedVersion: 0, record: manualIssue }).ok, true);
+  const duplicateEntry = { ...roomEntry(), room: "120", notes: "", checks: roomEntry().checks.map(c => ({ ...c, result: c.key === "taps" ? "probleme" as const : "ok" as const })) };
+  const duplicateRecord = { ...duplicateEntry, version: 1, updatedAt: new Date().toISOString(), submissionHash: "e".repeat(64), photoIds: [], photoId: null };
+  const duplicateInput = { action: "commitRoomInspection", collection: "roomInspections", expectedVersion: 0, record: duplicateRecord, issue: roomIssue(duplicateRecord) };
+  const duplicateReceipt = call(duplicateInput);
+  assert.equal(duplicateReceipt.ok, true, duplicateReceipt.error);
+  assert.equal(duplicateReceipt.data.issue, undefined);
+  assert.deepEqual(duplicateReceipt.data.record.relatedIssueIds, [manualIssue.id]);
+  assert.equal(duplicateReceipt.data.record.issueSyncVersion, 2);
+  assert.deepEqual(call(duplicateInput), duplicateReceipt);
+  assert.equal(call({ action: "list" }).data.issues.filter((i: { location: string }) => i.location === "Chambre 120").length, 1);
+  // Preserve the recorded association even if the manual anomaly is resolved before a replay.
+  assert.equal(call({ action: "commit", collection: "issues", expectedVersion: 1, record: { ...manualIssue, version: 2, status: "resolu" } }).ok, true);
+  assert.deepEqual(call(duplicateInput), duplicateReceipt);
+  assert.equal(call({ action: "list" }).data.issues.find((i: { id: string }) => i.id === manualIssue.id).status, "resolu");
 });
 
 test("Google entry save uses one request and requires a matching receipt", async () => {

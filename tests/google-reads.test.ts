@@ -61,7 +61,7 @@ test("persistent failures are bounded and not cached as successful data", async 
   let calls = 0;
   globalThis.fetch = async () => { calls++; return new Response("Unavailable", { status: 503 }); };
   await assert.rejects(readState(), { code: 503 });
-  assert.equal(calls, 2);
+  assert.equal(calls, 4);
   globalThis.fetch = async () => Response.json({ ok: true, data: empty });
   assert.deepEqual(await readState(), empty);
 });
@@ -76,11 +76,11 @@ test("Google authorization failures do not expire the hotel session or retry", a
   assert.equal(calls, 1);
 });
 
-test("persistent non-JSON deployment responses produce a useful error after one retry", async () => {
+test("persistent non-JSON deployment responses produce a useful error after three bounded retries", async () => {
   let calls = 0;
   globalThis.fetch = async () => { calls++; return new Response("<html>Login</html>"); };
   await assert.rejects(readState(), { code: 502, message: "Réponse Google invalide. Vérifiez le déploiement Apps Script." });
-  assert.equal(calls, 2);
+  assert.equal(calls, 4);
 });
 
 test("failed commits are never automatically repeated and invalidate cached state", async () => {

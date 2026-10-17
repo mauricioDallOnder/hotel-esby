@@ -9,7 +9,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:apps-script": "node --import tsx scripts/build-room-issues.ts",
+    "check:apps-script": "node --import tsx scripts/build-room-issues.ts --check"
   },
   "dependencies": {
     "@emotion/cache": "^11.14.0",

@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChange } from "./rooms";
 import { today } from "./domain";
+import { prepareRoomIssue } from "./roomIssueMatching";
 import { ReadCache } from "./readCache";
 import {
   applyCommand,
@@ -110,6 +111,8 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
       );
     }
     
+    if (!result.ok && payload.action === "commitRoomInspection" && result.error === "Action invalide.")
+      throw new DomainError("Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser les contrôles. Ils restent conservés sur cet appareil.", 503);
     if (!result.ok)
       // A Google token failure is a server configuration error, not an expired hotel session.
       throw new DomainError(result.code === 401
@@ -262,11 +265,11 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   
   if (storageMode() === "sheets") {
     try {
-      const receipt = await google<EntryChange>({ action: "commitEntry", ...change, expectedVersion: 0, photosData });
+      const receipt = await google<EntryChange>({ action: change.collection === "roomInspections" ? "commitRoomInspection" : "commitEntry", ...change, expectedVersion: 0, photosData });
       if (receipt?.collection !== collection || receipt.record?.id !== entry.id || receipt.record?.submissionHash !== submissionHash)
         throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
-      if (change.collection === "roomInspections" && change.issue && (receipt.collection !== "roomInspections" || receipt.issue?.id !== change.issue.id))
-        throw new DomainError("Mettez à jour le déploiement Apps Script pour synchroniser les anomalies des chambres.", 503);
+      if (change.collection === "roomInspections" && (receipt.collection !== "roomInspections" || receipt.record.issueSyncVersion !== 2))
+        throw new DomainError("Mettez à jour le déploiement Apps Script pour éviter les anomalies en double.", 503);
       return receipt;
     } finally { stateCache.clear(); }
   }
@@ -294,6 +297,7 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   }
   
   if (change.collection === "roomInspections") {
+    change.issue = prepareRoomIssue(change.issue, change.record, state.issues);
     state.roomInspections = [...(state.roomInspections || []), change.record];
     if (change.issue) {
       change.issue.photoIds = change.record.photoIds;

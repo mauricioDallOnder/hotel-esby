@@ -11,18 +11,22 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   await page.goto("/checklist");
   await expect(page.getByRole("button", { name: "Contrôler la chambre", exact: false })).toHaveCount(85);
   await page.getByRole("button", { name: "Contrôler la chambre 114", exact: true }).click();
-  await page.getByLabel("Inspecteur").fill("Test mobile");
-  await select(page, "État général de la chambre", "À revoir");
-  await select(page, "Chambre occupée", "Oui");
-  await expect(page.getByRole("combobox", { name: /Nettoyage/ })).toHaveCount(0);
-  await select(page, "Chambre occupée", "Non");
-  await select(page, "Nettoyage / ménage", "Non faite");
-  for (const check of roomChecks) await select(page, check.label, check.key === "taps" ? "Problème" : "Oui / OK");
-  await select(page, "Propreté du minibar", "Propre");
-  await select(page, "Micro-ondes présent ?", "Oui");
-  await select(page, "Propreté du micro-ondes", "Sale");
-  await select(page, "État de la moquette", "Sale");
+  const choose = async (label: string, answer: string) => { await page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click(); };
+  for (const check of roomChecks) await choose(check.label, check.key === "taps" ? "Problème" : check.key === "door_closer" ? "Absent" : "OK");
+  await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
+  await choose("État général de la chambre", "À revoir");
+  await choose("Chambre occupée", "Occupée");
+  await expect(page.getByRole("radiogroup", { name: /Nettoyage/ })).toHaveCount(0);
+  await choose("Chambre occupée", "Libre");
+  await choose("Nettoyage / ménage", "Non fait");
+  await choose("Présence de cafards ou nuisibles", "Aucun");
+  await choose("Propreté du minibar", "Propre");
+  await choose("Micro-ondes présent ?", "Oui");
+  await choose("Propreté du micro-ondes", "Sale");
+  await choose("État de la moquette", "Sale");
   await page.getByLabel("Précisez les taches ou salissures").fill("Boue près de la fenêtre");
+  await page.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
+  await page.getByLabel("Inspecteur").fill("Test mobile");
   await page.getByLabel("Observations et problèmes constatés").fill("Robinet bloqué");
   await page.locator('input[type="file"][multiple]').setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64") });
   await expect(page.getByAltText("Photo du problème 1")).toBeVisible();
@@ -32,13 +36,13 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "Historique de la chambre 114", exact: true }).click();
   await page.getByRole("button", { name: /Test mobile/ }).click();
-  await expect(page.getByText("Boue près de la fenêtre", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Moquette sale : Boue près de la fenêtre/)).toBeVisible();
+  await page.getByRole("button", { name: "Afficher les photos", exact: true }).click();
   await expect(page.getByRole("img", { name: "Chambre 114 · photo 1" })).toHaveJSProperty("naturalWidth", 1);
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
   await page.getByRole("button", { name: "Fermer", exact: true }).click();
-  await page.getByRole("button", { name: "Exporter en PDF", exact: true }).click();
   const download = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: /Chambres libres/ }).click();
+  await page.getByRole("button", { name: /Exporter en PDF · Chambres libres/ }).click();
   expect((await download).suggestedFilename()).toMatch(/^chambres-libres-.*\.pdf$/);
   const state = await (await page.request.get("/api/hotel")).json();
   const issue = state.issues.find((i: { reportedBy: string }) => i.reportedBy === "Test mobile");
@@ -84,4 +88,53 @@ test("a lost save receipt can be retried without duplicating a family departure"
   await expect(page.getByText("En attente d’envoi", { exact: true })).toHaveCount(0);
   const state = await (await page.request.get("/api/hotel")).json();
   expect(state.familyEvents.filter((r: { family: string }) => r.family === "Famille reçu perdu")).toHaveLength(1);
+});
+
+test("quick controls protect known faults and safety checks, then reuse an existing anomaly", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await login(page);
+  const id = crypto.randomUUID();
+  expect((await page.request.post("/api/hotel", { data: { type: "createIssue", id, date: new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(new Date()), actor: "Test dédoublonnage",
+    fields: { title: "Robinet chambre 120", description: "Le robinet est bloqué", location: "Chambre 120", category: "Plomberie", priority: "normale", assignee: "" } } })).ok()).toBeTruthy();
+  await page.goto("/checklist");
+  await page.getByRole("button", { name: "Contrôler la chambre 120", exact: true }).click();
+  await page.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK" }).click();
+  const choose = async (label: string, answer: string) => page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click();
+  for (const key of ["smoke", "door_closer", "taps"]) {
+    await expect(page.getByRole("radiogroup", { name: roomChecks.find(c => c.key === key)!.label }).getByRole("radio", { checked: true })).toHaveCount(0);
+  }
+  await expect(page.getByRole("dialog").getByRole("combobox")).toHaveCount(0);
+  await choose(roomChecks.find(c => c.key === "smoke")!.label, "OK");
+  await choose(roomChecks.find(c => c.key === "door_closer")!.label, "OK");
+  await choose(roomChecks.find(c => c.key === "taps")!.label, "Problème");
+  await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
+  await choose("Chambre occupée", "Occupée"); await choose("État général de la chambre", "À revoir");
+  await choose("Présence de cafards ou nuisibles", "Aucun"); await choose("État de la moquette", "OK");
+  await choose("Micro-ondes présent ?", "Non"); await choose("Propreté du minibar", "Propre");
+  await page.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
+  await page.getByLabel("Inspecteur").fill("Test doublon");
+  await expect(page.getByText(/aucun doublon/)).toBeVisible();
+  const sent = page.waitForResponse(r => r.url().endsWith("/api/entries") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
+  expect((await sent).ok()).toBeTruthy();
+  const state = await (await page.request.get("/api/hotel")).json();
+  expect(state.issues.filter((i: { location: string }) => i.location === "Chambre 120")).toHaveLength(1);
+  expect(state.roomInspections.find((r: { actor: string }) => r.actor === "Test doublon").relatedIssueIds).toEqual([id]);
+  await page.getByRole("button", { name: "Historique de la chambre 120", exact: true }).click();
+  await expect(page.getByText("1 anomalie(s) ouverte(s)")).toBeVisible();
+  await page.getByRole("button", { name: /Test doublon/ }).click();
+  await expect(page.getByText(/déjà signalée, non dupliquée/)).toBeVisible();
+});
+
+test("room draft and daily deferral survive reload without counting an inspection", async ({ page }) => {
+  await login(page); await page.goto("/checklist");
+  await page.getByRole("button", { name: "Contrôler la chambre 121", exact: true }).click();
+  await page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "Absent", exact: true }).click();
+  await page.getByRole("button", { name: "Reporter à demain", exact: true }).click();
+  await expect(page.getByText(/Chambre 121 reportée à demain/)).toBeVisible();
+  await page.reload();
+  await page.getByText(/chambre\(s\) reportée\(s\) aujourd’hui/).click();
+  await page.getByRole("button", { name: "Reprendre 121", exact: true }).click();
+  await expect(page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "Absent", exact: true })).toHaveAttribute("aria-checked", "true");
+  const state = await (await page.request.get("/api/hotel")).json();
+  expect(state.roomInspections.some((r: { room: string }) => r.room === "121")).toBe(false);
 });
