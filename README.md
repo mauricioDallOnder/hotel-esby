@@ -1,5 +1,52 @@
 # Hôtel Contrôle
 
+## Disponibilidade, comentários e tarefas do dia
+
+- **Quartos livres:** cada cartão em **Checklist des chambres** tem a checkbox
+  **Chambre libre**. Marcar informa livre; desmarcar informa ocupado. O traço
+  indica disponibilidade ainda desconhecida. Não exige nem registra inspeção.
+  Até a primeira alteração manual, usa a ocupação do último controle como
+  referência; depois, a checkbox controla a disponibilidade atual independentemente
+  dos controles históricos. Filtro e PDF usam esse estado, inclusive para quartos
+  nunca inspecionados. O PDF distingue disponibilidade atual e dados do último controle.
+- **Absences et départs:** **Ajouter un commentaire** acrescenta uma nota com data
+  e autor ao mesmo evento. **Modifier le commentaire** permite corrigir texto e
+  data, preservando o original e todas as versões no histórico de modificações.
+  Os comentários existentes aparecem automaticamente, sem migração destrutiva.
+- **Tâches du jour:** substitui a ronda cotidiana no menu e na página inicial.
+  Adicione texto livre, marque como concluído, edite texto/data ou exclua a tarefa.
+  A data permite consultar dias anteriores ou preparar dias futuros; tarefas não
+  são apagadas à meia-noite. `/rondes` redireciona para `/quotidien`. Dados antigos
+  de rondas continuam armazenados e disponíveis nos relatórios históricos.
+- **Salvamento:** disponibilidade, comentários e tarefas usam a fila persistente
+  do aparelho e sincronizam com o servidor. Alterações sucessivas são enviadas
+  na ordem correta. Conflitos entre aparelhos são recusados com mensagem e o texto
+  pendente preservado: atualize, cancele a alteração conflitante e refaça sobre os
+  dados atuais. Falhas de rede e respostas perdidas podem ser reenviadas sem duplicar.
+
+### Publicação desta versão
+
+**Em Google Sheets, atualize primeiro o Apps Script:** copie o arquivo completo
+`google-apps-script/Code.gs`, execute `setup()` e publique uma nova versão da
+implantação Web App existente. A nova aba **Suivi quotidien** guarda o histórico
+compartilhado de disponibilidade, comentários e tarefas. As demais abas, o token
+privado e a pasta de fotos são preservados. Depois publique o app e use **Actualiser**.
+O GitHub não publica o Apps Script automaticamente.
+
+O script antigo rejeita `commitWorkEvent` antes de gravar; os envios permanecem
+na fila. Após atualizar o script, use **Réessayer**. No modo local, a nova coleção
+`workEvents` é criada no primeiro salvamento, sem migração manual.
+
+`lib/work.ts` contém as regras compartilhadas de revisão e projeção. Rode
+`npm run build:apps-script` ao alterá-las e `npm run check:apps-script` para
+validar o código pronto para implantação.
+
+Validação desta atualização: testes de persistência, concorrência, comentários,
+ordenação da fila, PDF e Apps Script simulado; TypeScript, lint e build de produção.
+Os cenários Playwright estão em `tests/e2e/daily-work.spec.ts`. A execução no
+navegador não pôde ser validada neste ambiente porque o Chromium não está instalado
+e o download disponível falhou. A integração com o Google real depende da implantação.
+
 ## Contrôle rapide et rotation des chambres (version 4)
 
 - **Inspeção por toque:** três etapas (équipements, état/ménage, résumé), botões
@@ -83,7 +130,7 @@ A interface continua em francês. As rotas disponíveis são:
 - `/familles`: **Absences et départs**, com quarto, família, ausência temporária
   ou saída definitiva, data, retorno previsto opcional, responsável e observações.
 - `/quotidien`: as tarefas diárias que antes estavam em `/checklist`.
-- Rondes, anomalies e relatórios existentes continuam disponíveis.
+- Anomalias e relatórios existentes continuam disponíveis; dados das rondas antigas são preservados.
 
 Cada controle de quarto registra estado geral, limpeza feita/não feita,
 funcionamento de torneiras, interruptores, iluminação, detector de fumaça,
@@ -188,7 +235,7 @@ The login screen offers two profiles: **Direction** and **Employé**. Configure
 hosting environment), then restart the server. The former `APP_PASSWORD` remains
 a fallback for Direction only. Existing sessions must log in again.
 
-Both profiles can consult anomalies, report new ones, and carry out rounds.
+Both profiles can consult anomalies, report new ones, inspect rooms, update availability, add family comments, and manage daily tasks.
 Only Direction can edit an existing anomaly, record an intervention, or change
 its status. These permissions are enforced by the API as well as the interface.
 

@@ -4,6 +4,7 @@ import { Alert, Box, Button, Chip, Dialog, DialogTitle, DialogContent, DialogAct
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
+import { FamilyComments } from "@/components/FamilyComments";
 import { RoomSelect } from "@/components/RoomSelect";
 import { createId, displayDate, today } from "@/lib/domain";
 import { familyEntrySchema, type FamilyEntry } from "@/lib/rooms";
@@ -79,7 +80,7 @@ export default function FamiliesPage() {
           <Typography>{displayDate(record.date)}{record.returnDate ? ` · Retour prévu : ${displayDate(record.returnDate)}` : ""}</Typography>
           <Typography variant="body2" color="text.secondary">Signalé par {record.actor}</Typography>
           {record.kind === "absence" && <Button color="error" onClick={() => { setDeleteError(""); setDeleting(record); }}>Supprimer</Button>}
-          {record.notes && <Typography sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{record.notes}</Typography>}
+          <FamilyComments family={record} />
         </Stack>
       </Paper>)}
       {visibleRecords.length > limit && <Button onClick={() => setLimit(n => n + 30)}>Afficher plus</Button>}

@@ -124,10 +124,36 @@ export const roomEntrySchema = roomFields.extend({
   fridgeCleaning: v.checks.some(c => c.key === "fridge" && c.result === "absent") ? null : v.fridgeCleaning,
 }));
 
-export const entrySchema = z.union([familyEntrySchema, roomEntrySchema]);
+export const workEntrySchema = z.object({
+  type: z.literal("createWorkEvent"), id: z.string().uuid(),
+  kind: z.enum(["roomAvailability", "familyComment", "dailyTask"]),
+  targetId: z.string().min(1).max(80), expectedRevision: z.number().int().min(0),
+  room: z.union([roomSchema, z.literal("")]), date: z.iso.date(), actor: required,
+  notes: note, occurredAt: z.iso.datetime(),
+  free: z.boolean().optional(), done: z.boolean().optional(), deleted: z.boolean().optional(),
+  familyEventId: z.string().uuid().optional(),
+}).superRefine((v, ctx) => {
+  const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
+  if (v.kind === "roomAvailability") {
+    if (!v.room || v.targetId !== v.room || typeof v.free !== "boolean") invalid("free", "Choisissez la disponibilité d’une chambre connue.");
+  } else {
+    if (!z.string().uuid().safeParse(v.targetId).success) invalid("targetId", "Identifiant invalide.");
+    if (!v.notes.trim()) invalid("notes", "Saisissez un texte.");
+  }
+  if (v.kind === "familyComment" && (!v.familyEventId || !v.room)) invalid("familyEventId", "Événement familial requis.");
+  if (v.kind === "dailyTask" && (typeof v.done !== "boolean" || typeof v.deleted !== "boolean" || v.notes.length > 500)) invalid("notes", "Tâche invalide (500 caractères maximum).");
+  if (v.kind !== "dailyTask" && (v.done !== undefined || v.deleted !== undefined)) invalid("kind", "État de tâche inattendu.");
+  if (v.kind !== "familyComment" && v.familyEventId !== undefined) invalid("familyEventId", "Lien familial inattendu.");
+  if (v.kind !== "roomAvailability" && v.free !== undefined) invalid("free", "Disponibilité inattendue.");
+  if (v.kind === "dailyTask" && v.room) invalid("room", "Une tâche n’est pas un contrôle de chambre.");
+});
+export type WorkEntry = z.infer<typeof workEntrySchema>;
+export type WorkEvent = WorkEntry & { version: number; updatedAt: string; submissionHash: string };
+
+export const entrySchema = z.union([familyEntrySchema, roomEntrySchema, workEntrySchema]);
 export type FamilyEntry = z.infer<typeof familyEntrySchema>;
 export type RoomEntry = z.infer<typeof roomFields> & { occupied?: boolean | null; schemaVersion?: 2 | 3 | 4; inspectedAt?: string; issueLinks?: { key: string; issueId: string }[]; distinctProblemKeys?: string[]; microwaveCleaning?: z.infer<typeof applianceCleaning>; fridgeCleaning?: z.infer<typeof applianceCleaning>; bugs?: "non" | "oui" | "non_verifie" };
-export type Entry = FamilyEntry | RoomEntry;
+export type Entry = FamilyEntry | RoomEntry | WorkEntry;
 
 const legacyRoom = z.string().refine(v => (rooms.includes(v) && v !== "233") || ["111", "112", "113", "213", "313"].includes(v));
 const legacyKeys = roomChecks.filter(c => c.key !== "door_handle_clear" && c.key !== "door_closer").map(c => c.key);
@@ -142,6 +168,7 @@ const legacyRoomSchema = roomFields.extend({
 const legacyFamilySchema = familyEntrySchema.safeExtend({ room: legacyRoom });
 
 export function parseEntry(input: unknown, legacy = false): Entry {
+  if (input && typeof input === "object" && "type" in input && input.type === "createWorkEvent") return workEntrySchema.parse(input);
   if (input && typeof input === "object" && "schemaVersion" in input && input.schemaVersion === 2) return roomEntryV2Schema.parse(input);
   if (input && typeof input === "object" && "schemaVersion" in input && input.schemaVersion === 3) return roomEntryV3Schema.parse(input);
   if (!legacy) return entrySchema.parse(input);
@@ -197,7 +224,7 @@ export const absenceDeleteSchema = z.object({ collection: z.literal("familyEvent
 type Saved = { version: number; updatedAt: string; submissionHash: string };
 export type FamilyEvent = FamilyEntry & Saved;
 export type RoomInspection = Omit<RoomEntry, "photosData"> & Saved & { photoIds: string[]; photoId: string | null; relatedIssueIds?: string[]; issueSyncVersion?: 2; createdIssue?: boolean; newIssueFindingKeys?: string[] };
-export type EntryChange = { collection: "familyEvents"; record: FamilyEvent } | { collection: "roomInspections"; record: RoomInspection; issue?: Issue };
+export type EntryChange = { collection: "workEvents"; record: WorkEvent } | { collection: "familyEvents"; record: FamilyEvent } | { collection: "roomInspections"; record: RoomInspection; issue?: Issue };
 export function roomRecordTime(record: RoomEntry | RoomInspection) {
   return record.inspectedAt || ("updatedAt" in record ? record.updatedAt : "z");
 }

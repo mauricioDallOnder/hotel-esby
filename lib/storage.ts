@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChange } from "./rooms";
 import { today } from "./domain";
+import { validateWorkEntry } from "./work";
 import { prepareRoomIssue } from "./roomIssueMatching";
 import { ReadCache } from "./readCache";
 import {
@@ -111,8 +112,8 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
       );
     }
     
-    if (!result.ok && payload.action === "commitRoomInspection" && result.error === "Action invalide.")
-      throw new DomainError("Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser les contrôles. Ils restent conservés sur cet appareil.", 503);
+    if (!result.ok && ["commitRoomInspection", "commitWorkEvent"].includes(String(payload.action)) && result.error === "Action invalide.")
+      throw new DomainError("Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser ces modifications. Elles restent conservées sur cet appareil.", 503);
     if (!result.ok)
       // A Google token failure is a server configuration error, not an expired hotel session.
       throw new DomainError(result.code === 401
@@ -258,14 +259,14 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   const record = { ...fields, version: 1, updatedAt: new Date().toISOString(), submissionHash,
     ...(entry.type === "createRoomInspection" ? { photoIds: [], photoId: null } : {}) };
     
-  const collection = entry.type === "createRoomInspection" ? "roomInspections" : "familyEvents";
+  const collection = entry.type === "createRoomInspection" ? "roomInspections" : entry.type === "createWorkEvent" ? "workEvents" : "familyEvents";
   const change = { collection, record } as EntryChange;
   
   if (change.collection === "roomInspections") change.issue = roomIssue(change.record, photosData.length > 0);
   
   if (storageMode() === "sheets") {
     try {
-      const receipt = await google<EntryChange>({ action: change.collection === "roomInspections" ? "commitRoomInspection" : "commitEntry", ...change, expectedVersion: 0, photosData });
+      const receipt = await google<EntryChange>({ action: change.collection === "roomInspections" ? "commitRoomInspection" : change.collection === "workEvents" ? "commitWorkEvent" : "commitEntry", ...change, expectedVersion: 0, photosData });
       if (receipt?.collection !== collection || receipt.record?.id !== entry.id || receipt.record?.submissionHash !== submissionHash)
         throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
       if (change.collection === "roomInspections" && (receipt.collection !== "roomInspections" || receipt.record.issueSyncVersion !== 2))
@@ -284,6 +285,10 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
     return { collection, record: existing, ...(collection === "roomInspections" ? { issue: state.issues.find(i => i.id === existing.id) } : {}) } as EntryChange;
   }
   
+  if (entry.type === "createWorkEvent") {
+    const error = validateWorkEntry(entry, state.workEvents || [], state.familyEvents || [], state.deletedFamilyEventIds);
+    if (error) throw new DomainError(error, 409);
+  }
   mkdirSync(directory(), { recursive: true });
   
   if (change.collection === "roomInspections" && photosData.length) {
@@ -305,6 +310,7 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
       state.issues.push(change.issue);
     }
   }
+  else if (change.collection === "workEvents") state.workEvents = [...(state.workEvents || []), change.record];
   else state.familyEvents = [...(state.familyEvents || []), change.record];
   
   const temp = path.join(directory(), "hotel." + crypto.randomUUID() + ".tmp");

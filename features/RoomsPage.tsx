@@ -10,6 +10,9 @@ import { displayDate, today } from "@/lib/domain";
 import { cleaningText, latestRoomRecords, roomGroups, rooms, type RoomEntry } from "@/lib/rooms";
 import { daysSince, roomRotation } from "@/lib/roomRotation";
 import { openRoomIssues } from "@/lib/roomIssueMatching";
+import { RoomAvailabilityCheckbox } from "@/components/RoomAvailabilityCheckbox";
+import { useWorkEvents } from "@/lib/useWorkEvents";
+import { roomAvailability } from "@/lib/work";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 type Preferences = { dailyGoal: number; intervalDays: number; deferredDay: string; deferred: string[] };
@@ -17,6 +20,7 @@ const filters = { all: "Toutes", target: "Tournée du jour", due: "À contrôler
 export default function RoomsPage() {
   const { roomInspections = [], issues, hotelName } = useAppContext();
   const { pending } = useEntries();
+  const { events: workEvents } = useWorkEvents();
   const [room, setRoom] = useState<string | null>(null);
   const [historyRoom, setHistoryRoom] = useState<string | null>(null);
   const [day, setDay] = useState(today);
@@ -41,7 +45,7 @@ export default function RoomsPage() {
   const history = [...queued, ...roomInspections.filter(i => !queued.some(q => q.id === i.id))];
   const latest = latestRoomRecords(history.filter(r => r.date <= day));
   const rotation = roomRotation(history.filter(r => !pending.some(p => p.entry.id === r.id && p.blocked)), day, config?.dailyGoal, config?.intervalDays, deferred);
-  const free = [...latest.values()].filter(r => r.occupied === false);
+  const free = rooms.filter(n => roomAvailability(n, workEvents, latest.get(n)).free === true);
   const nextRoom = rotation.plan.find(n => n !== room);
   function changePreference(patch: Partial<Preferences>) { if (config) preferences.update({ ...config, ...patch }); }
   function deferRoom() {
@@ -52,7 +56,7 @@ export default function RoomsPage() {
   }
   async function exportFreeRooms() {
     setExporting(true); setExportError("");
-    try { const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport"); await downloadFreeRoomsReport({ hotelName, history }); }
+    try { const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport"); await downloadFreeRoomsReport({ hotelName, history, workEvents }); }
     catch (error) { setExportError((error as Error).message); }
     finally { setExporting(false); }
   }
@@ -62,8 +66,8 @@ export default function RoomsPage() {
     if (filter === "target") return rotation.plan.includes(n) || rotation.done.includes(n);
     if (filter === "due") return rotation.due.includes(n);
     if (filter === "problems") return openRoomIssues(issues, n).length > 0;
-    if (filter === "free") return record?.occupied === false;
-    if (filter === "cleaning") return record?.occupied === false && record.cleaning === "non_faite";
+    if (filter === "free") return roomAvailability(n, workEvents, record).free === true;
+    if (filter === "cleaning") return roomAvailability(n, workEvents, record).free === true && record?.cleaning === "non_faite";
     return true;
   }) })).filter(g => g.rooms.length);
   return <>
@@ -104,6 +108,7 @@ export default function RoomsPage() {
       </Stack>
       {exportError && <Alert severity="error">{exportError}</Alert>}
       <Stack spacing={1.5}>
+        <Typography variant="body2" color="text.secondary">Cochez « Chambre libre » pour indiquer la disponibilité actuelle ; décochez pour une chambre occupée. Aucun contrôle à remplir. Une case avec un trait indique une disponibilité encore inconnue.</Typography>
         <TextField label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{["all", ...roomGroups.map(g => g.label)].map(g => <Chip key={g} label={g === "all" ? "Tous les étages" : g} onClick={() => setGroup(g)} color={group === g ? "primary" : "default"} variant={group === g ? "filled" : "outlined"} />)}</Stack>
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{Object.entries(filters).map(([key, label]) => <Chip key={key} label={label} onClick={() => setFilter(key as keyof typeof filters)} color={filter === key ? "primary" : "default"} variant={filter === key ? "filled" : "outlined"} />)}</Stack>
@@ -118,7 +123,8 @@ export default function RoomsPage() {
               <Stack spacing={1}>
                 <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}><Typography variant="h4" sx={{ fontWeight: 800 }}>{n}</Typography>{done && <Chip label="Fait" color="success" size="small" />}</Stack>
                 <Typography variant="caption">{record ? `Dernier : ${displayDate(record.date)}` : "Jamais contrôlée"}</Typography>
-                {record && <Typography variant="caption">{record.occupied === false ? `Libre · Ménage ${cleaningText(record).toLowerCase()}` : record.occupied === true ? "Occupée" : "Occupation inconnue"}</Typography>}
+                <RoomAvailabilityCheckbox room={n} inspection={record} />
+                {record?.occupied === false && <Typography variant="caption">Dernier contrôle · Ménage {cleaningText(record).toLowerCase()}</Typography>}
                 {open.length > 0 && <Chip label={`${open.length} anomalie(s)`} color="warning" size="small" variant="outlined" />}
                 {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">En attente d’envoi</Typography>}
                 {deferred.includes(n) && <Typography variant="caption">Reportée à demain</Typography>}

@@ -2,7 +2,7 @@
 // Run setup() once, then deploy as a web app. Never put API_TOKEN in client code.
 //https://script.google.com/macros/s/AKfycby8og5t12Q7D9_Nspi-CPu0j5bXygWcoCqPKeOP0sMy5mrRvQPkMfUd96cucJqrT7Xg/exec
 const SPREADSHEET_ID = '1mF0nUV0FihRnNJD0V6KnK7iJAjUleksrW-sPZvSd61I';
-const TABLES = { issues: 'Anomalies', inspections: 'Rondes', familyEvents: 'Absences et départs', roomInspections: 'Contrôles chambres' };
+const TABLES = { issues: 'Anomalies', inspections: 'Rondes', familyEvents: 'Absences et départs', roomInspections: 'Contrôles chambres', workEvents: 'Suivi quotidien' };
 const HEADERS = ['ID', 'Version', 'Date', 'Lieu / zone', 'Titre / inspecteur', 'Statut', 'Priorité', 'Responsable', 'Photo Drive', 'Modifié le'].concat(Array.from({length: 12}, (_, i) => 'Données ' + (i + 1)));
 
 function setup() {
@@ -57,7 +57,7 @@ function doPost(e) {
     const input = JSON.parse(e.postData.contents);
     const token = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
     if (!token || input.token !== token) return json_({ ok: false, code: 401, error: 'Accès refusé.' });
-    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), maxIssuePhotos: 3, entryVersion: 3, deletedFamilyEventIds: deletedAbsences_() } });
+    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), workEvents: records_('workEvents'), maxIssuePhotos: 3, entryVersion: 3, deletedFamilyEventIds: deletedAbsences_() } });
     if (input.action === 'photo') {
       const collection = input.collection === 'roomInspections' ? 'roomInspections' : 'issues';
       const issue = records_(collection).find(item => item.id === input.issueId);
@@ -88,13 +88,14 @@ function doPost(e) {
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection') throw new Error('Action invalide.');
+    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection' && input.action !== 'commitWorkEvent') throw new Error('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
-    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection';
+    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection' || input.action === 'commitWorkEvent';
+    if (input.action === 'commitWorkEvent' && input.collection !== 'workEvents') throw new Error('Collection invalide.');
     if (input.action === 'commitRoomInspection' && input.collection !== 'roomInspections') throw new Error('Collection invalide.');
-    if (isEntry && !['familyEvents', 'roomInspections'].includes(input.collection)) throw new Error('Collection invalide.');
-    if (!isEntry && ['familyEvents', 'roomInspections'].includes(input.collection)) throw new Error('Utilisez commitEntry.');
+    if (isEntry && !['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Collection invalide.');
+    if (!isEntry && ['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Utilisez commitEntry.');
     if (isEntry && (input.expectedVersion !== 0 || !/^[a-f0-9]{64}$/.test(input.record && input.record.submissionHash))) throw new Error('Enregistrement invalide.');
     const sheet = table_(input.collection);
     const record = input.record;
@@ -118,6 +119,10 @@ function doPost(e) {
     }
     if ((current ? current.version : 0) !== input.expectedVersion) return json_({ ok: false, code: 409, error: 'Modifié par un autre utilisateur. Actualisez avant de réessayer.' });
     if (input.collection === 'inspections' && current && current.completed) throw new Error('Ronde déjà terminée.');
+    if (input.collection === 'workEvents') {
+      const conflict = WorkLogic.validateWorkEntry(record, records, records_('familyEvents'), deletedAbsences_());
+      if (conflict) return json_({ ok: false, code: 409, error: conflict });
+    }
     // The trusted Next.js server validates the full business schema before commit.
     // The token must only be shared with that server.
     if (input.collection === 'issues' || input.collection === 'roomInspections') {
@@ -164,13 +169,16 @@ function writeRecord_(collection, record, isEntry, current) {
     const chunks = Array.from({length: 12}, (_, i) => serialized.slice(i * 35000, (i + 1) * 35000));
     const safe = value => { const str = String(value == null ? '' : value); return /^[=+\-@]/.test(str) ? "'" + str : str; };
     let row = [record.id, record.version, record.date, record.location || record.area, record.title || record.inspector, record.status || (record.completed ? 'Terminée' : 'Brouillon'), record.priority || '', record.assignee || '', photoIds_(record).map(id => 'https://drive.google.com/file/d/' + id + '/view').join('\n'), record.updatedAt].map(safe).concat(chunks.map(chunk => 'j' + chunk));
-    if (isEntry) {
+    if (isEntry && collection !== 'workEvents') {
       const photos = photoIds_(record).map(id => 'https://drive.google.com/file/d/' + id + '/view').join('\n');
       const visible = collection === 'familyEvents'
         ? [record.id, record.version, record.date, record.room, record.family, record.kind === 'absence' ? 'Absence' : 'Départ', record.actor, record.notes, photos, record.updatedAt]
         : [record.id, record.version, record.date, record.room, record.actor, record.condition, record.cleaning, record.notes, photos, record.updatedAt];
       const extra = collection === 'familyEvents' ? [record.returnDate || ''] : [record.carpet, record.carpetNotes, record.microwave].concat(ROOM_CHECK_KEYS.map(key => { const check = record.checks.find(c => c.key === key); return check ? check.result : ''; }));
       row = visible.map(safe).concat(chunks.map(chunk => 'j' + chunk), extra.map(safe));
+    }
+    if (collection === 'workEvents') {
+      row = [record.id, record.version, record.date, record.room || '', record.notes, record.kind, '', record.actor, '', record.updatedAt].map(safe).concat(chunks.map(chunk => 'j' + chunk));
     }
     const rowNumber = current ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().findIndex(row => row[0] === record.id) + 2 : sheet.getLastRow() + 1;
     sheet.getRange(rowNumber, 1, 1, row.length).setNumberFormat('@').setValues([row]);
@@ -183,6 +191,7 @@ function photoIds_(record) {
 const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear', 'door_closer'];
 function headers_(collection) {
   const data = HEADERS.slice(10);
+  if (collection === 'workEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Texte', 'Type de suivi', 'Réservé', 'Auteur', 'Réservé 2', 'Enregistré le'].concat(data);
   if (collection === 'familyEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Famille', 'Événement', 'Signalé par', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Retour prévu']);
   if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée', 'Ferme-porte']);
   return HEADERS;
@@ -324,3 +333,63 @@ function prepareRoomIssue(candidate, record, issues) {
 return exports;
 })();
 // END GENERATED ROOM ISSUE MATCHING
+// BEGIN GENERATED WORK EVENTS — npm run build:apps-script
+var WorkLogic = (function () {
+var exports = {};
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.latestWork = latestWork;
+exports.validateWorkEntry = validateWorkEntry;
+exports.roomAvailability = roomAvailability;
+exports.dailyTasks = dailyTasks;
+exports.familyComments = familyComments;
+function latestWork(events, kind) {
+    const latest = new Map();
+    for (const event of events.filter(e => e.kind === kind)) {
+        const previous = latest.get(event.targetId);
+        if (!previous || previous.expectedRevision < event.expectedRevision)
+            latest.set(event.targetId, event);
+    }
+    return latest;
+}
+function validateWorkEntry(entry, events, families, deletedFamilies = []) {
+    const current = latestWork(events, entry.kind).get(entry.targetId);
+    if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
+        return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
+    if (current === null || current === void 0 ? void 0 : current.deleted)
+        return "Cette tâche a déjà été supprimée.";
+    if (entry.kind === "familyComment") {
+        const family = families.find(f => f.id === entry.familyEventId);
+        if (!family || deletedFamilies.includes(family.id))
+            return "Cet événement familial n’existe plus.";
+        if (family.room !== entry.room || (current && current.familyEventId !== entry.familyEventId))
+            return "Ce commentaire appartient à un autre événement.";
+    }
+    if (entry.kind === "dailyTask" && entry.deleted && !current)
+        return "Cette tâche n’existe pas.";
+    return undefined;
+}
+function roomAvailability(room, events, latestInspection) {
+    const manual = latestWork(events, "roomAvailability").get(room);
+    return { free: manual ? manual.free : (latestInspection === null || latestInspection === void 0 ? void 0 : latestInspection.occupied) === false ? true : (latestInspection === null || latestInspection === void 0 ? void 0 : latestInspection.occupied) === true ? false : undefined,
+        source: manual, revision: manual ? manual.expectedRevision + 1 : 0 };
+}
+function dailyTasks(events, date) {
+    return [...latestWork(events, "dailyTask").values()].filter(t => !t.deleted && t.date === date)
+        .sort((a, b) => Number(a.done) - Number(b.done) || a.occurredAt.localeCompare(b.occurredAt) || a.targetId.localeCompare(b.targetId));
+}
+function familyComments(family, events) {
+    const original = { type: "createWorkEvent", id: family.id, kind: "familyComment", targetId: family.id, expectedRevision: -1,
+        room: family.room, date: family.date, actor: family.actor, notes: family.notes, occurredAt: "updatedAt" in family ? family.updatedAt : `${family.date}T00:00:00.000Z`, familyEventId: family.id };
+    const history = events.filter(e => e.kind === "familyComment" && e.familyEventId === family.id);
+    const latest = latestWork(history, "familyComment");
+    if (family.notes && !latest.has(family.id))
+        latest.set(family.id, original);
+    return [...latest.values()].map(comment => ({ ...comment,
+        revisions: [...(comment.targetId === family.id && family.notes ? [original] : []), ...history.filter(e => e.targetId === comment.targetId)].sort((a, b) => a.expectedRevision - b.expectedRevision),
+    })).sort((a, b) => b.date.localeCompare(a.date) || b.occurredAt.localeCompare(a.occurredAt));
+}
+
+return exports;
+})();
+// END GENERATED WORK EVENTS

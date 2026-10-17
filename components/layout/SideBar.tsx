@@ -23,8 +23,8 @@ const menuItems = [
   { label: "Absences et départs", path: "/familles" },
   
   {
-    label: "Ronde quotidienne",
-    path: "/rondes",
+    label: "Tâches du jour",
+    path: "/quotidien",
   },
   {
     label: "Anomalies & suivi",
@@ -84,7 +84,7 @@ export function Sidebar({
               mt: 0.5,
             }}
           >
-            Rondes & maintenance
+            Chambres & maintenance
           </Typography>
         </Box>
       </Toolbar>
@@ -214,7 +214,3 @@ export function Sidebar({
     </>
   );
 }
-
-/*
- { label: "Tâches du jour", path: "/quotidien" },
-*/

@@ -71,3 +71,11 @@ test("room problems create one editable anomaly and retries preserve its resolut
   await executeEntry({ ...entry(), id: createId(), fridgeCleaning: "propre" });
   assert.equal((await readState()).issues.length, 1);
 });
+
+test("manual availability overrides inspection occupancy without changing the historical inspection", () => {
+  const old = saved({ room: "114", occupied: true });
+  const work = { type: "createWorkEvent" as const, id: createId(), kind: "roomAvailability" as const, targetId: "114", room: "114", expectedRevision: 0, free: true, date: today(), actor: "Marie", notes: "", occurredAt: new Date().toISOString() };
+  assert.equal(freeRoomRows([old], [work])[0][0], "114");
+  assert.equal(old.occupied, true);
+  assert.equal(freeRoomRows([saved()], [{ ...work, free: false }]).length, 0);
+});
