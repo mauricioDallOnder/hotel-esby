@@ -10,8 +10,8 @@ import "./globals.css";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Hôtel Contrôle · Rondes et maintenance",
-  description: "Inspections quotidiennes, anomalies et suivi des interventions de l’hôtel.",
+  title: "Hôtel Contrôle · Chambres et maintenance",
+  description: "Chambres, tâches du jour, anomalies et suivi des interventions de l’hôtel.",
 };
 
 export default function RootLayout({

@@ -1,774 +1,96 @@
 "use client";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, Paper, Stack, TextField, Typography } from "@mui/material";
+import { ConnectionBar, PageTitle } from "@/components/HotelUI";
+import { WorkEntryEditor } from "@/components/WorkEntryEditor";
+import { createId, displayDate, today } from "@/lib/domain";
+import type { WorkEntry } from "@/lib/rooms";
+import { useDeviceDraft } from "@/lib/useDeviceDraft";
+import { useWorkEvents } from "@/lib/useWorkEvents";
+import { dailyTasks } from "@/lib/work";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  LinearProgress,
-  List,
-  ListItemButton,
-  Paper,
-  Snackbar,
-  Stack,
-  Typography,
-} from "@mui/material";
-
-import AccessTimeRounded from "@mui/icons-material/AccessTimeRounded";
-import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
-import RadioButtonUncheckedRounded from "@mui/icons-material/RadioButtonUncheckedRounded";
-import RestartAltRounded from "@mui/icons-material/RestartAltRounded";
-
-import {
-  ConnectionBar,
-  PageTitle,
-} from "@/components/HotelUI";
-
-type Task = {
-  id: string;
-  title: string;
-  detail: string;
-  time?: string;
-  bin?: string;
-};
-
-type Checks = Record<string, boolean>;
-
-const DAILY_TASKS: Task[] = [
-  {
-    id: "open-kitchen-room-oven-storage",
-    time: "08:00",
-    title: "Ouvrir la cuisine, la chambre four et la réserve",
-    detail: "Première tâche à l'arrivée.",
-  },
-  {
-    id: "open-reception",
-    title: "Ouvrir la réception",
-    detail: "À faire juste après l'ouverture des premiers locaux.",
-  },
-  {
-    id: "check-kitchen-premises-hobs",
-    title: "Vérifier la cuisine, ouvrir le local des plaques",
-    detail: "Faire un contrôle rapide de l'état des lieux.",
-  },
-  {
-    id: "check-outdoor-tank-temperature",
-    title: "Vérifier la température du ballon à l'extérieur",
-    detail:
-      "Envoyer la photo et enregistrer dans la feuille de contrôle. Attention : le ballon 3 correspond au ballon 1.",
-  },
-  {
-    id: "check-bins",
-    title: "Vérifier les 5 poubelles",
-    detail:
-      "Contrôler les bacs et suivre la consigne spéciale du jour ci-dessous.",
-  },
-  {
-    id: "check-resident-software",
-    title: "Vérifier le logiciel des résidents",
-    detail:
-      "Contrôler les informations et les éventuelles mises à jour.",
-  },
-];
-
-const BIN_TASKS_BY_WEEKDAY: Partial<Record<number, Task[]>> = {
-  // Lundi
-  1: [
-    {
-      id: "monday-black-bin-out",
-      time: "21:00",
-      bin: "Bac noir",
-      title: "Sortir le bac noir",
-      detail:
-        "Le placer devant la porte 3, sur le côté, sans bloquer la porte.",
-    },
-  ],
-
-  // Mardi
-  2: [
-    {
-      id: "tuesday-black-bin-in-clean",
-      time: "08:00",
-      bin: "Bac noir",
-      title: "Rentrer le bac et le nettoyer",
-      detail: "Après la sortie du bac noir du lundi soir.",
-    },
-  ],
-
-  // Mercredi
-  3: [
-    {
-      id: "wednesday-yellow-bin-out",
-      time: "21:00",
-      bin: "Bac jaune",
-      title: "Sortir le bac jaune",
-      detail:
-        "Le placer à côte de la porte (3 poubelles) , au même endroit, sans bloquer la porte.",
-    },
-  ],
-};
-
-function capitalize(value: string): string {
-  if (!value) return value;
-
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function localDateKey(date: Date): string {
-  const parts = new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "Europe/Paris",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-
-  const year =
-    parts.find((part) => part.type === "year")?.value ?? "";
-
-  const month =
-    parts.find((part) => part.type === "month")?.value ?? "";
-
-  const day =
-    parts.find((part) => part.type === "day")?.value ?? "";
-
-  return `${year}-${month}-${day}`;
-}
-
-function formatDate(date: Date): string {
-  return capitalize(
-    new Intl.DateTimeFormat("fr-FR", {
-      timeZone: "Europe/Paris",
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    }).format(date)
-  );
-}
-
-function formatWeekday(date: Date): string {
-  return capitalize(
-    new Intl.DateTimeFormat("fr-FR", {
-      timeZone: "Europe/Paris",
-      weekday: "long",
-    }).format(date)
-  );
-}
-
-function formatTime(date: Date): string {
-  return new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "Europe/Paris",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function getWeekday(date: Date): number {
-  const weekday = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Europe/Paris",
-    weekday: "short",
-  }).format(date);
-
-  const map: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  };
-
-  return map[weekday] ?? 0;
-}
-
-function storageKey(dateKey: string): string {
-  return `hotel-checklist:${dateKey}`;
-}
-
-function loadChecks(dateKey: string): Checks {
-  if (typeof window === "undefined") {
-    return {};
+function TaskList({ date }: { date: string }) {
+  const { events, enqueue, actor, isPending } = useWorkEvents();
+  const tasks = dailyTasks(events, date);
+  const done = tasks.filter(t => t.done).length;
+  const draft = useDeviceDraft<WorkEntry>(`draft:daily-task:${date}`, () => ({ type: "createWorkEvent", id: createId(), kind: "dailyTask", targetId: createId(), expectedRevision: 0,
+    date, room: "", actor, notes: "", occurredAt: new Date().toISOString(), done: false, deleted: false }));
+  const [editing, setEditing] = useState<WorkEntry | null>(null);
+  const [deleting, setDeleting] = useState<WorkEntry | null>(null);
+  const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
+  const [error, setError] = useState("");
+  async function save(entry: WorkEntry, added = false) {
+    if (saving.current) return;
+    saving.current = true; setBusy(true); setError("");
+    try {
+      await enqueue(entry);
+      if (added) await draft.clear();
+      setDeleting(null);
+    } catch (e) { setError((e as Error).message); }
+    finally { saving.current = false; setBusy(false); }
   }
-
-  try {
-    const saved = window.localStorage.getItem(
-      storageKey(dateKey)
-    );
-
-    if (!saved) {
-      return {};
-    }
-
-    return JSON.parse(saved) as Checks;
-  } catch {
-    return {};
+  function revision(task: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry {
+    return { ...task, ...patch, id: createId(), actor, expectedRevision: task.expectedRevision + 1, occurredAt: new Date().toISOString() };
   }
-}
-
-function saveChecks(
-  dateKey: string,
-  checks: Checks
-): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(
-      storageKey(dateKey),
-      JSON.stringify(checks)
-    );
-  } catch {
-    // L'application continue à fonctionner même
-    // si localStorage n'est pas disponible.
-  }
-}
-
-type TaskRowProps = {
-  task: Task;
-  done: boolean;
-  last?: boolean;
-  onToggle: () => void;
-};
-
-function TaskRow({
-  task,
-  done,
-  last = false,
-  onToggle,
-}: TaskRowProps) {
-  return (
-    <ListItemButton
-      onClick={onToggle}
-      role="checkbox"
-      aria-checked={done}
-      sx={{
-        minHeight: 84,
-        px: { xs: 2, sm: 2.5 },
-        py: 2,
-        gap: 1.5,
-        alignItems: "flex-start",
-
-        borderBottom: last
-          ? "none"
-          : "1px solid",
-
-        borderColor: "divider",
-
-        bgcolor: done
-          ? "action.hover"
-          : "background.paper",
-
-        "&:hover": {
-          bgcolor: done
-            ? "action.selected"
-            : "action.hover",
-        },
-      }}
-    >
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 32,
-          pt: 0.25,
-          flexShrink: 0,
-        }}
-      >
-        {done ? (
-          <CheckCircleRounded
-            color="primary"
-            sx={{ fontSize: 26 }}
-          />
-        ) : (
-          <RadioButtonUncheckedRounded
-            color="disabled"
-            sx={{ fontSize: 26 }}
-          />
-        )}
-      </Box>
-
-      <Box
-        sx={{
-          minWidth: 0,
-          flex: 1,
-        }}
-      >
-       <Stack
-  direction="row"
-  spacing={1}
-  useFlexGap
-  sx={{
-    alignItems: "center",
-    mb: 0.75,
-    flexWrap: "wrap",
-  }}
->
-  {task.time ? (
-    <Chip
-      size="small"
-      label={task.time}
-      color={done ? "default" : "primary"}
-      sx={{
-        height: 24,
-        fontWeight: 800,
-      }}
-    />
-  ) : null}
-
-  {task.bin ? (
-    <Chip
-      size="small"
-      variant="outlined"
-      label={task.bin}
-      sx={{
-        height: 24,
-        fontWeight: 700,
-      }}
-    />
-  ) : null}
-
-  <Typography
-    variant="subtitle1"
-    sx={{
-      fontWeight: 800,
-      lineHeight: 1.35,
-      textDecoration: done ? "line-through" : "none",
-      color: done ? "text.disabled" : "text.primary",
-    }}
-  >
-    {task.title}
-  </Typography>
-</Stack>
-        
-
-        <Typography
-          variant="body2"
-          color={
-            done
-              ? "text.disabled"
-              : "text.secondary"
-          }
-          sx={{
-            lineHeight: 1.5,
-          }}
-        >
-          {task.detail}
-        </Typography>
-      </Box>
-    </ListItemButton>
-  );
+  return <Stack spacing={2}>
+    {error && <Alert severity="error">{error}</Alert>}
+    {draft.error && <Alert severity="error">{draft.error}</Alert>}
+    <Paper component="form" variant="outlined" sx={{ p: 2 }} onSubmit={(e: React.FormEvent) => { e.preventDefault(); if (draft.value) void save(draft.value, true); }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+        <TextField fullWidth label="Que faut-il faire ?" placeholder="Ex. Préparer la chambre 102" required disabled={busy || !draft.value} value={draft.value?.notes || ""} onChange={e => { if (draft.value) draft.update({ ...draft.value, notes: e.target.value }); }} slotProps={{ htmlInput: { maxLength: 500 } }} />
+        <Button type="submit" variant="contained" disabled={busy || !draft.value?.notes.trim()} sx={{ minWidth: 110 }}>Ajouter</Button>
+      </Stack>
+    </Paper>
+    <Box>
+      <Typography sx={{ mb: 1 }}><strong>{done} / {tasks.length}</strong> tâche(s) terminée(s) · {displayDate(date)}</Typography>
+      <LinearProgress variant="determinate" value={tasks.length ? done / tasks.length * 100 : 0} aria-label="Tâches terminées" sx={{ height: 8, borderRadius: 4 }} />
+    </Box>
+    {!tasks.length && <Alert severity="info">Aucune tâche pour cette date. Ajoutez ce que vous avez à faire.</Alert>}
+    {tasks.map(task => <Paper variant="outlined" key={task.targetId} sx={{ p: 1.5, bgcolor: task.done ? "action.hover" : "background.paper" }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+        <Checkbox checked={!!task.done} disabled={busy} onChange={(_, checked) => void save(revision(task, { done: checked }))} slotProps={{ input: { "aria-label": `Terminer : ${task.notes}` } }} />
+        <Box sx={{ flex: 1, minWidth: 0, pt: 1 }}>
+          <Typography sx={{ textDecoration: task.done ? "line-through" : "none", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{task.notes}</Typography>
+          {isPending(task.id) && <Typography variant="caption" color="text.secondary">En attente d’envoi</Typography>}
+          <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+            <Button size="small" disabled={busy} onClick={() => setEditing(revision(task))}>Modifier</Button>
+            <Button size="small" color="error" disabled={busy} onClick={() => setDeleting(task)}>Supprimer</Button>
+          </Stack>
+        </Box>
+      </Stack>
+    </Paper>)}
+    {editing && <WorkEntryEditor key={editing.targetId} initial={editing} draftKey={`draft:task:edit:${editing.targetId}`} title="Modifier la tâche" onClose={() => setEditing(null)} />}
+    <Dialog open={!!deleting} onClose={busy ? undefined : () => setDeleting(null)} fullWidth maxWidth="xs">
+      <DialogTitle>Supprimer cette tâche ?</DialogTitle>
+      <DialogContent><Typography sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{deleting?.notes}</Typography>{error && <Alert severity="error">{error}</Alert>}</DialogContent>
+      <DialogActions><Button disabled={busy} onClick={() => setDeleting(null)}>Annuler</Button><Button color="error" disabled={busy} onClick={() => { if (deleting) void save(revision(deleting, { deleted: true })); }}>Supprimer</Button></DialogActions>
+    </Dialog>
+  </Stack>;
 }
 
 export default function DailyChecklistPage() {
-  const [now, setNow] =
-    useState<Date | null>(null);
-
-  const [dateKey, setDateKey] =
-    useState("");
-
-  const [checks, setChecks] =
-    useState<Checks>({});
-
-  const [toastOpen, setToastOpen] =
-    useState(false);
-
-  const loadedDate = useRef("");
-
-  const previouslyComplete =
-    useRef(false);
-
+  const [day, setDay] = useState(today);
+  const [selected, setSelected] = useState("");
   useEffect(() => {
-    function refresh() {
-      const fresh = new Date();
-
-      setNow(fresh);
-      const nextDate = localDateKey(fresh);
-      setDateKey(nextDate);
-      if (loadedDate.current !== nextDate) {
-        loadedDate.current = nextDate;
-        setChecks(loadChecks(nextDate));
-        previouslyComplete.current = false;
-      }
-    }
-
-    refresh();
-
-    const interval = window.setInterval(
-      refresh,
-      30_000
-    );
-
-    return () => {
-      window.clearInterval(interval);
-    };
+    const update = () => setDay(today());
+    const timer = window.setInterval(update, 30_000);
+    window.addEventListener("focus", update);
+    return () => { clearInterval(timer); window.removeEventListener("focus", update); };
   }, []);
-
-  const binTasks = useMemo(() => {
-    if (!now) {
-      return [];
-    }
-
-    return (
-      BIN_TASKS_BY_WEEKDAY[
-        getWeekday(now)
-      ] ?? []
-    );
-  }, [now]);
-
-  const allTasks = useMemo(
-    () => [...DAILY_TASKS, ...binTasks],
-    [binTasks]
-  );
-
-  const completed = allTasks.filter(
-    (task) => Boolean(checks[task.id])
-  ).length;
-
-  const total = allTasks.length;
-
-  const percentage =
-    total > 0
-      ? Math.round(
-          (completed / total) * 100
-        )
-      : 0;
-
-  const complete =
-    total > 0 && completed === total;
-
-  useEffect(() => {
-    if (
-      complete &&
-      !previouslyComplete.current
-    ) {
-      setToastOpen(true);
-    }
-
-    previouslyComplete.current = complete;
-  }, [complete]);
-
-  function toggleTask(id: string) {
-    if (!dateKey) {
-      return;
-    }
-
-    setChecks((current) => {
-      const next = {
-        ...current,
-        [id]: !current[id],
-      };
-
-      saveChecks(dateKey, next);
-
-      return next;
-    });
-  }
-
-  function resetToday() {
-    if (!dateKey) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "Réinitialiser toutes les tâches cochées d'aujourd'hui ?"
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setChecks({});
-    saveChecks(dateKey, {});
-
-    previouslyComplete.current = false;
-    setToastOpen(false);
-  }
-
-  return (
-    <>
-      <ConnectionBar />
-
-      <PageTitle
-        eyebrow="TRAVAIL · HÔTEL"
-        title="Checklist du jour"
-        description={
-          now
-            ? formatDate(now)
-            : "Chargement de la date…"
-        }
-        action={
-          <Chip
-            icon={<AccessTimeRounded />}
-            label={
-              now
-                ? formatTime(now)
-                : "--:--"
-            }
-            color="primary"
-            variant="outlined"
-            sx={{
-              fontWeight: 800,
-            }}
-          />
-        }
-      />
-
-      <Stack spacing={3}>
-        <Paper
-          variant="outlined"
-          sx={{
-            p: { xs: 2, sm: 2.5 },
-            borderRadius: 3,
-          }}
-        >
-          <Stack spacing={1.5}>
-            <Stack
-              direction="row"
-              sx={{
-                justifyContent:
-                  "space-between",
-                alignItems: "center",
-                gap: 2,
-              }}
-            >
-              <Box>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                >
-                  Progression
-                </Typography>
-
-                <Typography
-                  variant="h6"
-                  sx={{ fontWeight: 800 }}
-                >
-                  {completed} / {total} tâches
-                </Typography>
-              </Box>
-
-              <Chip
-                label={
-                  complete
-                    ? "Terminé"
-                    : `${percentage} %`
-                }
-                color={
-                  complete
-                    ? "success"
-                    : "primary"
-                }
-                variant="outlined"
-                sx={{ fontWeight: 800 }}
-              />
-            </Stack>
-
-            <LinearProgress
-              variant="determinate"
-              value={percentage}
-              color={
-                complete
-                  ? "success"
-                  : "primary"
-              }
-              sx={{
-                height: 9,
-                borderRadius: 999,
-              }}
-            />
-          </Stack>
-        </Paper>
-
-        <Box>
-          <Stack
-            direction="row"
-            sx={{
-              justifyContent:
-                "space-between",
-              alignItems: "center",
-              mb: 1.5,
-            }}
-          >
-            <Typography
-              variant="h6"
-              sx={{ fontWeight: 800 }}
-            >
-              À faire chaque jour
-            </Typography>
-
-            <Chip
-              label="Arrivée"
-              size="small"
-              variant="outlined"
-            />
-          </Stack>
-
-          <Paper
-            variant="outlined"
-            sx={{
-              borderRadius: 3,
-              overflow: "hidden",
-            }}
-          >
-            <List disablePadding>
-              {DAILY_TASKS.map(
-                (task, index) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    done={Boolean(
-                      checks[task.id]
-                    )}
-                    last={
-                      index ===
-                      DAILY_TASKS.length - 1
-                    }
-                    onToggle={() =>
-                      toggleTask(task.id)
-                    }
-                  />
-                )
-              )}
-            </List>
-          </Paper>
-        </Box>
-
-        <Box>
-          <Stack
-            direction="row"
-            sx={{
-              justifyContent:
-                "space-between",
-              alignItems: "center",
-              mb: 1.5,
-            }}
-          >
-            <Typography
-              variant="h6"
-              sx={{ fontWeight: 800 }}
-            >
-              Poubelles
-            </Typography>
-
-            <Chip
-              label={
-                now
-                  ? formatWeekday(now)
-                  : "Aujourd'hui"
-              }
-              size="small"
-              variant="outlined"
-            />
-          </Stack>
-
-          {binTasks.length > 0 ? (
-            <Paper
-              variant="outlined"
-              sx={{
-                borderRadius: 3,
-                overflow: "hidden",
-              }}
-            >
-              <List disablePadding>
-                {binTasks.map(
-                  (task, index) => (
-                    <TaskRow
-                      key={task.id}
-                      task={task}
-                      done={Boolean(
-                        checks[task.id]
-                      )}
-                      last={
-                        index ===
-                        binTasks.length - 1
-                      }
-                      onToggle={() =>
-                        toggleTask(task.id)
-                      }
-                    />
-                  )
-                )}
-              </List>
-            </Paper>
-          ) : (
-            <Alert
-              severity="warning"
-              sx={{
-                borderRadius: 3,
-              }}
-            >
-              <Typography
-                variant="body2"
-                sx={{ fontWeight: 700 }}
-              >
-                Aucune sortie spéciale
-                aujourd&apos;hui.
-              </Typography>
-
-              <Typography
-                variant="body2"
-                sx={{ mt: 0.5 }}
-              >
-                Lundi : bac noir à 21h ·
-                Mardi : rentrer/nettoyer à
-                8h · Mercredi : bac jaune à
-                21h.
-              </Typography>
-            </Alert>
-          )}
-        </Box>
-
-        <Box>
-          <Button
-            variant="outlined"
-            startIcon={
-              <RestartAltRounded />
-            }
-            onClick={resetToday}
-            fullWidth
-            sx={{
-              minHeight: 48,
-              borderRadius: 3,
-            }}
-          >
-            Réinitialiser aujourd&apos;hui
-          </Button>
-        </Box>
-
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          align="center"
-          sx={{
-            display: "block",
-            pb: 2,
-          }}
-        >
-          Les coches sont enregistrées sur
-          cet appareil pour la journée en
-          cours. La liste s&apos;adapte
-          automatiquement au jour de la
-          semaine.
-        </Typography>
+  const date = selected || day;
+  return <>
+    <ConnectionBar />
+    <PageTitle title="Tâches du jour" description="Écrivez vos tâches, cochez-les au fur et à mesure. Vous pouvez les modifier ou les supprimer." />
+    <Stack spacing={3}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ alignItems: { sm: "center" } }}>
+        <TextField label="Jour à afficher" type="date" value={date} onChange={e => setSelected(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
+        <Button onClick={() => setSelected("")}>Aujourd’hui</Button>
+        <Button component={Link} href="/anomalies">Signaler un problème →</Button>
       </Stack>
-
-      <Snackbar
-        open={toastOpen}
-        autoHideDuration={2300}
-        onClose={() =>
-          setToastOpen(false)
-        }
-        message="Toutes les tâches sont terminées ✓"
-        anchorOrigin={{
-          vertical: "bottom",
-          horizontal: "center",
-        }}
-      />
-    </>
-  );
+      <TaskList key={date} date={date} />
+      <Typography variant="caption" color="text.secondary">Les tâches sont partagées entre les appareils après synchronisation. Les jours précédents restent consultables avec le sélecteur de date.</Typography>
+    </Stack>
+  </>;
 }

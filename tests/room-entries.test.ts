@@ -198,6 +198,27 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(call({ action: "commitEntry", collection: "familyEvents", expectedVersion: 0, record: { ...fam, version: 1, submissionHash: "c".repeat(64) } }).code, 409);
   assert.equal(after.roomInspections.length, 1);
   assert.equal(JSON.stringify(tables.get("Anomalies")!.slice(0, 2)), old);
+  // Work events share the durable receipt contract and enforce revisions under the script lock.
+  const work = { type: "createWorkEvent", id: createId(), targetId: createId(), kind: "dailyTask", expectedRevision: 0, date: today(), actor: "Marie", room: "", notes: "=clé", done: false, deleted: false, occurredAt: new Date().toISOString(), version: 1, submissionHash: "f".repeat(64), updatedAt: new Date().toISOString() };
+  const saveWork = (record: object) => call({ action: "commitWorkEvent", collection: "workEvents", expectedVersion: 0, record });
+  const firstWork = saveWork(work);
+  assert.equal(firstWork.ok, true, firstWork.error);
+  assert.equal(tables.get("Suivi quotidien")?.[1][4], "'=clé");
+  const completedWork = { ...work, id: createId(), expectedRevision: 1, done: true };
+  assert.equal(saveWork(completedWork).ok, true);
+  assert.equal(saveWork({ ...work, id: createId(), expectedRevision: 1 }).code, 409);
+  assert.deepEqual(saveWork(work), firstWork);
+  assert.equal(saveWork({ ...work, submissionHash: "e".repeat(64) }).code, 409);
+  const deletedWork = { ...completedWork, id: createId(), expectedRevision: 2, deleted: true };
+  assert.equal(saveWork(deletedWork).ok, true);
+  assert.equal(saveWork({ ...deletedWork, id: createId(), expectedRevision: 3, deleted: false }).code, 409);
+  const familyComment = { ...work, id: createId(), targetId: departure.id, kind: "familyComment", room: departure.room, familyEventId: departure.id, done: undefined, deleted: undefined };
+  assert.equal(saveWork(familyComment).ok, true);
+  assert.equal(saveWork({ ...familyComment, id: createId(), targetId: createId(), familyEventId: fam.id }).code, 409);
+  const availability = { ...work, id: createId(), targetId: "101", room: "101", kind: "roomAvailability", free: true, done: undefined, deleted: undefined };
+  assert.equal(saveWork(availability).ok, true);
+  context.setup();
+  assert.equal(call({ action: "list" }).data.workEvents.length, 5);
   // The room-specific action deduplicates against manually reported anomalies under the same lock.
   const manualIssue = { id: createId(), version: 1, date: today(), title: "Robinet 120", description: "Mitigeur cassé", location: "Chambre 120", status: "en_cours", assignee: "Technicien", priority: "haute", photoIds: [], photoId: null };
   assert.equal(call({ action: "commit", collection: "issues", expectedVersion: 0, record: manualIssue }).ok, true);

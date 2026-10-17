@@ -1,19 +1,26 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { displayDate, today } from "./domain";
-import { applianceCleaningLabels, cleaningText, conditionLabels, latestRoomRecords, roomProblems, type RoomEntry, type RoomInspection } from "./rooms";
+import { applianceCleaningLabels, cleaningText, conditionLabels, latestRoomRecords, rooms, roomProblems, type WorkEntry, type RoomEntry, type RoomInspection } from "./rooms";
 
-type Options = { hotelName: string; history: (RoomEntry | RoomInspection)[] };
+import { roomAvailability } from "./work";
 
-export function freeRoomRecords(history: Options["history"]) {
+type Options = { hotelName: string; history: (RoomEntry | RoomInspection)[]; workEvents?: WorkEntry[] };
+
+export function freeRoomRecords(history: Options["history"], workEvents: WorkEntry[] = []) {
   return [...latestRoomRecords(history).values()]
-    .filter(record => record.occupied === false)
+    .filter(record => roomAvailability(record.room, workEvents, record).free === true)
     .sort((a, b) => a.room.localeCompare(b.room, "fr", { numeric: true }));
 }
 
-// RESTAURADO PARA OS TESTES FUNCIONAREM (TS2305)
-export function freeRoomRows(history: Options["history"]) {
-  return freeRoomRecords(history).map(record => {
+export function freeRoomRows(history: Options["history"], workEvents: WorkEntry[] = []) {
+  const latest = latestRoomRecords(history);
+  return rooms.filter(room => roomAvailability(room, workEvents, latest.get(room)).free === true).map(room => {
+      const record = latest.get(room);
+      const source = roomAvailability(room, workEvents, record).source;
+      const availabilityNote = source ? `Disponibilité indiquée le ${displayDate(source.date)} · ${source.actor}${"updatedAt" in source ? "" : " · En attente d’envoi"}` : "";
+      if (!record) return [room, "Aucun contrôle", "Non renseigné", "Non renseigné", "Non vérifié", "Non vérifié", availabilityNote, ""];
+
       const fridge = record.checks.find(check => check.key === "fridge")?.result;
       const cleanliness = (value: RoomEntry["microwaveCleaning"]) => value ? applianceCleaningLabels[value] : "Non renseignée";
       
@@ -24,7 +31,7 @@ export function freeRoomRows(history: Options["history"]) {
         cleaningText(record),
         record.microwave === "oui" ? `Présent\n${cleanliness(record.microwaveCleaning)}` : record.microwave === "non" ? "Absent" : "Non vérifié",
         fridge === "absent" ? "Absent" : fridge === "ok" || fridge === "probleme" ? `Présent${fridge === "probleme" ? " · Problème" : ""}\n${cleanliness(record.fridgeCleaning)}` : "Non vérifié",
-        [...roomProblems(record), record.notes].filter(Boolean).join("\n") || "Aucun problème signalé",
+        [...roomProblems(record), record.notes, availabilityNote].filter(Boolean).join("\n") || "Aucun problème signalé",
         "" // Colonne vide réservée pour dessiner l'image
       ];
   });
@@ -57,9 +64,9 @@ async function loadFirstPhoto(record: RoomEntry | RoomInspection): Promise<strin
   return null;
 }
 
-export async function buildFreeRoomsReport({ hotelName, history }: Options) {
-  const records = freeRoomRecords(history);
-  const rows = freeRoomRows(history); // Agora usamos a função separada
+export async function buildFreeRoomsReport({ hotelName, history, workEvents = [] }: Options) {
+  const records = freeRoomRecords(history, workEvents);
+  const rows = freeRoomRows(history, workEvents);
   const photoMap = new Map<string, string>();
 
   // Étape 1 : Télécharger les photos des chambres libres qui ont des problèmes
@@ -78,7 +85,7 @@ export async function buildFreeRoomsReport({ hotelName, history }: Options) {
   doc.setFontSize(10);
   doc.text(`${hotelName} · Export du ${displayDate(today())} · ${rows.length} chambre(s) libre(s)`, 14, 26);
   doc.setFontSize(9);
-  doc.text("Selon le dernier checklist de chaque chambre. Consultez la date du contrôle avant attribution.", 14, 33);
+  doc.text("Disponibilité actuelle ; état et équipements selon le dernier contrôle. Vérifiez les dates avant attribution.", 14, 33);
   
   autoTable(doc, {
     startY: 39,
@@ -93,8 +100,8 @@ export async function buildFreeRoomsReport({ hotelName, history }: Options) {
         3: { cellWidth: 20 }, 
         4: { cellWidth: 26 }, 
         5: { cellWidth: 26 },
-        6: { cellWidth: 80 }, 
-        7: { cellWidth: 40 } // Colonne pour la photo
+        6: { cellWidth: 90 },
+        7: { cellWidth: 41 } // Colonne pour la photo
     },
     margin: { top: 14, right: 14, bottom: 18, left: 14 },
     

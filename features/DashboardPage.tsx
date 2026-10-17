@@ -12,14 +12,17 @@ import {
   StatCards,
 } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
+import { dailyTasks } from "@/lib/work";
+import { useWorkEvents } from "@/lib/useWorkEvents";
 import { useState } from "react";
 export default function DashboardPage() {
-  const { issues, inspections, hotelName } = useAppContext();
+  const { issues, hotelName } = useAppContext();
   const [active, setActive] = useState<Issue | "new" | null>(null);
   const date = today();
   const pending = issues.filter((i) => i.status !== "resolu");
   const critical = pending.filter((i) => i.priority === "critique");
-  const daily = inspections.filter((i) => i.date === date);
+  const { events } = useWorkEvents();
+  const daily = dailyTasks(events, date);
   const rank = { critique: 0, haute: 1, normale: 2 };
   const focus = pending
     .toSorted(
@@ -67,7 +70,7 @@ export default function DashboardPage() {
         >
           <Box sx={{ maxWidth: 560 }}>
             <Chip
-              label="LA RONDE"
+              label="VOTRE JOURNÉE"
               size="small"
               sx={{
                 color: "#e4eedc",
@@ -78,13 +81,12 @@ export default function DashboardPage() {
             />
            
             <Typography sx={{ color: "#cfddd4" }}>
-              Vérifiez les points essentiels, photographiez les anomalies et
-              gardez une trace de chaque intervention.
+              Notez ce que vous avez à faire aujourd’hui et cochez chaque tâche terminée.
             </Typography>
           </Box>
           <Button
             component={Link}
-            href="/rondes"
+            href="/quotidien"
             variant="contained"
             endIcon={<ArrowForward />}
             sx={{
@@ -95,7 +97,7 @@ export default function DashboardPage() {
               "&:hover": { bgcolor: "#d4df96" },
             }}
           >
-            Commencer la ronde
+            Voir mes tâches
           </Button>
         </Stack>
       </Paper>
@@ -121,9 +123,9 @@ export default function DashboardPage() {
             value: pending.filter((i) => i.status === "en_cours").length,
           },
           {
-            label: "Rondes terminées aujourd’hui",
-            value: daily.filter((i) => i.completed).length,
-            hint: `${daily.filter((i) => !i.completed).length} brouillon(s)`,
+            label: "Tâches terminées aujourd’hui",
+            value: daily.filter((i) => i.done).length,
+            hint: `${daily.filter((i) => !i.done).length} tâche(s) restante(s)`,
           },
         ]}
       />
@@ -143,7 +145,7 @@ export default function DashboardPage() {
       {!focus.length ? (
         <EmptyState
           title="Aucune anomalie en attente"
-          detail="Continuez vos rondes quotidiennes pour garder un suivi à jour."
+          detail="Signalez ici les nouveaux problèmes rencontrés dans l’hôtel."
         />
       ) : (
         <Stack spacing={1.5}>

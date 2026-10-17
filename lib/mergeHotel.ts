@@ -9,6 +9,7 @@ export function mergeHotel<T extends State & { mode: string }>(current: T, incom
   return { ...incoming,
     deletedFamilyEventIds,
     familyEvents: merge(current.familyEvents, incoming.familyEvents).filter(r => !deletedFamilyEventIds.includes(r.id)),
+    workEvents: merge(current.workEvents, incoming.workEvents),
     roomInspections: merge(current.roomInspections, incoming.roomInspections),
   };
 }

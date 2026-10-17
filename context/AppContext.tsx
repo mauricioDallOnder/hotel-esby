@@ -211,7 +211,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   const mergeEntry = useCallback((change: EntryChange) => {
-    setData(current => change.collection === "familyEvents"
+    setData(current => change.collection === "workEvents"
+      ? { ...current, workEvents: [...(current.workEvents || []).filter(e => e.id !== change.record.id), change.record] }
+      : change.collection === "familyEvents"
       ? { ...current, familyEvents: [...(current.familyEvents || []).filter(r => r.id !== change.record.id), ...(current.deletedFamilyEventIds?.includes(change.record.id) ? [] : [change.record])] }
       : { ...current, roomInspections: [...(current.roomInspections || []).filter(r => r.id !== change.record.id), change.record],
           issues: change.issue ? [...current.issues.filter(i => i.id !== change.issue!.id), change.issue] : current.issues });
@@ -273,7 +275,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             </Typography>
             <Typography variant="h4">Bienvenue</Typography>
             <Typography color="text.secondary">
-              Connectez-vous pour accéder aux rondes et au suivi des
+              Connectez-vous pour accéder aux chambres, aux tâches et au suivi des
               interventions.
             </Typography>
             {error && <Alert severity="error">{error}</Alert>}
