@@ -53,11 +53,11 @@ export function IssueDialog({ issue, defaults, onClose, onSaved }: {
     e.preventDefault();
     if (readOnly || processing || busy || submitting.current) return;
     setError("");
-    const parsed = commandSchema.safeParse(issue ? { type: "updateIssue", id, version: issue.version, actor, note, status, fields }
+    const parsed = commandSchema.safeParse(issue ? { type: "updateIssue", id, version: issue.version, actor: fields.assignee, note, status, fields }
       : { type: "createIssue", id, date, actor, fields, photosData: photos });
     if (!parsed.success) {
       if (parsed.error.issues.some(i => i.path[0] === "fields")) setDetailsOpen(true);
-      showError("Vérifiez les champs obligatoires : titre, lieu, description, votre nom et, pour un suivi, une note d’intervention.");
+      showError(issue ? "Vérifiez les champs obligatoires : titre, lieu, description, responsable de l’intervention et note d’intervention." : "Vérifiez les champs obligatoires : titre, lieu, description, nom de la personne qui signale et date du constat.");
       return;
     }
     submitting.current = true;
@@ -86,9 +86,8 @@ export function IssueDialog({ issue, defaults, onClose, onSaved }: {
                 {issue && !readOnly && <Stack spacing={2}>
                   <Typography variant="h6">Ajouter une intervention</Typography>
                   <QuickChoice label="État de résolution" value={status} options={[{ value: "ouvert", label: "À traiter", color: "warning" }, { value: "en_cours", label: "En cours" }, { value: "resolu", label: "Résolu", color: "success" }]} onChange={setStatus} />
-                  <TextField label="Responsable de l’intervention" value={fields.assignee} onChange={e => change("assignee", e.target.value)} slotProps={{ htmlInput: { maxLength: 200 } }} />
-                  <TextField label="Votre nom" required value={actor} onChange={e => setActor(e.target.value)} slotProps={{ htmlInput: { maxLength: 200 } }} />
-                  <TextField required label={status === "resolu" ? "Travaux effectués / résolution" : "Intervention ou modification effectuée"} multiline minRows={3} value={note} onChange={e => setNote(e.target.value)} helperText="La date, votre nom et cette note seront ajoutés à l’historique et au bilan mensuel." slotProps={{ htmlInput: { maxLength: 4000 } }} />
+                  <TextField label="Responsable de l’intervention" required value={fields.assignee} onChange={e => change("assignee", e.target.value)} slotProps={{ htmlInput: { maxLength: 200 } }} />
+                  <TextField required label={status === "resolu" ? "Travaux effectués / résolution" : "Intervention ou modification effectuée"} multiline minRows={3} value={note} onChange={e => setNote(e.target.value)} helperText="La date, le nom du responsable et cette note seront ajoutés à l’historique et au bilan mensuel." slotProps={{ htmlInput: { maxLength: 4000 } }} />
                   {status === "resolu" && issue.status !== "resolu" && <Alert severity="info">Après enregistrement, l’anomalie sera accessible avec le filtre « Résolu ».</Alert>}
                 </Stack>}
                 {issue && <Button onClick={() => setDetailsOpen(!detailsOpen)} aria-expanded={detailsOpen} sx={{ justifyContent: "flex-start" }}>{readOnly ? "Fiche et photos" : "Modifier la fiche / voir les photos"}{existingPhotos.length ? ` (${existingPhotos.length})` : ""}</Button>}
