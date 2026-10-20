@@ -7,7 +7,7 @@ export type IssueFilters = {
   category: string; unassigned: boolean; from: string; to: string;
   sort: "priority" | "oldest" | "recent" | "updated";
 };
-export const defaultIssueFilters: IssueFilters = { query: "", status: "pending", priority: "all", category: "all", unassigned: false, from: "", to: "", sort: "priority" };
+export const defaultIssueFilters: IssueFilters = { query: "", status: "pending", priority: "all", category: "all", unassigned: false, from: "", to: "", sort: "recent" };
 export function issueAge(issue: Pick<Issue, "date">, day: string) {
   const age = daysSince(issue.date, day);
   return Number.isFinite(age) ? Math.max(0, age) : 0;

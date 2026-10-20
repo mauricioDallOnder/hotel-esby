@@ -3,14 +3,24 @@ import { today, type Issue } from "../../lib/domain";
 
 const sample = (patch: Partial<Issue> = {}): Issue => ({ id: crypto.randomUUID(), version: 1, title: "Éclairage défectueux", description: "Ampoule de la salle de bain", location: "Chambre 204", category: "Électricité", status: "ouvert", priority: "haute", date: "2026-10-01", createdAt: "2026-10-01T10:00:00Z", updatedAt: "2026-10-01T10:00:00Z", assignee: "", reportedBy: "Marie", photoId: null, photoIds: [], history: [{ at: "2026-10-01T10:00:00Z", actor: "Marie", note: "Anomalie signalée.", status: "ouvert", priority: "haute", assignee: "" }], ...patch });
 
-test("mobile anomaly filters combine search, status and priority and keep the layout within the screen", async ({ page }) => {
+test("mobile anomalies start newest first with visible inclusive date filters, search, status and priority", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
-  const issues = [sample(), sample({ title: "Fuite urgente", location: "Chambre 205", priority: "critique", assignee: "Technicien", category: "Plomberie" }), sample({ title: "Fenêtre réparée", status: "resolu", location: "Chambre 206" })];
+  const issues = [
+    sample({ date: "2026-10-10", createdAt: "2026-10-10T10:00:00Z" }),
+    sample({ title: "Fuite urgente", location: "Chambre 205", priority: "critique", assignee: "Technicien", category: "Plomberie" }),
+    sample({ title: "Fenêtre réparée", status: "resolu", location: "Chambre 206" }),
+    sample({ title: "Store bloqué", location: "Chambre 207", priority: "normale", date: "2026-10-12", createdAt: "2026-10-12T10:00:00Z" }),
+  ];
   await page.route("**/api/hotel*", route => route.fulfill({ json: { issues, inspections: [], mode: "local" } }));
   await page.goto("/anomalies");
-  await expect(page.getByRole("article")).toHaveCount(2);
-  await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 205 · Fuite urgente");
+  const from = page.getByLabel("Constat à partir du"), to = page.getByLabel("Constat jusqu’au");
+  await expect(from).toBeVisible();
+  await expect(to).toBeVisible();
+  await expect(page.getByRole("button", { name: "Filtres avancés", exact: true })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("article")).toHaveCount(3);
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 207 · Store bloqué");
+  await expect(page.getByRole("combobox", { name: "Trier par" })).toHaveText("Plus récentes d’abord");
   await page.getByLabel("Rechercher une anomalie").fill("204 eclairage");
   await expect(page.getByRole("article")).toHaveCount(1);
   await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 204 · Éclairage défectueux");
@@ -21,10 +31,26 @@ test("mobile anomaly filters combine search, status and priority and keep the la
   await page.getByRole("button", { name: "Réinitialiser les filtres", exact: true }).click();
   await page.getByRole("group", { name: "Filtrer par priorité" }).getByRole("button", { name: "Critique", exact: true }).click();
   await expect(page.getByRole("article")).toHaveCount(1);
-  await page.getByRole("button", { name: "Filtres avancés", exact: true }).click();
-  await page.getByLabel("Constat à partir du").fill("2026-10-02");
+  await from.fill("2026-10-02");
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(page.getByText("Aucune anomalie dans cette sélection", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Réinitialiser les filtres", exact: true }).click();
+  await from.fill("2026-10-01");
+  await to.fill("2026-10-10");
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 204 · Éclairage défectueux");
+  await expect(page.getByRole("article").last()).toHaveAccessibleName("Chambre 205 · Fuite urgente");
+  await from.fill("2026-10-10");
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 204 · Éclairage défectueux");
+  await page.getByRole("combobox", { name: "Trier par" }).click();
+  await page.getByRole("option", { name: "Plus anciennes d’abord", exact: true }).click();
+  await page.getByRole("button", { name: "Réinitialiser les filtres", exact: true }).click();
+  await expect(from).toHaveValue("");
+  await expect(to).toHaveValue("");
+  await expect(page.getByRole("combobox", { name: "Trier par" })).toHaveText("Plus récentes d’abord");
+  await expect(page.getByRole("article")).toHaveCount(3);
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 207 · Store bloqué");
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
 });
 
