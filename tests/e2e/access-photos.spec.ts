@@ -67,13 +67,15 @@ test("employee reports three photos; only direction changes the status", async (
   await page.getByLabel("Mot de passe · Direction").fill("test-direction");
   await page.getByRole("button", { name: "Se connecter", exact: true }).click();
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
-  await dialog.getByLabel("Votre nom").fill("Direction test");
+  await dialog.getByLabel("Responsable de l’intervention").fill("Direction test");
   await dialog.getByRole("radiogroup", { name: "État de résolution", exact: true }).getByRole("radio", { name: "Résolu", exact: true }).click();
   await dialog.getByLabel("Travaux effectués / résolution").fill("Fuite réparée");
   await dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   const saved = await (await page.request.get("/api/hotel")).json();
   expect(saved.issues[0].status).toBe("resolu");
+  expect(saved.issues[0].assignee).toBe("Direction test");
+  expect(saved.issues[0].history.at(-1).actor).toBe("Direction test");
   expect(saved.issues[0].photoIds).toHaveLength(3);
   await page.reload();
   await expect(page.getByRole("button", { name: "Déconnexion" })).toBeVisible();
