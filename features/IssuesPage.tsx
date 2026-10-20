@@ -55,7 +55,8 @@ export default function IssuesPage() {
     { label: "Sans responsable", count: pending.filter(i => !i.assignee.trim()).length, patch: { unassigned: true } },
   ];
   const statusChoices = { pending: "Non résolues", ouvert: statuses.ouvert, en_cours: statuses.en_cours, resolu: statuses.resolu, all: "Toutes" };
-  const extraCount = Number(filters.category !== "all") + Number(filters.unassigned) + Number(!!filters.from) + Number(!!filters.to);
+  const extraCount = Number(filters.category !== "all") + Number(filters.unassigned);
+  const invalidRange = Boolean(filters.from && filters.to && filters.from > filters.to);
   const changed = JSON.stringify(filters) !== JSON.stringify(defaultIssueFilters);
   return <>
     <ConnectionBar />
@@ -71,6 +72,14 @@ export default function IssuesPage() {
         <TextField fullWidth label="Rechercher une anomalie" placeholder="Chambre, problème, responsable ou intervention…" value={filters.query} onChange={e => change({ query: e.target.value })} />
         <Stack direction="row" useFlexGap role="group" aria-label="Filtrer par état" sx={{ flexWrap: "wrap", gap: 1 }}>{Object.entries(statusChoices).map(([value, label]) => <Chip key={value} label={label} onClick={() => change({ status: value as IssueFilters["status"] })} color={filters.status === value ? "primary" : "default"} variant={filters.status === value ? "filled" : "outlined"} aria-pressed={filters.status === value} />)}</Stack>
         <Stack direction="row" useFlexGap role="group" aria-label="Filtrer par priorité" sx={{ flexWrap: "wrap", gap: 1 }}>{Object.entries({ all: "Toutes priorités", ...priorities }).map(([value, label]) => <Chip key={value} label={label} onClick={() => change({ priority: value as IssueFilters["priority"] })} color={filters.priority === value ? "primary" : "default"} variant={filters.priority === value ? "filled" : "outlined"} aria-pressed={filters.priority === value} />)}</Stack>
+        <Stack spacing={1} role="group" aria-label="Filtrer par date du constat">
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+            <TextField fullWidth type="date" label="Constat à partir du" value={filters.from} onChange={e => change({ from: e.target.value })} error={invalidRange} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: filters.to || undefined } }} />
+            <TextField fullWidth type="date" label="Constat jusqu’au" value={filters.to} onChange={e => change({ to: e.target.value })} error={invalidRange} slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: filters.from || undefined } }} />
+          </Stack>
+          <Typography variant="caption" color="text.secondary">Les dates de début et de fin sont incluses. Chaque date est facultative.</Typography>
+          {invalidRange && <Alert severity="warning">La date de fin doit être postérieure ou égale à la date de début.</Alert>}
+        </Stack>
         <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
           <Button onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>Filtres avancés{extraCount ? ` (${extraCount})` : ""}</Button>
           {changed && <Button onClick={reset}>Réinitialiser les filtres</Button>}
@@ -80,17 +89,12 @@ export default function IssuesPage() {
             <TextField fullWidth select label="Catégorie" value={filters.category} onChange={e => change({ category: e.target.value })}><MenuItem value="all">Toutes les catégories</MenuItem>{categories.map(category => <MenuItem key={category} value={category}>{category}</MenuItem>)}</TextField>
             <TextField fullWidth select label="Attribution" value={filters.unassigned ? "missing" : "all"} onChange={e => change({ unassigned: e.target.value === "missing" })}><MenuItem value="all">Tous les responsables</MenuItem><MenuItem value="missing">Sans responsable</MenuItem></TextField>
           </Stack>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-            <TextField fullWidth type="date" label="Constat à partir du" value={filters.from} onChange={e => change({ from: e.target.value })} slotProps={{ inputLabel: { shrink: true } }} />
-            <TextField fullWidth type="date" label="Constat jusqu’au" value={filters.to} onChange={e => change({ to: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: filters.from || undefined } }} />
-          </Stack>
         </Stack></Collapse>
-        {filters.from && filters.to && filters.from > filters.to && <Alert severity="warning">La date de fin doit être postérieure ou égale à la date de début.</Alert>}
       </Stack></Paper>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}>
         <Typography variant="body2" role="status">{filtered.length} anomalie(s) trouvée(s){filters.unassigned ? " · Sans responsable" : ""}</Typography>
         <TextField select size="small" label="Trier par" value={filters.sort} onChange={e => change({ sort: e.target.value as IssueFilters["sort"] })} sx={{ minWidth: 230 }}>
-          <MenuItem value="priority">Priorité, puis ancienneté</MenuItem><MenuItem value="oldest">Plus anciennes d’abord</MenuItem><MenuItem value="recent">Plus récentes d’abord</MenuItem><MenuItem value="updated">Dernières interventions</MenuItem>
+          <MenuItem value="recent">Plus récentes d’abord</MenuItem><MenuItem value="oldest">Plus anciennes d’abord</MenuItem><MenuItem value="priority">Priorité, puis ancienneté</MenuItem><MenuItem value="updated">Dernières interventions</MenuItem>
         </TextField>
       </Stack>
       {!filtered.length ? <EmptyState title="Aucune anomalie dans cette sélection" detail="Modifiez les filtres pour retrouver un signalement, ou signalez un nouveau problème." /> : <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>

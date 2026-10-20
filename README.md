@@ -5,9 +5,11 @@
 - Filtros por estado e prioridade em um toque, atalhos para pendências críticas
   e sem responsável, busca sem acentos que também encontra notas das intervenções.
   Números de quarto são pesquisados por inteiro: `204` não encontra `1204`.
-- Categoria, responsável não atribuído e período disponíveis nos filtros avançados.
-  Ordenação padrão por prioridade e, dentro dela, pelos registros mais antigos;
-  também é possível ordenar por data do constat ou última atualização.
+- Anomalias ordenadas por padrão da data do constat mais recente à mais antiga;
+  no mesmo dia, o registro criado por último aparece primeiro. O filtro de período
+  fica sempre visível e inclui as datas de início e fim, ambas opcionais.
+  Categoria e responsável não atribuído continuam nos filtros avançados; também
+  é possível escolher a ordenação por antiguidade, prioridade ou última atualização.
 - Cartões compactos com local, idade do signalement, responsável e último acompanhamento.
   Fotos são carregadas ao abrir a galeria; a lista mostra 24 registros por vez.
 - Ao abrir um acompanhamento como Direction, estado, responsável, nome e nota ficam

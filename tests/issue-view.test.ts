@@ -14,12 +14,18 @@ test("anomaly search ignores accents and word order, includes interventions and 
   assert.deepEqual(selectIssues([a, b], { ...defaultIssueFilters, query: "eclairage introuvable" }), []);
 });
 
-test("default ordering puts critical issues first and oldest within a priority without mutating the source", () => {
-  const a = issue({ priority: "haute", date: "2026-10-16" }), b = issue({ priority: "haute", date: "2026-10-01" }), c = issue({ priority: "critique" }), d = issue({ priority: "critique", status: "resolu" });
-  const source = [a, b, c, d];
-  assert.deepEqual(selectIssues(source, defaultIssueFilters).map(i => i.id), [c.id, b.id, a.id]);
-  assert.deepEqual(selectIssues(source, { ...defaultIssueFilters, status: "all" }).map(i => i.id), [c.id, b.id, a.id, d.id]);
-  assert.deepEqual(source, [a, b, c, d]);
+test("default ordering shows the newest reports first, breaks same-day ties by creation time and preserves the source", () => {
+  const a = issue({ priority: "haute", date: "2026-10-16", createdAt: "2026-10-16T09:00:00Z" });
+  const b = issue({ priority: "haute", date: "2026-10-01", createdAt: "2026-10-01T10:00:00Z" });
+  const c = issue({ priority: "critique" });
+  const d = issue({ priority: "critique", status: "resolu", date: "2026-10-17", createdAt: "2026-10-17T10:00:00Z" });
+  const e = issue({ priority: "normale", date: "2026-10-16", createdAt: "2026-10-16T15:00:00Z" });
+  const source = [a, b, c, d, e];
+  assert.deepEqual(selectIssues(source, defaultIssueFilters).map(i => i.id), [e.id, a.id, c.id, b.id]);
+  assert.deepEqual(selectIssues(source, { ...defaultIssueFilters, status: "all" }).map(i => i.id), [d.id, e.id, a.id, c.id, b.id]);
+  assert.deepEqual(selectIssues(source, { ...defaultIssueFilters, sort: "priority" }).map(i => i.id), [c.id, b.id, a.id, e.id]);
+  assert.deepEqual(selectIssues(source, { ...defaultIssueFilters, sort: "priority", status: "all" }).map(i => i.id), [c.id, b.id, a.id, e.id, d.id]);
+  assert.deepEqual(source, [a, b, c, d, e]);
 });
 
 test("status, category, priority, inclusive date range and missing assignee filters combine", () => {
