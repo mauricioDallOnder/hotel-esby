@@ -6,6 +6,7 @@ import { useEntries } from "@/context/EntriesContext";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { RoomHistoryDialog } from "@/components/RoomHistoryDialog";
 import { RoomInspectionDialog } from "@/components/RoomInspectionDialog";
+import { RoomChecklistPrintDialog } from "@/components/RoomChecklistPrintDialog";
 import { displayDate, today } from "@/lib/domain";
 import { cleaningText, latestRoomRecords, roomGroups, rooms, type RoomEntry } from "@/lib/rooms";
 import { daysSince, roomRotation } from "@/lib/roomRotation";
@@ -23,6 +24,7 @@ export default function RoomsPage() {
   const { events: workEvents } = useWorkEvents();
   const [room, setRoom] = useState<string | null>(null);
   const [historyRoom, setHistoryRoom] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
   const [day, setDay] = useState(today);
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState("all");
@@ -104,6 +106,7 @@ export default function RoomsPage() {
       </Paper>
       <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>
         <Button variant="outlined" onClick={() => setHistoryRoom("all")}>Historique de tous les contrôles</Button>
+        <Button variant="outlined" onClick={() => setPrinting(true)}>Imprimer le checklist (PDF)</Button>
         <Button variant="outlined" disabled={exporting || !free.length} onClick={() => void exportFreeRooms()}>{exporting ? "Préparation du PDF…" : `Exporter en PDF · Chambres libres (${free.length})`}</Button>
       </Stack>
       {exportError && <Alert severity="error">{exportError}</Alert>}
@@ -138,5 +141,6 @@ export default function RoomsPage() {
     </Stack>
     {room && <RoomInspectionDialog key={room} room={room} nextRoom={nextRoom} onClose={() => setRoom(null)} onDefer={deferRoom} onSaved={next => { setMessage(`Contrôle de la chambre ${room} conservé. Le statut d’envoi reste visible jusqu’à la confirmation du serveur.`); setRoom(next ? nextRoom || null : null); }} />}
     {historyRoom && <RoomHistoryDialog key={historyRoom} room={historyRoom === "all" ? undefined : historyRoom} history={history} issues={issues} onClose={() => setHistoryRoom(null)} />}
+    {printing && <RoomChecklistPrintDialog hotelName={hotelName} selectedRooms={visibleGroups.flatMap(g => g.rooms)} history={history} date={day} blockedIds={pending.filter(p => p.blocked).map(p => p.entry.id)} onClose={() => setPrinting(false)} />}
   </>;
 }

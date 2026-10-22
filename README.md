@@ -1,5 +1,15 @@
 # Hôtel Contrôle
 
+## Checklist dos quartos para impressão
+
+Em **Contrôle des chambres**, **Imprimer le checklist (PDF)** permite baixar uma
+ficha em branco reutilizável ou os últimos controles dos quartos exibidos pelos
+filtros atuais, incluindo os quartos ainda sem controle. O PDF usa A4 em retrato,
+uma ficha por quarto; observações longas podem continuar em outra página.
+Abra o arquivo baixado e imprima em escala de 100 %. A ficha em branco funciona
+mesmo sem quartos livres ou sem resultados nos filtros. Esta função não exige
+atualização do Apps Script e preserva a exportação existente de quartos livres.
+
 ## Anomalias: consulta e acompanhamento mais rápidos
 
 - Filtros por estado e prioridade em um toque, atalhos para pendências críticas
