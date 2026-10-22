@@ -1,5 +1,13 @@
 # Hôtel Contrôle
 
+## Tarefas do dia para impressão
+
+Em **Tâches du jour**, **Imprimer les tâches (PDF)** baixa as tarefas da data
+selecionada, com seu estado atual. Um dia sem tarefas gera linhas em branco para
+preencher à mão. Abra o arquivo baixado e imprima em A4, em escala de 100 %.
+O PDF identifica os envios pendentes aceitos na lista e a cópia em cache quando
+utilizada. Esta função não altera as tarefas nem exige atualização do Apps Script.
+
 ## Checklist dos quartos para impressão
 
 Em **Contrôle des chambres**, **Imprimer le checklist (PDF)** permite baixar uma

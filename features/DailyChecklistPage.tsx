@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, Paper, Stack, TextField, Typography } from "@mui/material";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { WorkEntryEditor } from "@/components/WorkEntryEditor";
+import { useAppContext } from "@/context/AppContext";
 import { createId, displayDate, today } from "@/lib/domain";
 import type { WorkEntry } from "@/lib/rooms";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
@@ -11,7 +12,8 @@ import { useWorkEvents } from "@/lib/useWorkEvents";
 import { dailyTasks } from "@/lib/work";
 
 function TaskList({ date }: { date: string }) {
-  const { events, enqueue, actor, isPending } = useWorkEvents();
+  const { hotelName, cachedAt } = useAppContext();
+  const { events, queued, enqueue, actor, isPending } = useWorkEvents();
   const tasks = dailyTasks(events, date);
   const done = tasks.filter(t => t.done).length;
   const draft = useDeviceDraft<WorkEntry>(`draft:daily-task:${date}`, () => ({ type: "createWorkEvent", id: createId(), kind: "dailyTask", targetId: createId(), expectedRevision: 0,
@@ -21,6 +23,10 @@ function TaskList({ date }: { date: string }) {
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const generating = useRef(false);
+  const [exportError, setExportError] = useState("");
+  const [exportMessage, setExportMessage] = useState("");
   async function save(entry: WorkEntry, added = false) {
     if (saving.current) return;
     saving.current = true; setBusy(true); setError("");
@@ -34,6 +40,22 @@ function TaskList({ date }: { date: string }) {
   function revision(task: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry {
     return { ...task, ...patch, id: createId(), actor, expectedRevision: task.expectedRevision + 1, occurredAt: new Date().toISOString() };
   }
+  async function exportTasks() {
+    if (saving.current || generating.current) return;
+    generating.current = true;
+    setExporting(true); setExportError(""); setExportMessage("");
+    try {
+      const { downloadDailyTasksPdf } = await import("@/lib/dailyTasksPdf");
+      await downloadDailyTasksPdf({ mode: "day", hotelName, date, events,
+        pendingIds: queued.filter(item => !item.blocked).map(item => item.entry.id), cachedAt: cachedAt || undefined });
+      setExportMessage(`Téléchargement lancé pour le ${displayDate(date)}. Ouvrez le PDF et imprimez-le en A4, à 100 %.`);
+    } catch {
+      setExportError("Le PDF n’a pas pu être préparé. Veuillez réessayer.");
+    } finally {
+      generating.current = false;
+      setExporting(false);
+    }
+  }
   return <Stack spacing={2}>
     {error && <Alert severity="error">{error}</Alert>}
     {draft.error && <Alert severity="error">{draft.error}</Alert>}
@@ -43,10 +65,16 @@ function TaskList({ date }: { date: string }) {
         <Button type="submit" variant="contained" disabled={busy || !draft.value?.notes.trim()} sx={{ minWidth: 110 }}>Ajouter</Button>
       </Stack>
     </Paper>
-    <Box>
-      <Typography sx={{ mb: 1 }}><strong>{done} / {tasks.length}</strong> tâche(s) terminée(s) · {displayDate(date)}</Typography>
+    <Stack spacing={1.5}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}>
+        <Typography><strong>{done} / {tasks.length}</strong> tâche(s) terminée(s) · {displayDate(date)}</Typography>
+        <Button variant="outlined" disabled={busy || exporting} onClick={() => void exportTasks()}>{exporting ? "Préparation du PDF…" : "Imprimer les tâches (PDF)"}</Button>
+      </Stack>
       <LinearProgress variant="determinate" value={tasks.length ? done / tasks.length * 100 : 0} aria-label="Tâches terminées" sx={{ height: 8, borderRadius: 4 }} />
-    </Box>
+      <Typography variant="caption" color="text.secondary">Le PDF reprend la date affichée. Si la liste est vide, il contient des lignes à remplir.</Typography>
+      {exportError && <Alert severity="error">{exportError}</Alert>}
+      {exportMessage && <Alert severity="success" role="status">{exportMessage}</Alert>}
+    </Stack>
     {!tasks.length && <Alert severity="info">Aucune tâche pour cette date. Ajoutez ce que vous avez à faire.</Alert>}
     {tasks.map(task => <Paper variant="outlined" key={task.targetId} sx={{ p: 1.5, bgcolor: task.done ? "action.hover" : "background.paper" }}>
       <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
