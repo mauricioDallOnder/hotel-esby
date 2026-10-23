@@ -1,5 +1,13 @@
 # Hôtel Contrôle
 
+## Todas as fotos nos relatórios de anomalias
+
+Em **Rapports & bilan mensuel**, os PDFs diário e mensal incluem todas as fotos
+anexadas a cada anomalia do relatório, com legendas numeradas e proporções
+preservadas. Textos e galerias continuam em novas páginas quando necessário.
+Uma foto indisponível é identificada no documento, sem impedir a exibição das
+demais. A exportação usa as APIs atuais e não exige atualização do Apps Script.
+
 ## Tarefas do dia para impressão
 
 Em **Tâches du jour**, **Imprimer les tâches (PDF)** baixa as tarefas da data
