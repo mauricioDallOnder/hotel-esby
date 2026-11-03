@@ -68,12 +68,15 @@ export function planRoomIssue(candidate: Issue | undefined, record: Pick<RoomIns
 // a linked issue was resolved after the inspection or a write was interrupted.
 export function prepareRoomIssue(candidate: Issue | undefined, record: RoomInspection, issues: Issue[]) {
   if (record.issueSyncVersion === 2) {
-    if (!record.createdIssue || !candidate) return undefined;
+    if (!record.createdIssue) return undefined;
     const existing = issues.find(issue => issue.id === record.id);
     if (existing) return existing;
+    if (!candidate) return undefined;
     const findings = (candidate.roomFindings || []).filter(f => record.newIssueFindingKeys?.includes(f.key));
+    // A narrowed rule must not turn an old repair into a different anomaly.
+    if (!findings.length) return undefined;
     return { ...candidate, roomFindings: findings,
-      description: findings.length ? [...findings.map(f => f.label), ...(record.notes && !findings.some(f => f.label === record.notes) ? [record.notes] : [])].join("\n").slice(0, 4000) : candidate.description };
+      description: [...findings.map(f => f.label), ...(record.notes && !findings.some(f => f.label === record.notes) ? [record.notes] : [])].join("\n").slice(0, 4000) };
   }
   const plan = planRoomIssue(candidate, record, issues);
   record.relatedIssueIds = plan.relatedIssueIds;

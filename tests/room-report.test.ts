@@ -55,16 +55,18 @@ test("v2 pending payloads keep their original hash and cleaning answers", () => 
   assert.equal(roomEntrySchema.safeParse(v2).success, false);
 });
 
-test("room problems create one editable anomaly and retries preserve its resolution", async () => {
+test("eligible room problems create one editable anomaly and retries preserve its resolution", async () => {
   process.env.STORAGE_DRIVER = "local";
   process.env.LOCAL_DATA_DIR = mkdtempSync(path.join(tmpdir(), "hotel-room-issues-"));
   const input = entry();
+  input.checks.find(c => c.key === "taps")!.result = "probleme";
   const receipt = await executeEntry(input);
   assert.equal(receipt.collection, "roomInspections");
   assert.ok(receipt.collection === "roomInspections" && receipt.issue);
   const issue = (await readState()).issues[0];
-  assert.match(issue.description, /Minibar sale/);
-  await execute({ type: "updateIssue", id: issue.id, version: 1, actor: "Direction", note: "Minibar nettoyé", status: "resolu", fields: issue });
+  assert.match(issue.description, /Robinets fonctionnels : Problème/);
+  assert.doesNotMatch(issue.description, /Minibar sale/);
+  await execute({ type: "updateIssue", id: issue.id, version: 1, actor: "Direction", note: "Robinet réparé", status: "resolu", fields: issue });
   await executeEntry(input);
   const state = await readState();
   assert.equal(state.issues.length, 1); assert.equal(state.issues[0].status, "resolu");

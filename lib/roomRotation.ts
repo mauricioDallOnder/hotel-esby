@@ -15,14 +15,22 @@ export function completeRoomInspection(record: Record) {
 export function roomRotation(history: Record[], day: string, dailyGoal = 15, intervalDays = 7, deferred: string[] = []) {
   const goal = Math.max(1, Math.min(rooms.length, Math.floor(dailyGoal) || 15));
   const interval = Math.max(1, Math.min(60, Math.floor(intervalDays) || 7));
-  const complete = history.filter(r => r.date <= day && completeRoomInspection(r));
-  const latest = latestRoomRecords(complete);
+  const current = history.filter(r => r.date <= day);
+  const complete = current.filter(completeRoomInspection);
+  const latestComplete = latestRoomRecords(complete);
+  // A newer partial visit can report deterioration or improvement without completing the rotation.
+  const latest = latestRoomRecords(current);
+  const priorityRooms = rooms.filter(room => latest.get(room)?.condition === "mauvais");
+  const priority = new Set(priorityRooms);
   const done = rooms.filter(room => complete.some(r => r.room === room && r.date === day));
-  const due = rooms.filter(room => !latest.has(room) || daysSince(latest.get(room)!.date, day) >= interval)
-    .sort((a, b) => (latest.get(a)?.date || "").localeCompare(latest.get(b)?.date || "") || Number(a) - Number(b));
-  // Oldest first prevents starvation. Equal dates keep neighbouring rooms together.
-  const candidates = due.filter(room => !done.includes(room) && !deferred.includes(room));
-  return { goal, interval, done, due, covered: rooms.length - due.length,
+  const due = rooms.filter(room => !done.includes(room) && (priority.has(room) || !latestComplete.has(room) || daysSince(latestComplete.get(room)!.date, day) >= interval))
+    .sort((a, b) => Number(priority.has(b)) - Number(priority.has(a)) ||
+      (latestComplete.get(a)?.date || "").localeCompare(latestComplete.get(b)?.date || "") || Number(a) - Number(b));
+  // Keep oldest-first ordering within each priority group and honour today's deferrals.
+  const candidates = due.filter(room => !deferred.includes(room));
+  // Recent poor-condition rooms can be covered by the interval and still need another visit.
+  const covered = rooms.filter(room => latestComplete.has(room) && daysSince(latestComplete.get(room)!.date, day) < interval).length;
+  return { goal, interval, done, due, covered, priorityRooms,
     plan: candidates.slice(0, Math.max(0, goal - done.length)),
     next: candidates[0], cycleWorkDays: Math.ceil(rooms.length / goal) };
 }

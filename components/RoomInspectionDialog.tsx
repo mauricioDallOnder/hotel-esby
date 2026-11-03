@@ -4,7 +4,7 @@ import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogT
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
 import { createId, statuses, today } from "@/lib/domain";
-import { normalizeRoomDraft, roomChecks, roomEntrySchema, roomFindings, type RoomEntry } from "@/lib/rooms";
+import { normalizeRoomDraft, roomChecks, roomEntrySchema, roomFindings, roomProblems, type RoomEntry } from "@/lib/rooms";
 import { matchesRoomFinding, openRoomIssues, planRoomIssue } from "@/lib/roomIssueMatching";
 import { compressPhoto } from "@/lib/photos";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
@@ -39,8 +39,10 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const [showIssues, setShowIssues] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
   const known = openRoomIssues(issues, room);
-  const findings = value ? roomFindings({ ...value, condition: value.condition || "bon", carpet: value.carpet || "ok" }) : [];
-  const plan = value ? planRoomIssue({ room, roomFindings: findings } as Parameters<typeof planRoomIssue>[0], { room, notes: value.notes, issueLinks: value.issueLinks, distinctProblemKeys: value.distinctProblemKeys }, issues) : undefined;
+  const review: RoomEntry | undefined = value ? { ...value, condition: value.condition || "bon", carpet: value.carpet || "ok" } : undefined;
+  const findings = review ? roomFindings(review) : [];
+  const otherProblems = review ? roomProblems(review).filter(label => !findings.some(finding => finding.label === label)) : [];
+  const plan = value && findings.length ? planRoomIssue({ room, roomFindings: findings } as Parameters<typeof planRoomIssue>[0], { room, notes: value.notes, issueLinks: value.issueLinks, distinctProblemKeys: value.distinctProblemKeys }, issues) : undefined;
   const invalidField = (field: string) => invalid.some(item => item === field || item.startsWith(field + "."));
   function goStep(next: number) { setStep(next); content.current?.scrollTo({ top: 0 }); }
   function update(patch: Partial<Draft>) { if (value) draft.update({ ...value, ...patch }); }
@@ -100,11 +102,12 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             {roomChecks.map(check => <QuickChoice key={check.key} label={check.label} value={value.checks.find(c => c.key === check.key)?.result} error={invalidField(`checks.${check.key}`)}
               options={[{ value: "ok", label: "OK", color: "success" }, { value: "probleme", label: "Problème", color: "error" }, { value: "absent", label: "Absent" }]}
               onChange={result => update({ checks: value.checks.map(c => c.key === check.key ? { ...c, result } : c) })}
-              hint={<>{check.key === "door_closer" && <Typography variant="caption" sx={{ display: "block" }}>Ouvrir puis relâcher la porte : vérifier qu’elle se referme. Signaler aussi l’absence du mécanisme.</Typography>}{known.filter(i => matchesRoomFinding(i, { key: check.key, label: "" })).map(i => <Typography key={i.id} variant="caption" color="warning.main" sx={{ display: "block" }}>Déjà signalé : {i.title}</Typography>)}</>} />)}
+              hint={<>{check.key === "door_closer" && <Typography variant="caption" sx={{ display: "block" }}>Ouvrir puis relâcher la porte : vérifier qu’elle se referme. Noter aussi l’absence du mécanisme dans le contrôle.</Typography>}{known.filter(i => matchesRoomFinding(i, { key: check.key, label: "" })).map(i => <Typography key={i.id} variant="caption" color="warning.main" sx={{ display: "block" }}>Déjà signalé : {i.title}</Typography>)}</>} />)}
           </>}
           {step === 1 && <>
             <QuickChoice label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} options={[{ value: "oui", label: "Occupée" }, { value: "non", label: "Libre" }]} error={invalidField("occupied")} onChange={v => update({ occupied: v === "oui", cleaning: v === "oui" ? null : value.cleaning })} />
             <QuickChoice label="État général de la chambre" value={value.condition} options={[{ value: "bon", label: "Bon", color: "success" }, { value: "a_revoir", label: "À revoir", color: "warning" }, { value: "mauvais", label: "Mauvais", color: "error" }]} error={invalidField("condition")} onChange={condition => update({ condition })} />
+            <Typography variant="caption" color="text.secondary">« Mauvais » donne la priorité à cette chambre dans les prochaines tournées, sans créer d’anomalie à lui seul.</Typography>
             {value.occupied === false && <QuickChoice label="Nettoyage / ménage" value={value.cleaning} options={[{ value: "faite", label: "Fait", color: "success" }, { value: "non_faite", label: "Non fait", color: "warning" }]} error={invalidField("cleaning")} onChange={cleaning => update({ cleaning })} />}
             <QuickChoice label="Présence de cafards ou nuisibles" value={value.bugs} options={[{ value: "non", label: "Aucun", color: "success" }, { value: "oui", label: "Détectés", color: "error" }]} error={invalidField("bugs")} onChange={bugs => update({ bugs })} />
             <QuickChoice label="État de la moquette" value={value.carpet} options={[{ value: "ok", label: "OK", color: "success" }, { value: "tachee", label: "Tachée", color: "warning" }, { value: "sale", label: "Sale", color: "warning" }]} error={invalidField("carpet")} onChange={carpet => update({ carpet })} />
@@ -117,8 +120,8 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <TextField required label="Inspecteur" value={value.actor} error={invalidField("actor")} onChange={e => update({ actor: e.target.value })} slotProps={{ htmlInput: { maxLength: 200 } }} helperText="Mémorisé sur cet appareil pour le prochain contrôle." />
             <Button onClick={() => setShowMetadata(!showMetadata)} aria-expanded={showMetadata}>Date : {value.date.split("-").reverse().join("/")} · Modifier</Button>
             {showMetadata && <TextField required label="Date du contrôle" type="date" value={value.date} error={invalidField("date")} onChange={e => update({ date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today() } }} />}
-            <Typography variant="h6">Constats · {findings.length}</Typography>
-            {!findings.length && <Alert severity="success">Aucun problème sélectionné.</Alert>}
+            <Typography variant="h6">Constats pour les anomalies · {findings.length}</Typography>
+            {!findings.length && <Alert severity="info">Aucune anomalie automatique à signaler. Les autres constats restent dans l’historique du contrôle.</Alert>}
             {findings.map(finding => {
               const linked = value.distinctProblemKeys?.includes(finding.key) ? undefined : known.find(i => value.issueLinks?.some(link => link.key === finding.key && link.issueId === i.id)) || known.find(i => matchesRoomFinding(i, finding));
               return <Box key={finding.key} sx={{ p: 1.5, bgcolor: "action.hover", borderRadius: 2 }}>
@@ -128,13 +131,18 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
               </Box>;
             })}
             {!!plan?.relatedIssueIds.length && <Chip label={`${plan.relatedIssueIds.length} anomalie(s) existante(s) réutilisée(s)`} color="warning" variant="outlined" />}
+            {!!otherProblems.length && <Box>
+              <Typography variant="subtitle2">Autres constats conservés dans le contrôle</Typography>
+              <Box component="ul" sx={{ mt: 0.5, mb: 0, pl: 3 }}>{otherProblems.map(label => <Typography component="li" variant="body2" key={label}>{label}</Typography>)}</Box>
+            </Box>}
+            {value.condition === "mauvais" && <Alert severity="info">Mauvais état : chambre prioritaire pour les prochaines tournées jusqu’à un contrôle indiquant un meilleur état.</Alert>}
             <TextField label="Observations et problèmes constatés" multiline minRows={2} value={value.notes} onChange={e => update({ notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} helperText="Facultatif : les boutons décrivent déjà les constats. Les détails restent dans l’historique." />
             <Typography variant="subtitle2">Photos · {value.photosData.length}/3</Typography>
             <Stack direction="row" spacing={1}>
               <Button component="label" variant="outlined" disabled={compressing || value.photosData.length >= 3}>Prendre une photo<input hidden type="file" accept="image/*" capture="environment" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
               <Button component="label" disabled={compressing || value.photosData.length >= 3}>Galerie<input hidden multiple type="file" accept="image/*" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
             </Stack>
-            {value.photosData.map((photo, i) => <Box key={i}><Box component="img" src={photo} alt={`Photo du problème ${i + 1}`} sx={{ width: "100%", maxHeight: 180, objectFit: "contain" }} /><Button color="error" onClick={() => update({ photosData: value.photosData.filter((_, index) => index !== i) })}>Retirer la photo {i + 1}</Button></Box>)}
+            {value.photosData.map((photo, i) => <Box key={i}><Box component="img" src={photo} alt={`Photo du contrôle ${i + 1}`} sx={{ width: "100%", maxHeight: 180, objectFit: "contain" }} /><Button color="error" onClick={() => update({ photosData: value.photosData.filter((_, index) => index !== i) })}>Retirer la photo {i + 1}</Button></Box>)}
             <Typography variant="caption">Les anomalies ouvertes sont rapprochées à l’envoi. Un contrôle OK ne les clôture pas : la direction conserve le suivi des interventions.</Typography>
           </>}
           <Typography variant="caption" color="text.secondary">{compressing ? "Compression des photos…" : draft.saving ? "Sauvegarde du brouillon…" : "Brouillon conservé sur cet appareil."}</Typography>

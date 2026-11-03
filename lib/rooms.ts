@@ -23,6 +23,8 @@ export const roomChecks = [
   { key: "door_handle_clear", label: "Poignée de porte dégagée (aucun vêtement ne cache la poignée)" },
 ] as const;
 export type RoomCheckKey = typeof roomChecks[number]["key"];
+// Other answers remain in the inspection history without creating an automatic anomaly.
+const roomAnomalyCheckKeys: readonly RoomCheckKey[] = ["taps", "switches", "leaks", "lights", "smoke", "damage", "window"];
 export const conditionLabels = { bon: "Bon état", a_revoir: "À revoir", mauvais: "Mauvais état" } as const;
 export const cleaningLabels = { faite: "Faite", non_faite: "Non faite" } as const;
 export const resultLabels = { non_verifie: "Non vérifié", ok: "Oui / OK", probleme: "Problème", absent: "Absent" } as const;
@@ -201,12 +203,12 @@ export function roomProblems(record: RoomEntry | RoomInspection): string[] {
   ];
 }
 
-export function roomIssue(record: RoomInspection, hasPhotos = false): Issue | undefined {
-  const problems = roomProblems(record);
-  if (!problems.length && !roomFindings(record).length && !record.notes.trim() && !record.photoIds.length && !hasPhotos) return;
-  return { room: record.room, roomFindings: roomFindings(record), id: record.id, version: 1, date: record.date, createdAt: record.updatedAt, updatedAt: record.updatedAt,
+export function roomIssue(record: RoomInspection): Issue | undefined {
+  const findings = roomFindings(record);
+  if (!findings.length) return;
+  return { room: record.room, roomFindings: findings, id: record.id, version: 1, date: record.date, createdAt: record.updatedAt, updatedAt: record.updatedAt,
     title: `Chambre ${record.room} · Problème constaté`, location: `Chambre ${record.room}`, category: "Équipements", priority: "normale", status: "ouvert", assignee: "",
-    description: [...problems, record.notes].filter(Boolean).join("\n").slice(0, 4000) || "Problème photographié lors du contrôle de la chambre.", reportedBy: record.actor,
+    description: [...findings.map(finding => finding.label), record.notes].filter(Boolean).join("\n").slice(0, 4000), reportedBy: record.actor,
     photoIds: record.photoIds, photoId: record.photoId,
     history: [{ at: record.updatedAt, actor: record.actor, note: "Signalé depuis le checklist de la chambre.", status: "ouvert", priority: "normale", assignee: "" }],
   };
@@ -230,14 +232,8 @@ export function roomRecordTime(record: RoomEntry | RoomInspection) {
 }
 
 export function roomFindings(record: RoomEntry | RoomInspection): { key: string; label: string }[] {
-  const findings: { key: string; label: string }[] = record.checks.filter(c => c.result === "probleme" || (["smoke", "door_closer"].includes(c.key) && c.result === "absent"))
+  const findings: { key: string; label: string }[] = record.checks.filter(c => roomAnomalyCheckKeys.includes(c.key) && c.result === "probleme")
     .map(c => ({ key: c.key, label: `${roomChecks.find(check => check.key === c.key)?.label || c.key} : ${resultLabels[c.result]}` }));
   if (record.bugs === "oui") findings.push({ key: "bugs", label: "Cafards / nuisibles détectés" });
-  if (record.carpet && record.carpet !== "ok") findings.push({ key: "carpet", label: `Moquette ${carpetLabels[record.carpet].toLowerCase()}${record.carpetNotes ? ` : ${record.carpetNotes}` : ""}` });
-  if (record.occupied === false && record.cleaning === "non_faite") findings.push({ key: "cleaning", label: "Ménage non fait" });
-  if (record.microwave === "oui" && record.microwaveCleaning === "sale") findings.push({ key: "microwave_cleaning", label: "Micro-ondes sale" });
-  if (record.checks.some(c => c.key === "fridge" && c.result !== "absent") && record.fridgeCleaning === "sale") findings.push({ key: "fridge_cleaning", label: "Minibar sale" });
-  if (!findings.length && record.condition && record.condition !== "bon") findings.push({ key: "condition", label: conditionLabels[record.condition] });
-  if (!findings.length && record.notes.trim()) findings.push({ key: "observation", label: record.notes.trim() });
   return findings;
 }

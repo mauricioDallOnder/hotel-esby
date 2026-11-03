@@ -1,5 +1,31 @@
 # Hôtel Contrôle
 
+## Anomalias do controle e prioridade dos quartos em mau estado
+
+O **Contrôle des chambres** cria uma anomalia automática somente quando se marca
+**Problème** em **Robinets fonctionnels**, **Interrupteurs fonctionnels**,
+**Aucune fuite d’eau**, **Éclairage fonctionnel**, **Détecteur de fumée fonctionnel**,
+**Rien de cassé** ou **Fenêtre fonctionnelle**, ou **Détectés** em cafards/nuisibles.
+**Absent** não dispara uma anomalia automática. Lit, matelas, minibar, ferme-porte,
+poignée de porte, estado geral, ménage, moquette, limpeza dos equipamentos,
+observações e fotos ficam no controle; isoladamente não geram anomalias.
+As observações e fotos podem complementar um dos problemas elegíveis.
+
+Um quarto cujo último controle indique **Mauvais état** tem prioridade na tournée,
+mesmo antes do intervalo habitual. A ordem seguinte continua sendo quartos nunca
+controlados e depois controles completos mais antigos. Um controle posterior em
+**Bon** ou **À revoir** retira a prioridade por mau estado. Controles incompletos
+podem indicar mau estado, mas não contam como concluídos. A meta diária, os quartos
+já concluídos hoje, os adiamentos e a exclusão de envios bloqueados são respeitados.
+O indicador de cobertura continua medindo controles completos dentro do intervalo.
+
+**Implantação com Google Sheets:** além de publicar o aplicativo, copie o arquivo
+completo `google-apps-script/Code.gs` no projeto existente e publique uma nova
+versão da implantação. O matcher foi atualizado para preservar anomalias antigas
+nos reenvios e não transformar uma gravação interrompida de um item agora excluído
+em outro problema. Não há migração dos dados nem alteração dos hashes da fila.
+As anomalias que já existem mantêm seu histórico e seu acompanhamento.
+
 ## Todas as fotos nos relatórios de anomalias
 
 Em **Rapports & bilan mensuel**, os PDFs diário e mensal incluem todas as fotos
@@ -104,13 +130,15 @@ e o download disponível falhou. A integração com o Google real depende da imp
   equipamentos ainda sem resposta, incluindo o ferme-porte; detector e itens já sinalizados
   exigem resposta individual. Nenhuma resposta é preenchida ao abrir o quarto.
 - **Ferme-porte:** verificar presença e fechamento automático. Defeito ou ausência
-  entram nos constats e no acompanhamento de anomalias. Quartos antigos mostram
+  ficam registrados no controle, sem gerar anomalia automática. Quartos antigos mostram
   este campo como não informado; rascunhos antigos o recebem como não verificado.
 - **Rotação contínua:** meta inicial de 15 quartos/dia, intervalo alvo de 7 dias,
-  ambos ajustáveis em **Régler**. Nunca inspecionados primeiro, depois os controles
-  completos mais antigos; empate por número do quarto para reduzir deslocamentos.
+  ambos ajustáveis em **Régler**. Mau estado tem prioridade, mesmo em controle recente;
+  depois vêm os nunca inspecionados e os controles completos mais antigos, com empate
+  por número do quarto para reduzir deslocamentos.
   Quartos com anomalias continuam na rotação. Controles completos aguardando envio
-  contam provisoriamente; envios bloqueados, controles parciais e datas futuras não.
+  contam provisoriamente; envios bloqueados e datas futuras não entram na rotação.
+  Controles parciais não contam como concluídos, mas podem indicar mau estado.
   A meta diária conta quartos únicos. **Reporter à demain** mantém o rascunho sem
   registrar uma inspeção. Preferências e reports pertencem ao navegador/aparelho.
 - **Histórico:** consulta individual ou global, busca por quarto/inspector/texto,
@@ -121,7 +149,7 @@ e o download disponível falhou. A integração com o Google real depende da imp
   Anomalies. Novos registros usam chaves de equipamento; registros manuais antigos
   usam termos reconhecidos em francês. Textos ambíguos podem ser associados
   explicitamente no resumo. **Signaler un problème distinct** permite distinguir
-  outro defeito no mesmo equipamento. Só constats novos criam uma anomalia; vínculos,
+  outro defeito no mesmo equipamento. Só constats elegíveis novos criam uma anomalia; vínculos,
   observações e fotos ficam no histórico. Um controle OK não encerra uma anomalia.
   Uma falha que reaparece depois da resolução pode gerar um novo signalement.
 - **Compatibilidade:** controles imutáveis e filas anteriores (v1/v2/v3) mantêm
@@ -161,10 +189,11 @@ o último controle de cada quarto livre, sua data, estado geral, ménage,
 presença e limpeza dos equipamentos e problemas. Controles antigos sem esses
 dados aparecem como não informados; registros aguardando envio são identificados.
 
-Problemas, observações ou fotos do checklist geram uma anomalia após a
-sincronização, com a descrição e as mesmas fotos. Reenvios não duplicam a
-anomalia e preservam seu andamento/resolução. Registros históricos já salvos
-não são convertidos retroativamente.
+Somente os problemas elegíveis listados no início deste documento geram uma
+anomalia após a sincronização, com as observações e as mesmas fotos do controle.
+Os demais constats continuam no histórico. Reenvios não duplicam a anomalia e
+preservam seu andamento/resolução. Registros históricos já salvos não são
+convertidos retroativamente.
 
 **Para o modo Google Sheets, atualize e reimplante `google-apps-script/Code.gs`
 antes de publicar esta versão do aplicativo.** A integração grava a anomalia

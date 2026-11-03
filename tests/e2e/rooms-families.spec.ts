@@ -29,7 +29,7 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   await page.getByLabel("Inspecteur").fill("Test mobile");
   await page.getByLabel("Observations et problèmes constatés").fill("Robinet bloqué");
   await page.locator('input[type="file"][multiple]').setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64") });
-  await expect(page.getByAltText("Photo du problème 1")).toBeVisible();
+  await expect(page.getByAltText("Photo du contrôle 1")).toBeVisible();
   const send = page.waitForResponse(r => r.url().endsWith("/api/entries") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Enregistrer le contrôle" }).click();
   expect((await send).status()).toBe(200);
@@ -47,7 +47,8 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   const state = await (await page.request.get("/api/hotel")).json();
   const issue = state.issues.find((i: { reportedBy: string }) => i.reportedBy === "Test mobile");
   expect(issue.description).toContain("Robinet bloqué");
-  expect(issue.description).toContain("Micro-ondes sale");
+  expect(issue.description).not.toContain("Micro-ondes sale");
+  expect(issue.roomFindings.map((finding: { key: string }) => finding.key)).toEqual(["taps"]);
   expect(issue.photoIds).toHaveLength(1);
   await page.goto("/anomalies");
   await page.getByRole("button", { name: "Consulter", exact: true }).last().click();
