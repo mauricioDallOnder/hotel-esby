@@ -18,7 +18,10 @@ import { roomAvailability } from "@/lib/work";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 type Preferences = { dailyGoal: number; intervalDays: number; deferredDay: string; deferred: string[] };
-const filters = { all: "Toutes", target: "Tournée du jour", due: "À contrôler", problems: "Anomalies ouvertes", free: "Libres", cleaning: "Ménage à faire" };
+const filters = { all: "Toutes", occupied: "Occupées", free: "Libres", unknown: "Non renseignées", target: "Tournée du jour", due: "À contrôler", problems: "Anomalies ouvertes", cleaning: "Ménage à faire" };
+const occupancyFilters = ["all", "occupied", "free", "unknown"] as const;
+const workflowFilters = ["target", "due", "problems", "cleaning"] as const;
+const filterColors = { all: "primary", occupied: "info", free: "success", unknown: "inherit" } as const;
 export default function RoomsPage() {
   const { roomInspections = [], issues, hotelName } = useAppContext();
   const { pending } = useEntries();
@@ -46,9 +49,10 @@ export default function RoomsPage() {
   }, []);
   const queued = pending.filter(p => p.entry.type === "createRoomInspection").map(p => p.entry as RoomEntry);
   const history = [...queued, ...roomInspections.filter(i => !queued.some(q => q.id === i.id))];
-  const { latest, history: currentHistory } = roomObservations(roomInspections, pending, day);
+  const { latest, history: currentHistory, pendingIds } = roomObservations(roomInspections, pending, day);
   const rotation = roomRotation(history.filter(r => !pending.some(p => p.entry.id === r.id && p.blocked)), day, config?.dailyGoal, config?.intervalDays, deferred);
-  const free = rooms.filter(n => roomAvailability(n, workEvents, latest.get(n)).free === true);
+  const availability = new Map(rooms.map(n => [n, roomAvailability(n, workEvents, latest.get(n)).free]));
+  const free = rooms.filter(n => availability.get(n) === true);
   const nextRoom = rotation.plan.find(n => n !== room);
   function changePreference(patch: Partial<Preferences>) { if (config) preferences.update({ ...config, ...patch }); }
   function deferRoom() {
@@ -63,16 +67,28 @@ export default function RoomsPage() {
     catch (error) { setExportError((error as Error).message); }
     finally { setExporting(false); }
   }
-  const visibleGroups = roomGroups.filter(g => group === "all" || group === g.label).map(g => ({ ...g, rooms: g.rooms.filter(n => {
-    if (!n.includes(search.trim())) return false;
+  const scopedGroups = roomGroups.filter(g => group === "all" || group === g.label)
+    .map(g => ({ ...g, rooms: g.rooms.filter(n => n.includes(search.trim())) }));
+  const scopedRooms = scopedGroups.flatMap(g => g.rooms);
+  const counts = {
+    all: scopedRooms.length,
+    occupied: scopedRooms.filter(n => availability.get(n) === false).length,
+    free: scopedRooms.filter(n => availability.get(n) === true).length,
+    unknown: scopedRooms.filter(n => availability.get(n) === undefined).length,
+  };
+  const visibleGroups = scopedGroups.map(g => ({ ...g, rooms: g.rooms.filter(n => {
     const record = latest.get(n);
     if (filter === "target") return rotation.plan.includes(n) || rotation.done.includes(n);
     if (filter === "due") return rotation.due.includes(n);
     if (filter === "problems") return openRoomIssues(issues, n).length > 0;
-    if (filter === "free") return roomAvailability(n, workEvents, record).free === true;
-    if (filter === "cleaning") return roomAvailability(n, workEvents, record).free === true && record?.cleaning === "non_faite";
+    if (filter === "occupied") return availability.get(n) === false;
+    if (filter === "free") return availability.get(n) === true;
+    if (filter === "unknown") return availability.get(n) === undefined;
+    if (filter === "cleaning") return availability.get(n) === true && record?.cleaning === "non_faite";
     return true;
   }) })).filter(g => g.rooms.length);
+  const visibleCount = visibleGroups.reduce((count, g) => count + g.rooms.length, 0);
+  const hasFilters = !!search || group !== "all" || filter !== "all";
   return <>
     <ConnectionBar />
     <PageTitle title="Contrôle des chambres" description="Votre tournée, un contrôle rapide, un historique clair." />
@@ -112,28 +128,43 @@ export default function RoomsPage() {
       </Stack>
       {exportError && <Alert severity="error">{exportError}</Alert>}
       <Stack spacing={1.5}>
-        <Typography variant="body2" color="text.secondary">Cochez « Chambre libre » pour indiquer la disponibilité actuelle ; décochez pour une chambre occupée. Aucun contrôle à remplir. Une case avec un trait indique une disponibilité encore inconnue.</Typography>
+        <Typography variant="body2" color="text.secondary">Cochez « Occupée » pour une chambre occupée ; décochez pour la marquer libre. Aucun contrôle à remplir. Un trait indique une occupation inconnue : cochez pour « Occupée » ou choisissez « Marquer libre ».</Typography>
         <TextField label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
-        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{["all", ...roomGroups.map(g => g.label)].map(g => <Chip key={g} label={g === "all" ? "Tous les étages" : g} onClick={() => setGroup(g)} color={group === g ? "primary" : "default"} variant={group === g ? "filled" : "outlined"} />)}</Stack>
-        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{Object.entries(filters).map(([key, label]) => <Chip key={key} label={label} onClick={() => setFilter(key as keyof typeof filters)} color={filter === key ? "primary" : "default"} variant={filter === key ? "filled" : "outlined"} />)}</Stack>
+        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }} role="group" aria-label="Filtrer par étage">{["all", ...roomGroups.map(g => g.label)].map(g => <Chip key={g} label={g === "all" ? "Tous les étages" : g} onClick={() => setGroup(g)} aria-pressed={group === g} color={group === g ? "primary" : "default"} variant={group === g ? "filled" : "outlined"} />)}</Stack>
+        <Box role="group" aria-label="Filtrer par occupation" sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(4, minmax(0, 1fr))" }, gap: 1 }}>
+          {occupancyFilters.map(key => <Button key={key} onClick={() => setFilter(key)} aria-label={`${filters[key]} : ${counts[key]}`}
+            aria-pressed={filter === key} color={filterColors[key]} variant={filter === key ? "contained" : "outlined"}
+            sx={{ minHeight: 48, px: 1.5, gap: 1, justifyContent: "space-between", textAlign: "left" }}>
+            <span>{filters[key]}</span><Typography component="span" variant="h6" sx={{ fontWeight: 800 }}>{counts[key]}</Typography>
+          </Button>)}
+        </Box>
+        <Typography variant="caption" color="text.secondary">Les compteurs suivent la recherche et l’étage sélectionné.</Typography>
+        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }} role="group" aria-label="Filtrer les contrôles">
+          {workflowFilters.map(key => <Chip key={key} label={filters[key]} onClick={() => setFilter(key)} aria-pressed={filter === key} color={filter === key ? "primary" : "default"} variant={filter === key ? "filled" : "outlined"} />)}
+        </Stack>
+        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1, alignItems: "center", justifyContent: "space-between" }}>
+          <Typography variant="body2" color="text.secondary" role="status">{visibleCount} chambre(s) affichée(s) sur {rooms.length}</Typography>
+          <Button size="small" disabled={!hasFilters} onClick={() => { setSearch(""); setGroup("all"); setFilter("all"); }}>Réinitialiser les filtres</Button>
+        </Stack>
       </Stack>
       {!visibleGroups.length && <Alert severity="info">Aucune chambre ne correspond à ces filtres.</Alert>}
-      {visibleGroups.map(g => <Box key={g.label}>
-        <Typography variant="h6" sx={{ mb: 1.5 }}>{g.label} · {g.rooms.length}</Typography>
+      {visibleGroups.map(g => <Box component="section" key={g.label} aria-label={g.label}>
+        <Typography variant="h6" component="h2" sx={{ mb: 1.5 }}>{g.label} · {g.rooms.length}</Typography>
         <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 1.5 }}>
           {g.rooms.map(n => {
             const record = latest.get(n), open = openRoomIssues(issues, n), done = rotation.done.includes(n), target = rotation.plan.includes(n), priority = rotation.priorityRooms.includes(n);
-            return <Paper key={n} variant="outlined" sx={{ p: 1.5, borderColor: done ? "success.main" : priority ? "warning.main" : target ? "primary.main" : "divider" }}>
+            const borderColor = availability.get(n) === false ? "info.main" : availability.get(n) === true ? "success.main" : "grey.400";
+            return <Paper component="article" key={n} aria-label={`Chambre ${n}`} variant="outlined" sx={{ p: 1.5, minWidth: 0, borderColor: "divider", borderTop: "4px solid", borderTopColor: borderColor }}>
               <Stack spacing={1}>
-                <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}><Typography variant="h4" sx={{ fontWeight: 800 }}>{n}</Typography>{done && <Chip label="Fait" color="success" size="small" />}</Stack>
+                <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}><Typography variant="h4" component="h3" sx={{ fontSize: 36, lineHeight: 1.2, fontWeight: 800 }}>{n}</Typography>{done && <Chip label="Fait" color="success" size="small" />}</Stack>
                 <Typography variant="caption">{record ? `Dernier : ${displayDate(record.date)}` : "Jamais contrôlée"}</Typography>
                 {priority && <Typography variant="caption" color="warning.main" sx={{ fontWeight: 700 }}>Mauvais état · prioritaire</Typography>}
-                <RoomAvailabilityCheckbox room={n} inspection={record} />
+                <RoomAvailabilityCheckbox room={n} inspection={record} inspectionPending={!!record && pendingIds.has(record.id)} />
                 {record?.occupied === false && <Typography variant="caption">Dernier contrôle · Ménage {cleaningText(record).toLowerCase()}</Typography>}
                 {open.length > 0 && <Chip label={`${open.length} anomalie(s)`} color="warning" size="small" variant="outlined" />}
-                {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">En attente d’envoi</Typography>}
+                {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">Contrôle en attente d’envoi</Typography>}
                 {deferred.includes(n) && <Typography variant="caption">Reportée à demain</Typography>}
-                <Button variant={target ? "contained" : "outlined"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ minHeight: 44 }}>{done ? "Recontrôler" : "Contrôler"}</Button>
+                <Button variant={target ? "contained" : "outlined"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ minHeight: 48 }}>{done ? "Recontrôler" : "Contrôler"}</Button>
                 <Button aria-label={`Historique de la chambre ${n}`} onClick={() => setHistoryRoom(n)}>Historique</Button>
               </Stack>
             </Paper>;

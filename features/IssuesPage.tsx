@@ -4,7 +4,7 @@ import { Alert, Box, Button, Chip, Collapse, MenuItem, Paper, Stack, TextField, 
 import Add from "@mui/icons-material/Add";
 import { useAppContext } from "@/context/AppContext";
 import { categories, displayDate, issuePhotoIds, priorities, statuses, today, type Issue } from "@/lib/domain";
-import { defaultIssueFilters, issueAge, lastIntervention, selectIssues, type IssueFilters } from "@/lib/issueView";
+import { defaultIssueFilters, issueAge, issueShortcuts, lastIntervention, selectIssues, type IssueFilters } from "@/lib/issueView";
 import { ConnectionBar, EmptyState, IssueBadges, PageTitle } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
 import { IssuePhoto } from "@/components/IssuePhoto";
@@ -48,12 +48,7 @@ export default function IssuesPage() {
   function change(patch: Partial<IssueFilters>) { setFilters(current => ({ ...current, ...patch })); setLimit(24); }
   function reset() { setFilters(defaultIssueFilters); setLimit(24); }
   const filtered = selectIssues(issues, filters);
-  const pending = issues.filter(i => i.status !== "resolu");
-  const shortcuts = [
-    { label: "Non résolues", count: pending.length, patch: {} },
-    { label: "Critiques ouvertes", count: pending.filter(i => i.priority === "critique").length, patch: { priority: "critique" as const } },
-    { label: "Sans responsable", count: pending.filter(i => !i.assignee.trim()).length, patch: { unassigned: true } },
-  ];
+  const shortcuts = issueShortcuts(issues, filters);
   const statusChoices = { pending: "Non résolues", ouvert: statuses.ouvert, en_cours: statuses.en_cours, resolu: statuses.resolu, all: "Toutes" };
   const extraCount = Number(filters.category !== "all") + Number(filters.unassigned);
   const invalidRange = Boolean(filters.from && filters.to && filters.from > filters.to);
@@ -63,11 +58,14 @@ export default function IssuesPage() {
     <PageTitle eyebrow="Maintenance" title="Anomalies & suivi" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={<Button variant="contained" startIcon={<Add />} onClick={() => setDialog("new")}>Signaler une anomalie</Button>} />
     <Stack spacing={2.5}>
       {message && <Alert severity="success" onClose={() => setMessage("")}>{message}</Alert>}
-      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }}>
-        {shortcuts.map(shortcut => <Button key={shortcut.label} variant="outlined" onClick={() => { setFilters({ ...defaultIssueFilters, ...shortcut.patch }); setLimit(24); }} sx={{ flexDirection: "column", alignItems: "flex-start", justifyContent: "space-between", p: { xs: 1.25, sm: 2 }, textTransform: "none", textAlign: "left", minWidth: 0, gap: 1 }}>
-          <Typography component="span" variant="body2" sx={{ fontSize: { xs: 12, sm: 14 } }}>{shortcut.label}</Typography><Typography component="span" variant="h5" sx={{ fontWeight: 800 }}>{shortcut.count}</Typography>
-        </Button>)}
-      </Box>
+      <Stack spacing={0.75}>
+        <Box role="group" aria-label="Vues rapides des anomalies" sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }}>
+          {shortcuts.map(shortcut => <Button key={shortcut.id} variant={shortcut.selected ? "contained" : "outlined"} aria-pressed={shortcut.selected} onClick={() => { setFilters(shortcut.filters); setLimit(24); }} sx={{ flexDirection: "column", alignItems: "flex-start", justifyContent: "space-between", p: { xs: 1.25, sm: 2 }, textTransform: "none", textAlign: "left", minWidth: 0, gap: 1 }}>
+            <Typography component="span" variant="body2" sx={{ fontSize: { xs: 12, sm: 14 } }}>{shortcut.label}</Typography><Typography component="span" variant="h5" sx={{ fontWeight: 800 }}>{shortcut.count}</Typography>
+          </Button>)}
+        </Box>
+        <Typography variant="caption" color="text.secondary">Recherche, dates et catégorie conservées.</Typography>
+      </Stack>
       <Paper variant="outlined" sx={{ p: 2 }}><Stack spacing={2}>
         <TextField fullWidth label="Rechercher une anomalie" placeholder="Chambre, problème, responsable ou intervention…" value={filters.query} onChange={e => change({ query: e.target.value })} />
         <Stack direction="row" useFlexGap role="group" aria-label="Filtrer par état" sx={{ flexWrap: "wrap", gap: 1 }}>{Object.entries(statusChoices).map(([value, label]) => <Chip key={value} label={label} onClick={() => change({ status: value as IssueFilters["status"] })} color={filters.status === value ? "primary" : "default"} variant={filters.status === value ? "filled" : "outlined"} aria-pressed={filters.status === value} />)}</Stack>

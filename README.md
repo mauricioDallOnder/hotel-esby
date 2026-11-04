@@ -1,5 +1,25 @@
 # Hôtel Contrôle
 
+## Utilização mais simples no celular
+
+- A checkbox **Occupée** tem o mesmo significado em **Occupation des chambres**
+  e **Contrôle des chambres**: marcada = ocupado; desmarcada = livre. O estado
+  desconhecido continua separado e permite usar **Marquer libre** diretamente.
+- Os totais de ocupação também são botões de filtro. Eles consideram a busca e
+  o andar selecionado. Azul identifica ocupado, verde identifica livre e cinza
+  identifica não informado, sempre com o estado escrito no cartão.
+- Os atalhos de anomalias preservam busca, datas, categoria e ordenação.
+  Cada contador corresponde ao resultado do respectivo atalho; somente
+  **Réinitialiser les filtres** limpa o conjunto dos filtros.
+- Depois de uma tentativa de salvar o controle, os avisos de validação acompanham
+  as correções dos campos sem exigir outro clique em salvar.
+- Uma faixa reúne o estado dos envios, a conexão e as ações de atualização.
+  **Enregistrements à jour** significa que não há envio pendente neste aparelho;
+  os estados sem conexão, envio recusado e dados desatualizados aparecem
+  explicitamente. **Réessayer l’envoi** retoma a fila existente.
+
+Esta atualização não exige migração nem nova alteração no Google Apps Script.
+
 ## Ocupação rápida dos quartos
 
 **Occupation des chambres** (`/occupation`) mostra os 85 quartos por andar,
@@ -96,8 +116,8 @@ do aplicativo; não exige outra alteração no Apps Script além das versões an
 
 ## Disponibilidade, comentários e tarefas do dia
 
-- **Quartos livres:** cada cartão em **Checklist des chambres** tem a checkbox
-  **Chambre libre**. Marcar informa livre; desmarcar informa ocupado. O traço
+- **Ocupação dos quartos:** cada cartão em **Contrôle des chambres** tem a checkbox
+  **Occupée**. Marcar informa ocupado; desmarcar informa livre. O traço
   indica disponibilidade ainda desconhecida. Não exige nem registra inspeção.
   Até a primeira alteração manual, usa a ocupação do último controle como
   referência; depois, a checkbox controla a disponibilidade atual independentemente
@@ -128,7 +148,7 @@ privado e a pasta de fotos são preservados. Depois publique o app e use **Actua
 O GitHub não publica o Apps Script automaticamente.
 
 O script antigo rejeita `commitWorkEvent` antes de gravar; os envios permanecem
-na fila. Após atualizar o script, use **Réessayer**. No modo local, a nova coleção
+na fila. Após atualizar o script, use **Réessayer l’envoi**. No modo local, a nova coleção
 `workEvents` é criada no primeiro salvamento, sem migração manual.
 
 `lib/work.ts` contém as regras compartilhadas de revisão e projeção. Rode

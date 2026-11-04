@@ -85,7 +85,7 @@ test("a lost save receipt can be retried without duplicating a family departure"
   await expect(page.getByLabel("Retour prévu (facultatif)")).toHaveCount(0);
   await page.getByRole("button", { name: "Enregistrer l’événement" }).click();
   await expect(page.getByText(/Connexion interrompue ou lente/)).toBeVisible();
-  await page.getByRole("button", { name: "Réessayer", exact: true }).click();
+  await page.getByRole("button", { name: "Réessayer l’envoi", exact: true }).click();
   await expect(page.getByText("En attente d’envoi", { exact: true })).toHaveCount(0);
   const state = await (await page.request.get("/api/hotel")).json();
   expect(state.familyEvents.filter((r: { family: string }) => r.family === "Famille reçu perdu")).toHaveLength(1);
@@ -140,4 +140,65 @@ test("room draft and daily deferral survive reload without counting an inspectio
   await expect(page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "Absent", exact: true })).toHaveAttribute("aria-checked", "true");
   const state = await (await page.request.get("/api/hotel")).json();
   expect(state.roomInspections.some((r: { room: string }) => r.room === "121")).toBe(false);
+});
+
+
+test("room validation follows corrections and conditional fields without another save or focus change", async ({ page }) => {
+  test.setTimeout(90000);
+  await page.setViewportSize({ width: 390, height: 844 }); await login(page);
+  await page.goto("/checklist");
+  await page.getByRole("button", { name: "Contrôler la chambre 325", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const group = (label: string) => dialog.getByRole("radiogroup", { name: label, exact: true });
+  const choose = async (label: string, answer: string) => group(label).getByRole("radio", { name: answer, exact: true }).click();
+  const validation = dialog.getByRole("alert").filter({ hasText: "Il reste des points à vérifier." });
+  let submissions = 0;
+  page.on("request", request => { if (request.url().endsWith("/api/entries") && request.method() === "POST") submissions++; });
+
+  await dialog.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK", exact: true }).click();
+  await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
+  await choose("Chambre occupée", "Libre");
+  await choose("État général de la chambre", "Bon");
+  await choose("Présence de cafards ou nuisibles", "Aucun");
+  await choose("État de la moquette", "OK");
+  await choose("Micro-ondes présent ?", "Oui");
+  await expect(dialog.locator('[aria-invalid="true"]')).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
+  await dialog.getByLabel(/^Inspecteur/).fill("Validation immédiate");
+  await expect(validation).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
+
+  const smoke = group("Détecteur de fumée fonctionnel");
+  await expect(smoke).toHaveAttribute("aria-invalid", "true");
+  await expect(smoke).toBeFocused();
+  await choose("Détecteur de fumée fonctionnel", "OK");
+  await expect(smoke).not.toHaveAttribute("aria-invalid", "true");
+  await expect(smoke.getByText("Ce point reste à renseigner.", { exact: true })).toHaveCount(0);
+  await expect(smoke.getByRole("radio", { name: "OK", exact: true })).toBeFocused();
+  await expect(validation).toBeVisible(); // Other required fields still need answers.
+
+  await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
+  await expect(group("Nettoyage / ménage")).toHaveAttribute("aria-invalid", "true");
+  await expect(group("Propreté du micro-ondes")).toHaveAttribute("aria-invalid", "true");
+  await expect(group("Propreté du minibar")).toHaveAttribute("aria-invalid", "true");
+  await choose("Chambre occupée", "Occupée");
+  await expect(group("Nettoyage / ménage")).toHaveCount(0);
+  await choose("Micro-ondes présent ?", "Non");
+  await expect(group("Propreté du micro-ondes")).toHaveCount(0);
+  await expect(group("Propreté du minibar")).toHaveAttribute("aria-invalid", "true");
+  await choose("Propreté du minibar", "Propre");
+  await expect(group("Propreté du minibar")).not.toHaveAttribute("aria-invalid", "true");
+  await expect(validation).toHaveCount(0);
+
+  await dialog.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
+  const inspector = dialog.getByLabel(/^Inspecteur/);
+  await inspector.fill("   ");
+  await expect(inspector).toHaveAttribute("aria-invalid", "true");
+  await expect(validation).toBeVisible();
+  await inspector.fill("Validation corrigée");
+  await expect(inspector).toHaveAttribute("aria-invalid", "false");
+  await expect(inspector).toBeFocused();
+  await expect(validation).toHaveCount(0);
+  await expect(dialog.locator('[aria-invalid="true"]')).toHaveCount(0);
+  expect(submissions).toBe(0);
 });

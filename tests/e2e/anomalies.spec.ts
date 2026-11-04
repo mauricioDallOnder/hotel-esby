@@ -54,6 +54,68 @@ test("mobile anomalies start newest first with visible inclusive date filters, s
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
 });
 
+test("anomaly shortcuts keep the search scope, show matching counts and replace the previous view", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
+  const issues = [
+    sample({ title: "Éclairage plafond", date: "2026-10-10", priority: "critique", assignee: "Technicien" }),
+    sample({ title: "Éclairage couloir", date: "2026-10-11", priority: "critique" }),
+    sample({ title: "Éclairage salle de bain", date: "2026-10-12", priority: "normale" }),
+    sample({ priority: "critique", date: "2026-10-09" }),
+    sample({ priority: "critique", date: "2026-10-13" }),
+    sample({ priority: "critique", date: "2026-10-10", location: "Chambre 1204" }),
+    sample({ priority: "critique", date: "2026-10-10", category: "Plomberie" }),
+    sample({ priority: "critique", date: "2026-10-10", status: "resolu" }),
+  ];
+  await page.route("**/api/hotel*", route => route.fulfill({ json: { issues, inspections: [], mode: "local" } }));
+  await page.goto("/anomalies");
+  const search = page.getByLabel("Rechercher une anomalie"), from = page.getByLabel("Constat à partir du"), to = page.getByLabel("Constat jusqu’au");
+  await search.fill("204 eclairage");
+  await from.fill("2026-10-10");
+  await to.fill("2026-10-12");
+  await page.getByRole("button", { name: "Filtres avancés", exact: true }).click();
+  await page.getByRole("combobox", { name: "Catégorie", exact: true }).click();
+  await page.getByRole("option", { name: "Électricité", exact: true }).click();
+  await page.getByRole("combobox", { name: "Trier par" }).click();
+  await page.getByRole("option", { name: "Plus anciennes d’abord", exact: true }).click();
+  await page.getByRole("group", { name: "Filtrer par priorité" }).getByRole("button", { name: "Haute", exact: true }).click();
+
+  const shortcuts = page.getByRole("group", { name: "Vues rapides des anomalies" });
+  const pending = shortcuts.getByRole("button", { name: /Non résolues/ });
+  const critical = shortcuts.getByRole("button", { name: /Critiques ouvertes/ });
+  const unassigned = shortcuts.getByRole("button", { name: /Sans responsable/ });
+  await expect(pending).toHaveText(/Non résolues\s*3$/);
+  await expect(critical).toHaveText(/Critiques ouvertes\s*2$/);
+  await expect(unassigned).toHaveText(/Sans responsable\s*2$/);
+  await expect(shortcuts.getByRole("button", { pressed: true })).toHaveCount(0);
+  await critical.click();
+  await expect(critical).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 204 · Éclairage plafond");
+  await unassigned.click();
+  await expect(critical).toHaveAttribute("aria-pressed", "false");
+  await expect(unassigned).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("article").first()).toHaveAccessibleName("Chambre 204 · Éclairage couloir");
+  await expect(page.getByRole("article").last()).toHaveAccessibleName("Chambre 204 · Éclairage salle de bain");
+  await pending.click();
+  await expect(pending).toHaveAttribute("aria-pressed", "true");
+  await expect(shortcuts.getByRole("button", { pressed: true })).toHaveCount(1);
+  await expect(page.getByRole("article")).toHaveCount(3);
+  await expect(search).toHaveValue("204 eclairage");
+  await expect(from).toHaveValue("2026-10-10");
+  await expect(to).toHaveValue("2026-10-12");
+  await expect(page.getByRole("combobox", { name: "Catégorie", exact: true })).toHaveText("Électricité");
+  await expect(page.getByRole("combobox", { name: "Trier par" })).toHaveText("Plus anciennes d’abord");
+  await page.getByRole("button", { name: "Réinitialiser les filtres", exact: true }).click();
+  await expect(search).toHaveValue("");
+  await expect(from).toHaveValue("");
+  await expect(to).toHaveValue("");
+  await expect(page.getByRole("combobox", { name: "Catégorie", exact: true })).toHaveText("Toutes les catégories");
+  await expect(page.getByRole("combobox", { name: "Trier par" })).toHaveText("Plus récentes d’abord");
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+});
+
 test("direction can record an intervention with one-tap status and inspect its dated history", async ({ page }) => {
   await page.request.post("/api/session", { data: { role: "direction", password: "test-direction" } });
   const id = crypto.randomUUID(), title = "Suivi rapide test";

@@ -1,4 +1,6 @@
 "use client";
+import { useState } from "react";
+import { CheckCircleOutlined, CloudOffOutlined, RefreshOutlined, SyncOutlined, WarningAmberRounded } from "@mui/icons-material";
 import {
   Alert,
   Box,
@@ -9,8 +11,10 @@ import {
   Typography,
 } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
+import { SyncStatus, useEntries } from "@/context/EntriesContext";
 import { priorities, statuses, type Issue } from "@/lib/domain";
 import { roles } from "@/lib/roles";
+import { syncSummary } from "@/lib/syncStatus";
 export function PageTitle({
   eyebrow,
   title,
@@ -58,45 +62,62 @@ export function PageTitle({
   );
 }
 export function ConnectionBar() {
-  const { mode, error, refresh, busy, logout, role, cachedAt } = useAppContext();
+  const { mode, error, saveError, clearSaveError, refresh, busy, logout, role, cachedAt } = useAppContext();
+  const { pending, ready, online, working, storageError, retry } = useEntries();
+  const [refreshing, setRefreshing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const summary = syncSummary({ ready, online, working, pending, storageError, saving: busy, saveError, stale: !!cachedAt || !!error, refreshing });
+  const disabled = busy || refreshing || loggingOut;
+
+  async function runAction(action: "refresh" | "logout") {
+    const setWorking = action === "refresh" ? setRefreshing : setLoggingOut;
+    setWorking(true);
+    setActionError("");
+    try { await (action === "refresh" ? refresh() : logout()); }
+    catch (e) { setActionError(e instanceof Error ? e.message : "Action impossible. Réessayez."); }
+    finally { setWorking(false); }
+  }
+
   return (
-    <Box sx={{ mb: 3 }}>
+    <Paper variant="outlined" component="section" aria-label="État des enregistrements" sx={{ p: 1.5, mb: 3 }}>
       <Stack
-        sx={{
-          gap: 1,
-          alignItems: "center",
-          flexWrap: "wrap",
-          justifyContent: "space-between",
-        }}
-        direction="row"
+        direction={{ xs: "column", sm: "row" }}
+        sx={{ gap: 1, alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}
       >
-        <Chip
-          size="small"
-          variant="outlined"
-          color={mode === "sheets" ? "success" : "default"}
-          label={
-            mode === "sheets"
-              ? "Connecté à Google Sheets"
-              : "Mode local · enregistré sur cet ordinateur"
-          }
-        />
-        <Stack direction="row">
-          <Chip size="small" label={roles[role]} sx={{ alignSelf: "center" }} />
-          <Button size="small" disabled={busy} onClick={() => void refresh()}>
-            Actualiser
+        <Box sx={{ minWidth: 0 }}>
+          <Stack direction="row" sx={{ gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+            <Box role="status" aria-live="polite" aria-atomic="true" sx={{ minWidth: 0, maxWidth: "100%" }}>
+              <Chip
+                size="small"
+                variant="outlined"
+                color={summary.color}
+                icon={summary.color === "error" ? <WarningAmberRounded /> : !online ? <CloudOffOutlined /> : summary.color === "success" ? <CheckCircleOutlined /> : summary.color === "warning" ? <WarningAmberRounded /> : <SyncOutlined />}
+                label={summary.label}
+                sx={{ maxWidth: "100%", height: "auto", py: 0.5, "& .MuiChip-label": { whiteSpace: "normal", lineHeight: 1.4 } }}
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary">{mode === "sheets" ? "Google Sheets" : "Stockage local"}</Typography>
+          </Stack>
+          {summary.color !== "success" && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{summary.detail}</Typography>}
+        </Box>
+        <Stack direction="row" sx={{ gap: 0.5, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+          {pending.length > 0 && <Button size="small" disabled={working || !online || !ready} onClick={retry}>Réessayer l’envoi</Button>}
+          <Chip size="small" label={roles[role]} />
+          <Button size="small" startIcon={<RefreshOutlined />} disabled={disabled || !online} onClick={() => void runAction("refresh")}>
+            {refreshing ? "Actualisation…" : "Actualiser"}
           </Button>
-          <Button size="small" disabled={busy} onClick={() => void logout()}>
+          <Button size="small" disabled={disabled} onClick={() => void runAction("logout")}>
             Déconnexion
           </Button>
         </Stack>
       </Stack>
-      {cachedAt && <Alert severity="warning" sx={{ mt: 1 }}>Copie enregistrée sur cet appareil le {new Date(cachedAt).toLocaleString("fr-FR")}. Les données peuvent avoir changé. Actualisez dès que la connexion le permet.</Alert>}
-      {error && (
-        <Alert severity="error" sx={{ mt: 1 }}>
-          {error}
-        </Alert>
-      )}
-    </Box>
+      <SyncStatus />
+      {cachedAt && <Alert severity="warning" sx={{ mt: 1.5 }}>Copie enregistrée sur cet appareil le {new Date(cachedAt).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })}. Les données peuvent avoir changé. Actualisez dès que la connexion le permet.{error ? ` ${error}` : ""}</Alert>}
+      {!cachedAt && error && <Alert severity="warning" sx={{ mt: 1.5 }}>Actualisation impossible. Les données déjà chargées restent affichées. {error}</Alert>}
+      {saveError && <Alert severity="error" onClose={clearSaveError} closeText="Masquer ce message" sx={{ mt: 1.5 }}>Dernier enregistrement non confirmé : {saveError}</Alert>}
+      {actionError && <Alert severity="error" sx={{ mt: 1.5 }}>{actionError}</Alert>}
+    </Paper>
   );
 }
 export function StatCards({

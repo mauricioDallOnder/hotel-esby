@@ -40,3 +40,67 @@ test("mobile recovers from failed data and photo loads without logging in again"
   expect(photoReads).toBe(2);
   await expect(page.getByRole("button", { name: "Déconnexion", exact: true })).toBeVisible();
 });
+
+test("connection status distinguishes offline mode and a failed refresh from confirmed saves", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
+  let failRefresh = false;
+  await page.route("**/api/hotel*", route => failRefresh
+    ? route.fulfill({ status: 503, json: { error: "Google temporairement indisponible." } })
+    : route.fulfill({ json: { issues: [], inspections: [], mode: "sheets" } }));
+  await page.goto("/occupation");
+  const status = page.getByRole("region", { name: "État des enregistrements", exact: true });
+  await expect(status.getByRole("status")).toHaveText("Enregistrements à jour");
+
+  await context.setOffline(true);
+  await expect(status.getByRole("status")).toHaveText("Hors connexion");
+  await expect(status.getByRole("button", { name: "Actualiser", exact: true })).toBeDisabled();
+  await expect(page.getByText("Connecté à Google Sheets", { exact: true })).toHaveCount(0);
+  await context.setOffline(false);
+  await expect(status.getByRole("status")).toHaveText("Enregistrements à jour");
+
+  failRefresh = true;
+  await status.getByRole("button", { name: "Actualiser", exact: true }).click();
+  await expect(status.getByRole("status")).toHaveText("Données à actualiser");
+  await expect(status.getByRole("alert")).toContainText("Google temporairement indisponible.");
+  await expect(page.getByRole("checkbox", { name: /^Chambre \d+ occupée$/ })).toHaveCount(85);
+
+  failRefresh = false;
+  await status.getByRole("button", { name: "Actualiser", exact: true }).click();
+  await expect(status.getByRole("status")).toHaveText("Enregistrements à jour");
+  await expect(status.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+});
+
+test("a failed anomaly save does not erase the warning from a failed data refresh", async ({ page }) => {
+  await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
+  let failRefresh = false;
+  await page.route("**/api/hotel*", route => {
+    if (route.request().method() !== "GET") return route.fulfill({ status: 503, json: { error: "Enregistrement temporairement indisponible." } });
+    return failRefresh
+      ? route.fulfill({ status: 503, json: { error: "Lecture temporairement indisponible." } })
+      : route.fulfill({ json: { issues: [], inspections: [], mode: "sheets" } });
+  });
+  await page.goto("/anomalies");
+  const status = page.getByRole("region", { name: "État des enregistrements", exact: true });
+  await expect(status.getByRole("status")).toHaveText("Enregistrements à jour");
+  failRefresh = true;
+  await status.getByRole("button", { name: "Actualiser", exact: true }).click();
+  await expect(status.getByRole("status")).toHaveText("Données à actualiser");
+
+  await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Signaler une anomalie", exact: true });
+  await dialog.getByLabel("Titre").fill("Robinet chambre 203");
+  await dialog.getByLabel("Lieu précis").fill("Chambre 203");
+  await dialog.getByLabel("Description du problème").fill("Robinet bloqué");
+  await dialog.getByLabel("Signalé par").fill("Test de connexion");
+  await dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Enregistrement temporairement indisponible.");
+  await dialog.getByRole("button", { name: "Annuler", exact: true }).click();
+  await page.getByRole("button", { name: "Abandonner les modifications", exact: true }).click();
+
+  await expect(status.getByRole("status")).toHaveText("Enregistrement non confirmé");
+  await status.getByRole("button", { name: "Masquer ce message", exact: true }).click();
+  await expect(status.getByRole("status")).toHaveText("Données à actualiser");
+  await expect(status.getByRole("alert")).toContainText("Lecture temporairement indisponible.");
+});
