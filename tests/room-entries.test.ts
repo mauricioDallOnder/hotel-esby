@@ -95,6 +95,7 @@ test("local entries persist, retries are idempotent, changed retries conflict an
   process.env.STORAGE_DRIVER = "local";
   process.env.LOCAL_DATA_DIR = mkdtempSync(path.join(tmpdir(), "hotel-entries-"));
   const entry = roomEntry(); entry.photosData = ["data:image/jpeg;base64,YQ==", "data:image/jpeg;base64,Yg=="];
+  entry.checks.find(c => c.key === "taps")!.result = "probleme";
   const first = await executeEntry(entry);
   assert.deepEqual(await executeEntry(entry), first);
   await assert.rejects(executeEntry({ ...entry, notes: "different" }), { code: 409 });
@@ -162,8 +163,9 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   const old = JSON.stringify(tables.get("Anomalies"));
   context.setup(); assert.equal(JSON.stringify(tables.get("Anomalies")), old);
   const entry = roomEntry();
+  entry.checks.find(c => c.key === "taps")!.result = "probleme";
   const record = { ...entry, photosData: undefined, version: 1, updatedAt: new Date().toISOString(), submissionHash: "a".repeat(64), photoIds: [], photoId: null };
-  const input = { action: "commitEntry", collection: "roomInspections", expectedVersion: 0, record, issue: roomIssue(record, true), photosData: ["data:image/jpeg;base64,YQ=="] };
+  const input = { action: "commitEntry", collection: "roomInspections", expectedVersion: 0, record, issue: roomIssue(record), photosData: ["data:image/jpeg;base64,YQ=="] };
   const result = call(input);
   assert.equal(result.ok, true, result.error);
   assert.deepEqual(call(input), result);

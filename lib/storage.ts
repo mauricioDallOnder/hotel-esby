@@ -262,7 +262,7 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   const collection = entry.type === "createRoomInspection" ? "roomInspections" : entry.type === "createWorkEvent" ? "workEvents" : "familyEvents";
   const change = { collection, record } as EntryChange;
   
-  if (change.collection === "roomInspections") change.issue = roomIssue(change.record, photosData.length > 0);
+  if (change.collection === "roomInspections") change.issue = roomIssue(change.record);
   
   if (storageMode() === "sheets") {
     try {

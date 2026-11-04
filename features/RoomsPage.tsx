@@ -86,7 +86,7 @@ export default function RoomsPage() {
           </Stack>
           <Typography><strong>{rotation.done.length} / {rotation.goal}</strong> chambres contrôlées aujourd’hui{queued.some(r => r.date === day) ? " · dont des envois en attente" : ""}</Typography>
           <LinearProgress aria-label="Objectif du jour" variant="determinate" value={Math.min(100, rotation.done.length / rotation.goal * 100)} sx={{ height: 8, borderRadius: 4 }} />
-          <Typography variant="body2" color="text.secondary">{rotation.covered}/{rooms.length} chambres contrôlées dans les {rotation.interval} derniers jours · {rotation.due.length} à contrôler. Les chambres jamais visitées passent en premier, puis les plus anciennes. Les anomalies n’excluent aucune chambre.</Typography>
+          <Typography variant="body2" color="text.secondary">{rotation.covered}/{rooms.length} chambres contrôlées dans les {rotation.interval} derniers jours · {rotation.due.length} à contrôler. Les chambres en mauvais état sont prioritaires, même récemment visitées. Dans chaque groupe, les chambres jamais contrôlées passent d’abord, puis les plus anciennes. Les contrôles complets d’aujourd’hui et les reports sont respectés.</Typography>
           {settings && <Stack spacing={2}>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField label="Objectif quotidien" type="number" value={config?.dailyGoal || 15} onChange={e => changePreference({ dailyGoal: Math.max(1, Math.min(85, Number(e.target.value) || 1)) })} slotProps={{ htmlInput: { min: 1, max: 85 } }} />
@@ -98,7 +98,7 @@ export default function RoomsPage() {
           {rotation.plan.length ? <>
             <Button variant="contained" size="large" onClick={() => setRoom(rotation.plan[0])} disabled={!config}>Continuer la tournée · chambre {rotation.plan[0]}</Button>
             <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>
-              {rotation.plan.map((n, index) => <Button key={n} variant="outlined" onClick={() => setRoom(n)} aria-label={`Ouvrir la chambre ${n} dans la tournée`} sx={{ minWidth: 60, minHeight: 48 }}><Stack><strong>{n}</strong><Typography variant="caption">{index === 0 ? "Suivante" : latest.has(n) ? `${daysSince(latest.get(n)!.date, day)} j` : "Jamais"}</Typography></Stack></Button>)}
+              {rotation.plan.map((n, index) => <Button key={n} variant="outlined" color={rotation.priorityRooms.includes(n) ? "warning" : "primary"} onClick={() => setRoom(n)} aria-label={`Ouvrir la chambre ${n} dans la tournée`} sx={{ minWidth: 60, minHeight: 48, maxWidth: "100%" }}><Stack><strong>{n}</strong><Typography variant="caption">{index === 0 ? "Suivante" : latest.has(n) ? `${daysSince(latest.get(n)!.date, day)} j` : "Jamais"}</Typography>{rotation.priorityRooms.includes(n) && <Typography variant="caption">Mauvais état · prioritaire</Typography>}</Stack></Button>)}
             </Stack>
           </> : <Alert severity="success">{rotation.done.length >= rotation.goal ? "Objectif du jour atteint. Les chambres restantes vous attendront dans les prochaines tournées." : rotation.due.length ? "Les chambres restantes ont été reportées. Vous pouvez les reprendre ci-dessous." : "Toutes les chambres sont dans l’intervalle cible."}</Alert>}
           {deferred.length > 0 && <details><summary style={{ cursor: "pointer" }}>{deferred.length} chambre(s) reportée(s) aujourd’hui</summary><Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1, mt: 1 }}>{deferred.map(n => <Button key={n} onClick={() => { changePreference({ deferred: deferred.filter(item => item !== n) }); setRoom(n); }}>Reprendre {n}</Button>)}</Stack></details>}
@@ -121,11 +121,12 @@ export default function RoomsPage() {
         <Typography variant="h6" sx={{ mb: 1.5 }}>{g.label} · {g.rooms.length}</Typography>
         <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 1.5 }}>
           {g.rooms.map(n => {
-            const record = latest.get(n), open = openRoomIssues(issues, n), done = rotation.done.includes(n), target = rotation.plan.includes(n);
-            return <Paper key={n} variant="outlined" sx={{ p: 1.5, borderColor: done ? "success.main" : target ? "primary.main" : "divider" }}>
+            const record = latest.get(n), open = openRoomIssues(issues, n), done = rotation.done.includes(n), target = rotation.plan.includes(n), priority = rotation.priorityRooms.includes(n);
+            return <Paper key={n} variant="outlined" sx={{ p: 1.5, borderColor: done ? "success.main" : priority ? "warning.main" : target ? "primary.main" : "divider" }}>
               <Stack spacing={1}>
                 <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}><Typography variant="h4" sx={{ fontWeight: 800 }}>{n}</Typography>{done && <Chip label="Fait" color="success" size="small" />}</Stack>
                 <Typography variant="caption">{record ? `Dernier : ${displayDate(record.date)}` : "Jamais contrôlée"}</Typography>
+                {priority && <Typography variant="caption" color="warning.main" sx={{ fontWeight: 700 }}>Mauvais état · prioritaire</Typography>}
                 <RoomAvailabilityCheckbox room={n} inspection={record} />
                 {record?.occupied === false && <Typography variant="caption">Dernier contrôle · Ménage {cleaningText(record).toLowerCase()}</Typography>}
                 {open.length > 0 && <Chip label={`${open.length} anomalie(s)`} color="warning" size="small" variant="outlined" />}

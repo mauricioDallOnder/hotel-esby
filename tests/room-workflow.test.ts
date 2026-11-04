@@ -20,7 +20,7 @@ const problem = (keys: string[], patch: Partial<RoomEntry> = {}) => entry({ chec
 const saved = (input: RoomEntry): RoomInspection => ({ ...input, version: 1, updatedAt: "2026-10-17T12:00:00Z", submissionHash: "a".repeat(64), photoIds: [], photoId: null });
 const manual = (patch: Partial<Issue> = {}): Issue => ({ id: createId(), version: 1, room: undefined, location: "Chambre 114", title: "Robinet cassé", description: "Mitigeur bloqué", category: "Plomberie", priority: "haute", status: "en_cours", assignee: "Technicien", date: today(), createdAt: "now", updatedAt: "now", reportedBy: "Direction", photoId: null, history: [], ...patch });
 
-test("new checks require an explicit door closer answer, absence is a finding and old drafts gain no invented answer", () => {
+test("new checks require a door closer answer, absence stays in history and old drafts gain no invented answer", () => {
   const input = entry();
   input.checks.find(c => c.key === "door_closer")!.result = "non_verifie";
   assert.equal(roomEntrySchema.safeParse(input).success, false);
