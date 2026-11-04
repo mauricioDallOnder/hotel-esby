@@ -77,6 +77,9 @@ const roomEntryV2Schema = roomFields.extend({
 
 export const applianceCleaningLabels = { propre: "Propre", sale: "Sale", non_verifie: "Non vérifié" } as const;
 const applianceCleaning = z.enum(["propre", "sale", "non_verifie"]).nullable();
+export const roomTemperatureSchema = z.number().finite()
+  .min(-20, "La température doit être comprise entre -20 et 60 °C.")
+  .max(60, "La température doit être comprise entre -20 et 60 °C.");
 
 const roomEntryV3Schema = roomFields.extend({
   occupied: z.boolean(), schemaVersion: z.literal(3).default(3),
@@ -108,6 +111,7 @@ export const roomEntrySchema = roomFields.extend({
   inspectedAt: z.iso.datetime().optional(),
   distinctProblemKeys: z.array(z.string().min(1).max(80)).max(30).optional(),
   issueLinks: z.array(z.object({ key: z.string().min(1).max(80), issueId: z.string().uuid() })).max(30).optional(),
+  temperatureC: roomTemperatureSchema.optional(),
 }).superRefine((v, ctx) => {
   if (v.checks.length !== roomChecks.length || new Set(v.checks.map(c => c.key)).size !== roomChecks.length)
     ctx.addIssue({ code: "custom", path: ["checks"], message: "Vérifiez chaque point une seule fois." });
@@ -154,7 +158,7 @@ export type WorkEvent = WorkEntry & { version: number; updatedAt: string; submis
 
 export const entrySchema = z.union([familyEntrySchema, roomEntrySchema, workEntrySchema]);
 export type FamilyEntry = z.infer<typeof familyEntrySchema>;
-export type RoomEntry = z.infer<typeof roomFields> & { occupied?: boolean | null; schemaVersion?: 2 | 3 | 4; inspectedAt?: string; issueLinks?: { key: string; issueId: string }[]; distinctProblemKeys?: string[]; microwaveCleaning?: z.infer<typeof applianceCleaning>; fridgeCleaning?: z.infer<typeof applianceCleaning>; bugs?: "non" | "oui" | "non_verifie" };
+export type RoomEntry = z.infer<typeof roomFields> & { occupied?: boolean | null; schemaVersion?: 2 | 3 | 4; inspectedAt?: string; issueLinks?: { key: string; issueId: string }[]; distinctProblemKeys?: string[]; microwaveCleaning?: z.infer<typeof applianceCleaning>; fridgeCleaning?: z.infer<typeof applianceCleaning>; bugs?: "non" | "oui" | "non_verifie"; temperatureC?: number };
 export type Entry = FamilyEntry | RoomEntry | WorkEntry;
 
 const legacyRoom = z.string().refine(v => (rooms.includes(v) && v !== "233") || ["111", "112", "113", "213", "313"].includes(v));

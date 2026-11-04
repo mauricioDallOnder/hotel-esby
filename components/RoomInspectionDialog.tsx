@@ -4,20 +4,21 @@ import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogT
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
 import { createId, statuses, today } from "@/lib/domain";
-import { normalizeRoomDraft, roomChecks, roomEntrySchema, roomFindings, roomProblems, type RoomEntry } from "@/lib/rooms";
+import { normalizeRoomDraft, roomChecks, roomEntrySchema, roomFindings, roomProblems, roomTemperatureSchema, type RoomEntry } from "@/lib/rooms";
+import { formatRoomTemperature, parseRoomTemperatureInput } from "@/lib/roomTemperature";
 import { matchesRoomFinding, openRoomIssues, planRoomIssue } from "@/lib/roomIssueMatching";
 import { compressPhoto } from "@/lib/photos";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 import { QuickChoice } from "./QuickChoice";
 
-type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | "" };
+type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | ""; temperatureInput?: string };
 const sections = ["Équipements", "État et ménage", "Résumé"];
 function rememberedActor() { try { return localStorage.getItem("room-inspector") || ""; } catch { return ""; } }
 const yesNo = [{ value: "oui", label: "Oui" }, { value: "non", label: "Non" }] as const;
 const cleanliness = [{ value: "propre", label: "Propre", color: "success" }, { value: "sale", label: "Sale", color: "warning" }] as const;
 
-export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer }: {
-  room: string; nextRoom?: string; onClose: () => void; onSaved: (next: boolean) => void; onDefer: () => void;
+export function RoomInspectionDialog({ room, nextRoom, initialStep = 0, onClose, onSaved, onDefer }: {
+  room: string; nextRoom?: string; initialStep?: 0 | 1 | 2; onClose: () => void; onSaved: (next: boolean) => void; onDefer?: () => void;
 }) {
   const { issues } = useAppContext();
   const { enqueue } = useEntries();
@@ -27,17 +28,21 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const submitting = useRef(false);
   const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
     type: "createRoomInspection", schemaVersion: 4, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
-    cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [],
+    cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [], temperatureInput: "",
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [],
-  }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
+  }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null,
+    temperatureInput: value.temperatureInput ?? (value.temperatureC === undefined ? "" : String(value.temperatureC)),
+  }));
   const value = draft.value;
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState<number>(initialStep);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [compressing, setCompressing] = useState(false);
   const [invalid, setInvalid] = useState<string[]>([]);
   const [showIssues, setShowIssues] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
+  const temperature = parseRoomTemperatureInput(value?.temperatureInput || "");
+  const validTemperature = temperature === undefined || roomTemperatureSchema.safeParse(temperature).success;
   const known = openRoomIssues(issues, room);
   const review: RoomEntry | undefined = value ? { ...value, condition: value.condition || "bon", carpet: value.carpet || "ok" } : undefined;
   const findings = review ? roomFindings(review) : [];
@@ -49,7 +54,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   async function submit(next = false) {
     if (!value || submitting.current) return;
     setError("");
-    const parsed = roomEntrySchema.safeParse({ ...value, inspectedAt: value.inspectedAt || new Date().toISOString() });
+    const parsed = roomEntrySchema.safeParse({ ...value, temperatureC: temperature, inspectedAt: value.inspectedAt || new Date().toISOString() });
     if (!parsed.success) {
       const fields = parsed.error.issues.map(i => i.path.join("."));
       setInvalid(fields);
@@ -61,7 +66,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     }
     setInvalid([]); submitting.current = true; setBusy(true);
     try {
-      draft.update({ ...value, inspectedAt: parsed.data.inspectedAt });
+      draft.update({ ...value, temperatureC: parsed.data.temperatureC, inspectedAt: parsed.data.inspectedAt });
       await enqueue(parsed.data);
       try { localStorage.setItem("room-inspector", parsed.data.actor); } catch { /* Optional convenience. */ }
       await draft.clear(); onSaved(next);
@@ -108,6 +113,9 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <QuickChoice label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} options={[{ value: "oui", label: "Occupée" }, { value: "non", label: "Libre" }]} error={invalidField("occupied")} onChange={v => update({ occupied: v === "oui", cleaning: v === "oui" ? null : value.cleaning })} />
             <QuickChoice label="État général de la chambre" value={value.condition} options={[{ value: "bon", label: "Bon", color: "success" }, { value: "a_revoir", label: "À revoir", color: "warning" }, { value: "mauvais", label: "Mauvais", color: "error" }]} error={invalidField("condition")} onChange={condition => update({ condition })} />
             <Typography variant="caption" color="text.secondary">« Mauvais » donne la priorité à cette chambre dans les prochaines tournées, sans créer d’anomalie à lui seul.</Typography>
+            <TextField label="Température de la chambre (°C)" value={value.temperatureInput || ""} placeholder="Ex. 21,5" error={invalidField("temperatureC") && !validTemperature}
+              onChange={event => update({ temperatureInput: event.target.value })} slotProps={{ htmlInput: { inputMode: "decimal", maxLength: 12 } }}
+              helperText={invalidField("temperatureC") && !validTemperature ? "Saisissez une température entre −20 et 60 °C, par exemple 21,5, ou laissez vide." : "Facultatif. Virgule ou point accepté. Cette mesure ne crée pas d’anomalie."} />
             {value.occupied === false && <QuickChoice label="Nettoyage / ménage" value={value.cleaning} options={[{ value: "faite", label: "Fait", color: "success" }, { value: "non_faite", label: "Non fait", color: "warning" }]} error={invalidField("cleaning")} onChange={cleaning => update({ cleaning })} />}
             <QuickChoice label="Présence de cafards ou nuisibles" value={value.bugs} options={[{ value: "non", label: "Aucun", color: "success" }, { value: "oui", label: "Détectés", color: "error" }]} error={invalidField("bugs")} onChange={bugs => update({ bugs })} />
             <QuickChoice label="État de la moquette" value={value.carpet} options={[{ value: "ok", label: "OK", color: "success" }, { value: "tachee", label: "Tachée", color: "warning" }, { value: "sale", label: "Sale", color: "warning" }]} error={invalidField("carpet")} onChange={carpet => update({ carpet })} />
@@ -120,6 +128,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <TextField required label="Inspecteur" value={value.actor} error={invalidField("actor")} onChange={e => update({ actor: e.target.value })} slotProps={{ htmlInput: { maxLength: 200 } }} helperText="Mémorisé sur cet appareil pour le prochain contrôle." />
             <Button onClick={() => setShowMetadata(!showMetadata)} aria-expanded={showMetadata}>Date : {value.date.split("-").reverse().join("/")} · Modifier</Button>
             {showMetadata && <TextField required label="Date du contrôle" type="date" value={value.date} error={invalidField("date")} onChange={e => update({ date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today() } }} />}
+            <Typography>Température : <strong>{validTemperature ? formatRoomTemperature(temperature) : "À vérifier"}</strong></Typography>
             <Typography variant="h6">Constats pour les anomalies · {findings.length}</Typography>
             {!findings.length && <Alert severity="info">Aucune anomalie automatique à signaler. Les autres constats restent dans l’historique du contrôle.</Alert>}
             {findings.map(finding => {
@@ -156,7 +165,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       </>}
       <Stack direction="row" sx={{ justifyContent: "space-between" }}>
         {step > 0 && <Button disabled={busy || compressing} onClick={() => goStep(step - 1)}>Retour</Button>}
-        <Button disabled={busy || compressing} onClick={onDefer}>Reporter à demain</Button>
+        {onDefer && <Button disabled={busy || compressing} onClick={onDefer}>Reporter à demain</Button>}
       </Stack>
     </DialogActions>
   </Dialog>;

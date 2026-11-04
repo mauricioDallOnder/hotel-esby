@@ -8,7 +8,8 @@ import { RoomHistoryDialog } from "@/components/RoomHistoryDialog";
 import { RoomInspectionDialog } from "@/components/RoomInspectionDialog";
 import { RoomChecklistPrintDialog } from "@/components/RoomChecklistPrintDialog";
 import { displayDate, today } from "@/lib/domain";
-import { cleaningText, latestRoomRecords, roomGroups, rooms, type RoomEntry } from "@/lib/rooms";
+import { cleaningText, roomGroups, rooms, type RoomEntry } from "@/lib/rooms";
+import { roomObservations } from "@/lib/roomObservations";
 import { daysSince, roomRotation } from "@/lib/roomRotation";
 import { openRoomIssues } from "@/lib/roomIssueMatching";
 import { RoomAvailabilityCheckbox } from "@/components/RoomAvailabilityCheckbox";
@@ -45,7 +46,7 @@ export default function RoomsPage() {
   }, []);
   const queued = pending.filter(p => p.entry.type === "createRoomInspection").map(p => p.entry as RoomEntry);
   const history = [...queued, ...roomInspections.filter(i => !queued.some(q => q.id === i.id))];
-  const latest = latestRoomRecords(history.filter(r => r.date <= day));
+  const { latest, history: currentHistory } = roomObservations(roomInspections, pending, day);
   const rotation = roomRotation(history.filter(r => !pending.some(p => p.entry.id === r.id && p.blocked)), day, config?.dailyGoal, config?.intervalDays, deferred);
   const free = rooms.filter(n => roomAvailability(n, workEvents, latest.get(n)).free === true);
   const nextRoom = rotation.plan.find(n => n !== room);
@@ -58,7 +59,7 @@ export default function RoomsPage() {
   }
   async function exportFreeRooms() {
     setExporting(true); setExportError("");
-    try { const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport"); await downloadFreeRoomsReport({ hotelName, history, workEvents }); }
+    try { const { downloadFreeRoomsReport } = await import("@/lib/roomPdfExport"); await downloadFreeRoomsReport({ hotelName, history: currentHistory, workEvents }); }
     catch (error) { setExportError((error as Error).message); }
     finally { setExporting(false); }
   }
