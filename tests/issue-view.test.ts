@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createId, today, type Issue } from "../lib/domain";
-import { defaultIssueFilters, issueAge, lastIntervention, selectIssues } from "../lib/issueView";
+import { defaultIssueFilters, issueAge, issueShortcuts, lastIntervention, selectIssues, type IssueFilters } from "../lib/issueView";
 
 const issue = (patch: Partial<Issue> = {}): Issue => ({ id: createId(), version: 1, title: "Éclairage défectueux", location: "Chambre 204", description: "Ampoule de la salle de bain", category: "Électricité", priority: "normale", status: "ouvert", assignee: "", reportedBy: "Marie", date: "2026-10-10", createdAt: "2026-10-10T10:00:00Z", updatedAt: "2026-10-10T10:00:00Z", photoId: null,
   history: [{ at: "2026-10-10T10:00:00Z", actor: "Marie", note: "Anomalie signalée.", status: "ouvert", priority: "normale", assignee: "" }], ...patch });
@@ -35,6 +35,60 @@ test("status, category, priority, inclusive date range and missing assignee filt
   assert.deepEqual(selectIssues(source, filters).map(i => i.id), [a.id]);
   assert.equal(selectIssues(source, { ...filters, from: "2026-10-11" }).length, 0);
   assert.equal(selectIssues(source, { ...defaultIssueFilters, status: "resolu" }).length, 1);
+});
+
+test("shortcut counts match their results within the current search, dates and category, without changing the source", () => {
+  const assigned = issue({ id: "assigned", priority: "critique", assignee: "Technicien", status: "en_cours" });
+  const missing = issue({ id: "missing", date: "2026-10-12", priority: "normale" });
+  const criticalMissing = issue({ id: "critical-missing", date: "2026-10-11", priority: "critique", assignee: "  " });
+  const source = [missing, assigned, criticalMissing,
+    issue({ priority: "critique", status: "resolu" }),
+    issue({ priority: "critique", location: "Chambre 1204" }),
+    issue({ priority: "critique", date: "2026-10-09" }),
+    issue({ priority: "critique", date: "2026-10-13" }),
+    issue({ priority: "critique", category: "Plomberie" }),
+    issue({ priority: "critique", title: "Prise cassée" }),
+  ];
+  const filters: IssueFilters = { ...defaultIssueFilters, query: "204 eclairage", category: "Électricité", from: "2026-10-10", to: "2026-10-12", sort: "oldest", status: "resolu", priority: "haute", unassigned: true };
+  const originalFilters = { ...filters }, originalSource = structuredClone(source);
+  const shortcuts = issueShortcuts(source, filters);
+  assert.deepEqual(shortcuts.map(s => ({ id: s.id, count: s.count, selected: s.selected })), [
+    { id: "pending", count: 3, selected: false },
+    { id: "critical", count: 2, selected: false },
+    { id: "unassigned", count: 2, selected: false },
+  ]);
+  const expectedIds = [[assigned.id, criticalMissing.id, missing.id], [assigned.id, criticalMissing.id], [criticalMissing.id, missing.id]];
+  for (const [index, shortcut] of shortcuts.entries()) {
+    assert.deepEqual(selectIssues(source, shortcut.filters).map(i => i.id), expectedIds[index]);
+    const { query, from, to, category, sort } = shortcut.filters;
+    assert.deepEqual({ query, from, to, category, sort }, { query: "204 eclairage", from: "2026-10-10", to: "2026-10-12", category: "Électricité", sort: "oldest" });
+  }
+  assert.deepEqual(issueShortcuts(source, { ...filters, from: "2026-10-13" }).map(s => s.count), [0, 0, 0]);
+  assert.deepEqual(filters, originalFilters);
+  assert.deepEqual(source, originalSource);
+});
+
+test("switching shortcuts replaces the previous view and derives the selected state from the actual filters", () => {
+  const assigned = issue({ priority: "critique", assignee: "Technicien" });
+  const missing = issue({ priority: "normale" });
+  const source = [assigned, missing, issue({ priority: "critique", status: "resolu" })];
+  const filters = { ...defaultIssueFilters, query: "204", from: "2026-10-10", to: "2026-10-10" };
+  const critical = issueShortcuts(source, filters)[1];
+  assert.deepEqual(selectIssues(source, critical.filters).map(i => i.id), [assigned.id]);
+  const afterCritical = issueShortcuts(source, critical.filters);
+  assert.deepEqual(afterCritical.filter(s => s.selected).map(s => s.id), ["critical"]);
+  assert.deepEqual(afterCritical[1].filters, critical.filters);
+
+  const unassigned = afterCritical[2];
+  assert.deepEqual(selectIssues(source, unassigned.filters).map(i => i.id), [missing.id]);
+  const afterUnassigned = issueShortcuts(source, unassigned.filters);
+  assert.deepEqual(afterUnassigned.filter(s => s.selected).map(s => s.id), ["unassigned"]);
+  const pending = afterUnassigned[0];
+  assert.deepEqual(pending.filters, filters);
+  assert.equal(selectIssues(source, pending.filters).length, 2);
+  assert.deepEqual(issueShortcuts(source, pending.filters).filter(s => s.selected).map(s => s.id), ["pending"]);
+  assert.deepEqual(issueShortcuts(source, { ...critical.filters, status: "resolu" }).filter(s => s.selected), []);
+  assert.deepEqual(issueShortcuts(source, { ...critical.filters, unassigned: true }).filter(s => s.selected), []);
 });
 
 test("chronological sorting and last intervention use saved dates rather than array position", () => {

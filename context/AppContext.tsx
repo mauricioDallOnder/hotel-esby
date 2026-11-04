@@ -31,6 +31,8 @@ type Context = Data & {
   role: Role;
   busy: boolean;
   error: string;
+  saveError: string;
+  clearSaveError: () => void;
   cachedAt: string;
   refresh: () => Promise<void>;
   mutate: (command: Command) => Promise<Data>;
@@ -63,6 +65,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [cachedAt, setCachedAt] = useState("");
   const hasLoaded = useRef(false);
   const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [busy, setBusy] = useState(false);
   const [password, setPassword] = useState("");
   const [loginRole, setLoginRole] = useState<Role>("employe");
@@ -117,10 +120,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCachedAt(""); // Sucesso na rede! Remove a mensagem amarela.
       setError("");
     } catch (e) {
-      // Se a rede falhar, mas já temos dados do cache, falha silenciosamente sem mostrar erro vermelho.
-      if (!hasLoaded.current) {
-        setError(e instanceof Error ? e.message : "Connexion impossible.");
-      }
+      // Keep the current records visible, but never present a failed refresh as up to date.
+      setError(e instanceof Error ? e.message : "Connexion impossible.");
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -181,6 +182,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ password, role: loginRole }),
       });
       setPassword("");
+      setSaveError("");
       setSession(await request("/api/session"));
       await refresh(false);
     } catch (e) {
@@ -195,7 +197,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw new Error("Un enregistrement est déjà en cours.");
     inFlight.current = true;
     setBusy(true);
-    setError("");
+    setSaveError("");
     try {
       const result: Data = await request("/api/hotel", {
         method: command.type === "updateIssue" ? "PATCH" : "POST",
@@ -204,6 +206,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       setData(current => mergeHotel(current, result));
       return result;
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Enregistrement non confirmé.");
+      throw e;
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -236,6 +241,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setLoaded(false);
     hasLoaded.current = false;
     setCachedAt("");
+    setError("");
+    setSaveError("");
     setData({ issues: [], inspections: [], mode: "local" });
     setSession(await request("/api/session"));
   }
@@ -329,6 +336,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         role: session.role!,
         busy,
         error,
+        saveError,
+        clearSaveError: () => setSaveError(""),
         cachedAt,
         refresh,
         mutate,

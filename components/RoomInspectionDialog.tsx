@@ -35,9 +35,13 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [compressing, setCompressing] = useState(false);
-  const [invalid, setInvalid] = useState<string[]>([]);
+  const [validationAttempted, setValidationAttempted] = useState(false);
   const [showIssues, setShowIssues] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
+  // After the first attempt, errors describe the current draft, including conditional fields.
+  const validation = validationAttempted && value
+    ? roomEntrySchema.safeParse({ ...value, inspectedAt: value.inspectedAt || undefined }) : undefined;
+  const invalid = validation && !validation.success ? validation.error.issues.map(issue => issue.path.join(".")) : [];
   const known = openRoomIssues(issues, room);
   const review: RoomEntry | undefined = value ? { ...value, condition: value.condition || "bon", carpet: value.carpet || "ok" } : undefined;
   const findings = review ? roomFindings(review) : [];
@@ -52,14 +56,13 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     const parsed = roomEntrySchema.safeParse({ ...value, inspectedAt: value.inspectedAt || new Date().toISOString() });
     if (!parsed.success) {
       const fields = parsed.error.issues.map(i => i.path.join("."));
-      setInvalid(fields);
+      setValidationAttempted(true);
       goStep(fields.some(f => f.startsWith("checks")) ? 0 : fields.some(f => !["actor", "date", "notes"].includes(f)) ? 1 : 2);
       setShowMetadata(true);
-      setError("Il reste des points à vérifier. Aucun contrôle n’a été enregistré.");
       setTimeout(() => content.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0);
       return;
     }
-    setInvalid([]); submitting.current = true; setBusy(true);
+    setValidationAttempted(false); submitting.current = true; setBusy(true);
     try {
       draft.update({ ...value, inspectedAt: parsed.data.inspectedAt });
       await enqueue(parsed.data);
@@ -87,6 +90,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       <Stack direction="row" spacing={0.5} role="navigation" aria-label="Étapes du contrôle">{sections.map((section, index) => <Button key={section} disabled={busy || compressing} onClick={() => goStep(index)} variant={step === index ? "contained" : "text"} aria-current={step === index ? "step" : undefined} sx={{ flex: 1, px: 0.5 }}>{index + 1}. {section}</Button>)}</Stack>
     </DialogTitle>
     <DialogContent ref={content} dividers sx={{ px: { xs: 2, sm: 3 } }}>
+      {invalid.length > 0 && <Alert severity="error" sx={{ mb: 2 }}>Il reste des points à vérifier. Aucun contrôle n’a été enregistré.</Alert>}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {draft.error && <Alert severity="error">{draft.error}</Alert>}
       {!value ? <Typography>Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy || compressing} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>

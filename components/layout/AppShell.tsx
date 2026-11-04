@@ -1,6 +1,5 @@
 "use client";
 
-import { SyncStatus } from "@/context/EntriesContext";
 import { useState } from "react";
 
 import Box from "@mui/material/Box";
@@ -70,7 +69,6 @@ export function AppShell({ children }: AppShellProps) {
             overflowX: "hidden",
           }}
         >
-          <SyncStatus />
           {children}
         </Container>
       </Box>

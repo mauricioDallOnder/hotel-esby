@@ -8,6 +8,22 @@ export type IssueFilters = {
   sort: "priority" | "oldest" | "recent" | "updated";
 };
 export const defaultIssueFilters: IssueFilters = { query: "", status: "pending", priority: "all", category: "all", unassigned: false, from: "", to: "", sort: "recent" };
+export function issueShortcuts(issues: Issue[], filters: IssueFilters) {
+  const presets = [
+    { id: "pending", label: "Non résolues", priority: "all", unassigned: false },
+    { id: "critical", label: "Critiques ouvertes", priority: "critique", unassigned: false },
+    { id: "unassigned", label: "Sans responsable", priority: "all", unassigned: true },
+  ] as const;
+  return presets.map(preset => {
+    // Each view replaces only its own constraints; the user's search scope stays intact.
+    const next: IssueFilters = { ...filters, status: "pending", priority: preset.priority, unassigned: preset.unassigned };
+    return {
+      id: preset.id, label: preset.label, filters: next,
+      count: selectIssues(issues, next).length,
+      selected: filters.status === next.status && filters.priority === next.priority && filters.unassigned === next.unassigned,
+    };
+  });
+}
 export function issueAge(issue: Pick<Issue, "date">, day: string) {
   const age = daysSince(issue.date, day);
   return Number.isFinite(age) ? Math.max(0, age) : 0;
