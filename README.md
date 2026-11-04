@@ -1,33 +1,22 @@
 # Hôtel Contrôle
 
-## Ocupação rápida e temperatura dos quartos
+## Ocupação rápida dos quartos
 
-- **Occupation des chambres** (`/occupation`): mostra os 85 quartos por andar,
-  com busca, filtros e totais de ocupados, livres e ainda não informados. Marcar
-  **Occupée** registra o quarto como ocupado; desmarcar registra como livre.
-  Uma caixa com traço indica estado desconhecido, com a ação **Marquer libre**
-  para informar diretamente que o quarto está livre. As alterações são salvas
-  automaticamente e usam o mesmo acompanhamento de disponibilidade do checklist.
-- **Températures des chambres** (`/temperatures`): mostra todos os quartos e a
-  última temperatura informada para cada um, com a data da medição. Permite buscar
-  por quarto, filtrar por andar ou por presença de medição e abrir o controle para
-  registrar uma nova leitura. Um controle posterior sem temperatura não apaga a
-  medição anterior; a data original continua visível.
-- No controle, em **État et ménage**, o campo opcional **Température de la chambre
-  (°C)** aceita vírgula ou ponto decimal, inclusive zero, de −20 a 60 °C. O valor
-  aparece no resumo e no histórico. Deixar o campo vazio significa não informado;
-  não há valor padrão. Temperatura não cria anomalia nem altera a prioridade da
-  rotação.
+**Occupation des chambres** (`/occupation`) mostra os 85 quartos por andar,
+com busca, filtros e totais de ocupados, livres e ainda não informados. Marcar
+**Occupée** registra o quarto como ocupado; desmarcar registra como livre.
+Uma caixa com traço indica estado desconhecido, com a ação **Marquer libre**
+para informar diretamente que o quarto está livre. As alterações são salvas
+automaticamente e usam o mesmo acompanhamento de disponibilidade do checklist.
 
-Os rascunhos preservam o texto digitado e a fila mantém os registros feitos sem
-conexão. As novas telas indicam os envios pendentes e excluem controles bloqueados
-ou com data futura da situação atual. A atualização de ocupação não cria um
-controle nem uma anomalia.
+A fila mantém as alterações feitas sem conexão. A tela indica os envios
+pendentes e exclui controles bloqueados ou com data futura da situação atual.
+A atualização de ocupação não cria um controle nem uma anomalia. Não exige
+coluna nova, migração de dados ou alteração adicional no Apps Script.
 
-O campo opcional `temperatureC` pertence ao schema v4; os payloads e hashes dos
-controles antigos sem temperatura permanecem iguais. O armazenamento local e o
-JSON já usado pelo Apps Script preservam a medição, sem coluna nova, migração de
-dados ou alteração adicional no Apps Script neste PR.
+O controle de temperatura foi retirado. A API conserva apenas a compatibilidade
+com o campo legado de eventuais envios da prévia, para preservar seus hashes e
+recibos em reenvios. Não há coleta nem exibição de temperatura na interface.
 
 ## Anomalias do controle e prioridade dos quartos em mau estado
 

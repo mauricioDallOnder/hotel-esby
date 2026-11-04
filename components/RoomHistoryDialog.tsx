@@ -9,7 +9,6 @@ import { displayDate, issuePhotoIds, statuses, type Issue } from "@/lib/domain";
 import { applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels, resultLabels, roomChecks, roomProblems, roomRecordTime, type RoomEntry, type RoomInspection } from "@/lib/rooms";
 import { openRoomIssues } from "@/lib/roomIssueMatching";
 import { completeRoomInspection } from "@/lib/roomRotation";
-import { formatRoomTemperature } from "@/lib/roomTemperature";
 
 type Record = RoomEntry | RoomInspection;
 function Result({ label, text, status }: { label: string; text: string; status: "ok" | "bad" | "neutral" }) {
@@ -72,7 +71,6 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
         <Typography>Inspecteur : {record.actor}</Typography>
         <Chip sx={{ alignSelf: "flex-start" }} label={"updatedAt" in record ? "Enregistré sur le serveur" : "En attente d’envoi"} color={"updatedAt" in record ? "success" : "warning"} variant="outlined" />
         <Result label="Chambre occupée" text={record.occupied === true ? "Oui" : record.occupied === false ? "Non" : "Non renseignée"} status="neutral" />
-        <Result label="Température" text={formatRoomTemperature(record.temperatureC)} status="neutral" />
         <Result label="État général" text={conditionLabels[record.condition]} status={record.condition === "bon" ? "ok" : "bad"} />
         <Result label="Ménage" text={cleaningText(record)} status={record.occupied === true || !record.cleaning ? "neutral" : record.cleaning === "faite" ? "ok" : "bad"} />
         <Typography variant="h6">Constats lors de cette visite</Typography>

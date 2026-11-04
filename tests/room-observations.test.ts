@@ -3,7 +3,6 @@ import { test } from "node:test";
 import { createId } from "../lib/domain";
 import type { PendingEntry } from "../lib/entryQueue";
 import { roomObservations } from "../lib/roomObservations";
-import { latestRoomTemperatures } from "../lib/roomTemperature";
 import { roomChecks, type RoomEntry, type RoomInspection } from "../lib/rooms";
 import { roomAvailability } from "../lib/work";
 
@@ -50,19 +49,4 @@ test("accepted offline controls appear once and a blocked replay cannot hide a s
   const blockedReplay = roomObservations([record], [{ entry: entry({ id: record.id }), blocked: true }], day);
   assert.equal(blockedReplay.latest.get("101"), record);
   assert.equal(blockedReplay.pendingIds.size, 0);
-});
-
-test("a new occupancy observation leaves the last temperature visible and blocked measurements do not replace it", () => {
-  const measurement = saved(entry({ date: "2026-11-03", temperatureC: 0 }));
-  const withoutMeasurement = entry({ occupied: false });
-  const blockedMeasurement = entry({ temperatureC: 25, inspectedAt: "2026-11-04T10:00:00.000Z" });
-  const current = roomObservations([measurement], [{ entry: withoutMeasurement }, { entry: blockedMeasurement, blocked: true }], day);
-  assert.equal(roomAvailability("101", [], current.latest.get("101")).free, true);
-  const temperatures = latestRoomTemperatures(current.history, day);
-  assert.equal(temperatures.get("101")?.id, measurement.id);
-  assert.equal(temperatures.get("101")?.temperatureC, 0);
-  assert.equal(current.pendingIds.has(measurement.id), false);
-  const accepted = roomObservations([measurement], [{ entry: withoutMeasurement }, { entry: blockedMeasurement }], day);
-  assert.equal(latestRoomTemperatures(accepted.history, day).get("101")?.id, blockedMeasurement.id);
-  assert.equal(accepted.pendingIds.has(blockedMeasurement.id), true);
 });

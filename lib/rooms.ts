@@ -77,9 +77,6 @@ const roomEntryV2Schema = roomFields.extend({
 
 export const applianceCleaningLabels = { propre: "Propre", sale: "Sale", non_verifie: "Non vérifié" } as const;
 const applianceCleaning = z.enum(["propre", "sale", "non_verifie"]).nullable();
-export const roomTemperatureSchema = z.number().finite()
-  .min(-20, "La température doit être comprise entre -20 et 60 °C.")
-  .max(60, "La température doit être comprise entre -20 et 60 °C.");
 
 const roomEntryV3Schema = roomFields.extend({
   occupied: z.boolean(), schemaVersion: z.literal(3).default(3),
@@ -111,7 +108,8 @@ export const roomEntrySchema = roomFields.extend({
   inspectedAt: z.iso.datetime().optional(),
   distinctProblemKeys: z.array(z.string().min(1).max(80)).max(30).optional(),
   issueLinks: z.array(z.object({ key: z.string().min(1).max(80), issueId: z.string().uuid() })).max(30).optional(),
-  temperatureC: roomTemperatureSchema.optional(),
+  // Legacy preview payloads must keep their original hash when an offline save is retried.
+  temperatureC: z.number().finite().min(-20).max(60).optional(),
 }).superRefine((v, ctx) => {
   if (v.checks.length !== roomChecks.length || new Set(v.checks.map(c => c.key)).size !== roomChecks.length)
     ctx.addIssue({ code: "custom", path: ["checks"], message: "Vérifiez chaque point une seule fois." });

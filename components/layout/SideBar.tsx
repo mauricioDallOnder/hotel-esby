@@ -21,7 +21,6 @@ const menuItems = [
     path: "/checklist",
   },
   { label: "Occupation des chambres", path: "/occupation" },
-  { label: "Températures des chambres", path: "/temperatures" },
   { label: "Absences et départs", path: "/familles" },
   
   {
