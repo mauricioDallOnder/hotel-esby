@@ -20,6 +20,7 @@ const menuItems = [
     label: "Checklist des chambres",
     path: "/checklist",
   },
+  { label: "Occupation des chambres", path: "/occupation" },
   { label: "Absences et départs", path: "/familles" },
   
   {

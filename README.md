@@ -1,5 +1,23 @@
 # Hôtel Contrôle
 
+## Ocupação rápida dos quartos
+
+**Occupation des chambres** (`/occupation`) mostra os 85 quartos por andar,
+com busca, filtros e totais de ocupados, livres e ainda não informados. Marcar
+**Occupée** registra o quarto como ocupado; desmarcar registra como livre.
+Uma caixa com traço indica estado desconhecido, com a ação **Marquer libre**
+para informar diretamente que o quarto está livre. As alterações são salvas
+automaticamente e usam o mesmo acompanhamento de disponibilidade do checklist.
+
+A fila mantém as alterações feitas sem conexão. A tela indica os envios
+pendentes e exclui controles bloqueados ou com data futura da situação atual.
+A atualização de ocupação não cria um controle nem uma anomalia. Não exige
+coluna nova, migração de dados ou alteração adicional no Apps Script.
+
+O controle de temperatura foi retirado. A API conserva apenas a compatibilidade
+com o campo legado de eventuais envios da prévia, para preservar seus hashes e
+recibos em reenvios. Não há coleta nem exibição de temperatura na interface.
+
 ## Anomalias do controle e prioridade dos quartos em mau estado
 
 O **Contrôle des chambres** cria uma anomalia automática somente quando se marca
