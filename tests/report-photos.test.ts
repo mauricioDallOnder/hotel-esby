@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inflateSync } from "node:zlib";
-import { createId, type Issue } from "../lib/domain";
+import { applyCommand, createId, issueResponsible, monthlySummary, type Issue } from "../lib/domain";
 import { buildReport } from "../lib/pdfExport";
 
 const date = "2026-10-20";
@@ -51,6 +51,35 @@ function pages(doc: Report) {
 function imageCount(content: ReturnType<typeof pages>) {
   return content.reduce((count, page) => count + [...page.stream.matchAll(/\/I\d+\s+Do\b/g)].length, 0);
 }
+
+test("reports keep the reporter responsible and preserve the real author of each intervention", async () => {
+  const legacy = issue({ reportedBy: "Marie", assignee: "Technicien", photoIds: [], history: [
+    { ...historyEvent(`${date}T10:00:00Z`, "ouvert"), assignee: "Technicien" },
+  ] });
+  const original = structuredClone(legacy);
+  const change = applyCommand({ issues: [legacy], inspections: [] }, {
+    type: "updateIssue", id: legacy.id, version: legacy.version, actor: "Salima",
+    note: "Ampoule vérifiée, remplacement en cours.", status: "en_cours",
+    fields: { title: legacy.title, location: legacy.location, description: legacy.description,
+      category: legacy.category, priority: legacy.priority, assignee: "Technicien" },
+  }, `${date}T14:00:00Z`);
+  assert.equal(change.collection, "issues");
+  if (change.collection !== "issues") throw new Error("Expected an issue update");
+  const updated = change.record, snapshot = structuredClone(updated);
+  assert.equal(issueResponsible(updated), "Marie");
+  const summary = monthlySummary({ issues: [updated], inspections: [] }, date.slice(0, 7));
+  assert.equal(summary.interventions.length, 1);
+  assert.equal(summary.interventions[0].event.actor, "Salima");
+  assert.equal(issueResponsible(summary.interventions[0].issue), "Marie");
+  assert.deepEqual(updated.history[0], original.history[0]);
+  assert.equal(updated.history[0].assignee, "Technicien");
+  for (const kind of ["daily", "monthly"] as const) {
+    const doc = await buildReport(options([updated], kind));
+    assert.ok(pages(doc).some(page => page.text.includes(updated.title)));
+    assert.deepEqual(updated, snapshot, `${kind} export must not rewrite authors or history`);
+  }
+  assert.deepEqual(legacy, original);
+});
 
 test("anomaly reports draw all three indexed photos when the legacy photoId is null", async () => {
   const record = issue(), calls: number[] = [];

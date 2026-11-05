@@ -1,4 +1,4 @@
-import type { Issue } from "./domain";
+import { issueResponsible, type Issue } from "./domain";
 import { normalizeIssueText } from "./roomIssueMatching";
 import { daysSince } from "./roomRotation";
 
@@ -36,10 +36,10 @@ export function selectIssues(issues: Issue[], filters: IssueFilters) {
     if (filters.status !== "all" && (filters.status === "pending" ? issue.status === "resolu" : issue.status !== filters.status)) return false;
     if (filters.priority !== "all" && issue.priority !== filters.priority) return false;
     if (filters.category !== "all" && issue.category !== filters.category) return false;
-    if (filters.unassigned && issue.assignee.trim()) return false;
+    if (filters.unassigned && issueResponsible(issue)) return false;
     if (filters.from && issue.date < filters.from || filters.to && issue.date > filters.to) return false;
     if (!words.length) return true;
-    const text = normalizeIssueText([issue.room, issue.title, issue.location, issue.description, issue.category, issue.assignee, issue.reportedBy, ...issue.history.map(e => `${e.note} ${e.actor}`)].join(" "));
+    const text = normalizeIssueText([issue.room, issue.title, issue.location, issue.description, issue.category, issueResponsible(issue), issue.assignee, issue.reportedBy, ...issue.history.map(e => `${e.note} ${e.actor} ${e.assignee || ""}`)].join(" "));
     const tokens = new Set(text.split(" "));
     return words.every(word => /^\d+$/.test(word) ? tokens.has(word) : text.includes(word));
   }).sort((a, b) => {

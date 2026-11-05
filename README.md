@@ -1,5 +1,20 @@
 # Hôtel Contrôle
 
+## Responsável pela anomalia
+
+Ao sinalizar uma anomalia, preencha apenas **Signalé par**: essa pessoa passa a
+ser automaticamente a responsável. O campo separado **Responsable de
+l’intervention** foi retirado. Nas anomalias criadas pelo controle de quartos,
+o responsável é o inspetor que registrou o controle.
+
+Ao acrescentar um acompanhamento, **Intervention saisie par** identifica quem
+registrou aquela intervenção. Esse nome fica no histórico, sem substituir o
+autor da sinalização como responsável pela anomalia. Registros antigos mantêm
+seu histórico; quando não há nome de quem sinalizou, o responsável anteriormente
+gravado continua sendo usado como referência.
+
+Esta alteração não exige migração nem atualização adicional do Google Apps Script.
+
 ## Utilização mais simples no celular
 
 - A checkbox **Occupée** tem o mesmo significado em **Occupation des chambres**
@@ -102,7 +117,7 @@ atualização do Apps Script e preserva a exportação existente de quartos livr
   é possível escolher a ordenação por antiguidade, prioridade ou última atualização.
 - Cartões compactos com local, idade do signalement, responsável e último acompanhamento.
   Fotos são carregadas ao abrir a galeria; a lista mostra 24 registros por vez.
-- Ao abrir um acompanhamento como Direction, estado, responsável, nome e nota ficam
+- Ao abrir um acompanhamento como Direction, estado, autor da intervenção e nota ficam
   primeiro. A ficha, fotos e histórico podem ser expandidos. Estados e prioridades
   usam botões; o formulário avisa antes de descartar alterações não salvas.
   O perfil Employé continua podendo consultar e criar anomalias; só Direction
