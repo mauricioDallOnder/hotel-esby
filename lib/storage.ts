@@ -252,6 +252,9 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   const entry = parseEntry(input, legacy);
   if (entry.type === "createRoomInspection" && entry.date > today())
     throw new DomainError("La date du contrôle ne peut pas être dans le futur.");
+  if (entry.type === "createWorkEvent" && entry.kind === "cafardFollowup" &&
+    [entry.date, entry.detectedOn, entry.treatedOn, entry.resolvedOn].some(date => date && date > today()))
+    throw new DomainError("Les dates du suivi des cafards ne peuvent pas être dans le futur.");
     
   const submissionHash = createHash("sha256").update(JSON.stringify(entry)).digest("hex");
   const { photosData, ...fields } = entry.type === "createRoomInspection" ? entry : { ...entry, photosData: [] };

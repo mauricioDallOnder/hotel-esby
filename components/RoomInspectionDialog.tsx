@@ -114,6 +114,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <Typography variant="caption" color="text.secondary">« Mauvais » donne la priorité à cette chambre dans les prochaines tournées, sans créer d’anomalie à lui seul.</Typography>
             {value.occupied === false && <QuickChoice label="Nettoyage / ménage" value={value.cleaning} options={[{ value: "faite", label: "Fait", color: "success" }, { value: "non_faite", label: "Non fait", color: "warning" }]} error={invalidField("cleaning")} onChange={cleaning => update({ cleaning })} />}
             <QuickChoice label="Présence de cafards ou nuisibles" value={value.bugs} options={[{ value: "non", label: "Aucun", color: "success" }, { value: "oui", label: "Détectés", color: "error" }]} error={invalidField("bugs")} onChange={bugs => update({ bugs })} />
+            {value.bugs === "oui" && <Alert severity="info">Après enregistrement, cette détection apparaîtra dans « Suivi des cafards » pour noter le traitement et les vérifications.</Alert>}
             <QuickChoice label="État de la moquette" value={value.carpet} options={[{ value: "ok", label: "OK", color: "success" }, { value: "tachee", label: "Tachée", color: "warning" }, { value: "sale", label: "Sale", color: "warning" }]} error={invalidField("carpet")} onChange={carpet => update({ carpet })} />
             {value.carpet && value.carpet !== "ok" && <TextField label="Précisez les taches ou salissures" multiline minRows={2} value={value.carpetNotes} onChange={e => update({ carpetNotes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />}
             <QuickChoice label="Micro-ondes présent ?" value={value.microwave} options={[...yesNo]} error={invalidField("microwave")} onChange={microwave => update({ microwave })} />
@@ -125,6 +126,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <Button onClick={() => setShowMetadata(!showMetadata)} aria-expanded={showMetadata}>Date : {value.date.split("-").reverse().join("/")} · Modifier</Button>
             {showMetadata && <TextField required label="Date du contrôle" type="date" value={value.date} error={invalidField("date")} onChange={e => update({ date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today() } }} />}
             <Typography variant="h6">Constats pour les anomalies · {findings.length}</Typography>
+            {value.bugs === "oui" && <Alert severity="info">Cafards détectés : le suivi sera ajouté dans « Suivi des cafards ».</Alert>}
             {!findings.length && <Alert severity="info">Aucune anomalie automatique à signaler. Les autres constats restent dans l’historique du contrôle.</Alert>}
             {findings.map(finding => {
               const linked = value.distinctProblemKeys?.includes(finding.key) ? undefined : known.find(i => value.issueLinks?.some(link => link.key === finding.key && link.issueId === i.id)) || known.find(i => matchesRoomFinding(i, finding));

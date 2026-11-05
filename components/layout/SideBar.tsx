@@ -31,6 +31,7 @@ const menuItems = [
     label: "Anomalies & suivi",
     path: "/anomalies",
   },
+  { label: "Suivi des cafards", path: "/cafards" },
   {
     label: "Rapports & bilan mensuel",
     path: "/relatorios",

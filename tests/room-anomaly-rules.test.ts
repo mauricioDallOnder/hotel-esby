@@ -101,7 +101,7 @@ function assertSavedWithoutAnomaly(receipt: EntryChange, input: RoomEntry) {
   assert.deepEqual(receipt.record.relatedIssueIds, []);
 }
 
-test("only Problème on the seven allowed checks or detected pests triggers an automatic anomaly", () => {
+test("only Problème on the seven allowed repair checks triggers an automatic anomaly", () => {
   for (const key of allowed) for (const result of ["ok", "non_verifie", "absent", "probleme"] as const) {
     const record = saved(entry({ checks: checks([key], result) }));
     const expected = result === "probleme" ? [key] : [];
@@ -111,8 +111,9 @@ test("only Problème on the seven allowed checks or detected pests triggers an a
   }
   for (const bugs of [undefined, "non", "non_verifie", "oui"] as const) {
     const record = saved(entry({ bugs }));
-    assert.deepEqual(roomFindings(record).map(finding => finding.key), bugs === "oui" ? ["bugs"] : []);
-    assert.equal(!!roomIssue(record), bugs === "oui");
+    assert.deepEqual(roomFindings(record), []);
+    assert.equal(roomIssue(record), undefined);
+    assert.equal(roomProblems(record).includes("Cafards / nuisibles détectés"), bugs === "oui");
   }
 });
 
@@ -136,14 +137,14 @@ test("mixed controls keep only eligible findings in the anomaly and retain all o
   const record = saved({ ...observationsOnly(), checks: checks([...excluded, "taps", "lights", "damage"]), bugs: "oui" });
   const original = structuredClone(record);
   const issue = roomIssue(record)!;
-  assert.deepEqual(issue.roomFindings?.map(finding => finding.key), ["taps", "lights", "damage", "bugs"]);
+  assert.deepEqual(issue.roomFindings?.map(finding => finding.key), ["taps", "lights", "damage"]);
   assert.match(issue.description, /Robinets fonctionnels : Problème/);
-  assert.match(issue.description, /Cafards \/ nuisibles détectés/);
+  assert.doesNotMatch(issue.description, /Cafards \/ nuisibles détectés/);
   assert.ok(issue.description.includes(record.notes));
   assert.doesNotMatch(issue.description, /Lit en bon état|Matelas|Minibar|Ferme-porte|Poignée|Mauvais état|Moquette|Ménage|Micro-ondes/);
   assert.deepEqual(issue.photoIds, record.photoIds);
   const history = roomProblems(record).join("\n");
-  for (const text of ["Mauvais état", "Lit en bon état", "Matelas en bon état", "Minibar", "Ferme-porte", "Poignée", "Moquette", "Ménage non fait", "Micro-ondes sale"])
+  for (const text of ["Cafards / nuisibles détectés", "Mauvais état", "Lit en bon état", "Matelas en bon état", "Minibar", "Ferme-porte", "Poignée", "Moquette", "Ménage non fait", "Micro-ondes sale"])
     assert.ok(history.includes(text), text);
   assert.deepEqual(record, original);
 });

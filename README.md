@@ -1,5 +1,39 @@
 # Hôtel Contrôle
 
+## Suivi des cafards
+
+O menu **Suivi des cafards** (`/cafards`) reúne uma ficha por quarto, com os estados
+**À vérifier**, **Cafards présents**, **Produit appliqué** e **Résolu**. A ficha
+permite registrar a data da detecção, a aplicação do produto, a data de cada
+atualização e a resolução, além do produto e das observações. O histórico
+preserva os acompanhamentos anteriores e as aplicações já registradas.
+
+Ao marcar **Détectés** em cafards/nuisibles no controle do quarto, o próprio
+controle alimenta esse menu. Essa resposta não cria uma nova anomalia. Outros
+defeitos elegíveis do mesmo controle continuam indo para **Anomalies & suivi**.
+Marcar **Aucun** no controle não encerra um acompanhamento: confirme **Résolu**
+na ficha. Uma detecção posterior à resolução reabre o acompanhamento; um envio
+antigo que chega atrasado não deve reabrir um caso resolvido mais recentemente.
+
+As fichas iniciais são montadas a partir das anomalias já carregadas pelo
+aplicativo **após o login**. O código público não contém uma cópia dos registros,
+observações, datas ou identificadores operacionais da planilha. As datas de
+aplicação só aparecem quando há registro explícito; as desconhecidas ficam em
+branco. Uma aplicação de gel, sozinha, deixa o caso **À vérifier**. A resolução
+exige uma verificação negativa explícita, e uma observação posterior de presença
+mantém o caso ativo.
+
+As anomalias antigas são preservadas, pois várias também descrevem reparos de
+hidráulica, equipamentos ou outros problemas. Seus dados alimentam o histórico
+inicial do acompanhamento, sem excluir nem reescrever os registros originais.
+Os novos acompanhamentos explícitos prevalecem sobre essa referência inicial.
+
+As atualizações usam a fila existente, inclusive sem conexão, e são salvas como
+eventos imutáveis de `cafardFollowup` em **Suivi quotidien**. Há controle de
+revisão e reenvio idempotente. A interface mostra os envios pendentes ou recusados.
+O Apps Script atual já oferece `commitWorkEvent` com essas garantias; esta
+alteração não exige nova aba, migração nem atualização adicional do script.
+
 ## Responsável pela anomalia
 
 Ao sinalizar uma anomalia, preencha apenas **Signalé par**: essa pessoa passa a
@@ -58,7 +92,8 @@ recibos em reenvios. Não há coleta nem exibição de temperatura na interface.
 O **Contrôle des chambres** cria uma anomalia automática somente quando se marca
 **Problème** em **Robinets fonctionnels**, **Interrupteurs fonctionnels**,
 **Aucune fuite d’eau**, **Éclairage fonctionnel**, **Détecteur de fumée fonctionnel**,
-**Rien de cassé** ou **Fenêtre fonctionnelle**, ou **Détectés** em cafards/nuisibles.
+**Rien de cassé** ou **Fenêtre fonctionnelle**. **Détectés** em cafards/nuisibles
+alimenta o menu **Suivi des cafards**, sem gerar uma anomalia.
 **Absent** não dispara uma anomalia automática. Lit, matelas, minibar, ferme-porte,
 poignée de porte, estado geral, ménage, moquette, limpeza dos equipamentos,
 observações e fotos ficam no controle; isoladamente não geram anomalias.

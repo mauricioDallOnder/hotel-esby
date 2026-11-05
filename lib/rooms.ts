@@ -130,16 +130,32 @@ export const roomEntrySchema = roomFields.extend({
 
 export const workEntrySchema = z.object({
   type: z.literal("createWorkEvent"), id: z.string().uuid(),
-  kind: z.enum(["roomAvailability", "familyComment", "dailyTask"]),
+  kind: z.enum(["roomAvailability", "familyComment", "dailyTask", "cafardFollowup"]),
   targetId: z.string().min(1).max(80), expectedRevision: z.number().int().min(0),
   room: z.union([roomSchema, z.literal("")]), date: z.iso.date(), actor: required,
   notes: note, occurredAt: z.iso.datetime(),
   free: z.boolean().optional(), done: z.boolean().optional(), deleted: z.boolean().optional(),
   familyEventId: z.string().uuid().optional(),
+  cafardStatus: z.enum(["a_verifier", "signale", "traite", "resolu"]).optional(),
+  detectedOn: z.iso.date().nullable().optional(), treatedOn: z.iso.date().nullable().optional(),
+  resolvedOn: z.iso.date().nullable().optional(), product: z.string().trim().max(200).optional(),
 }).superRefine((v, ctx) => {
   const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
   if (v.kind === "roomAvailability") {
     if (!v.room || v.targetId !== v.room || typeof v.free !== "boolean") invalid("free", "Choisissez la disponibilité d’une chambre connue.");
+  } else if (v.kind === "cafardFollowup") {
+    if (!v.room || v.targetId !== v.room) invalid("room", "Choisissez la chambre concernée par ce suivi.");
+    if (!v.cafardStatus) invalid("cafardStatus", "Choisissez l’état du suivi des cafards.");
+    for (const field of ["detectedOn", "treatedOn", "resolvedOn"] as const) {
+      if (v[field] === undefined) invalid(field, "Indiquez une date ou laissez-la explicitement inconnue.");
+      if (v[field] && v[field] > v.date) invalid(field, "Cette date ne peut pas suivre la date de mise à jour.");
+    }
+    if (v.detectedOn && v.treatedOn && v.treatedOn < v.detectedOn) invalid("treatedOn", "L’application du produit ne peut pas précéder la détection.");
+    if (v.resolvedOn && ((v.detectedOn && v.resolvedOn < v.detectedOn) || (v.treatedOn && v.resolvedOn < v.treatedOn)))
+      invalid("resolvedOn", "La résolution doit suivre la détection et l’application du produit.");
+    if (v.cafardStatus === "traite" && !v.treatedOn) invalid("treatedOn", "Renseignez la date d’application du produit.");
+    if (v.cafardStatus === "resolu" && !v.resolvedOn) invalid("resolvedOn", "Renseignez la date de résolution.");
+    if (v.cafardStatus !== "resolu" && v.resolvedOn) invalid("resolvedOn", "Un suivi en cours ne peut pas avoir de date de résolution.");
   } else {
     if (!z.string().uuid().safeParse(v.targetId).success) invalid("targetId", "Identifiant invalide.");
     if (!v.notes.trim()) invalid("notes", "Saisissez un texte.");
@@ -149,6 +165,8 @@ export const workEntrySchema = z.object({
   if (v.kind !== "dailyTask" && (v.done !== undefined || v.deleted !== undefined)) invalid("kind", "État de tâche inattendu.");
   if (v.kind !== "familyComment" && v.familyEventId !== undefined) invalid("familyEventId", "Lien familial inattendu.");
   if (v.kind !== "roomAvailability" && v.free !== undefined) invalid("free", "Disponibilité inattendue.");
+  if (v.kind !== "cafardFollowup" && [v.cafardStatus, v.detectedOn, v.treatedOn, v.resolvedOn, v.product].some(value => value !== undefined))
+    invalid("kind", "Données de suivi des cafards inattendues.");
   if (v.kind === "dailyTask" && v.room) invalid("room", "Une tâche n’est pas un contrôle de chambre.");
 });
 export type WorkEntry = z.infer<typeof workEntrySchema>;
@@ -236,6 +254,5 @@ export function roomRecordTime(record: RoomEntry | RoomInspection) {
 export function roomFindings(record: RoomEntry | RoomInspection): { key: string; label: string }[] {
   const findings: { key: string; label: string }[] = record.checks.filter(c => roomAnomalyCheckKeys.includes(c.key) && c.result === "probleme")
     .map(c => ({ key: c.key, label: `${roomChecks.find(check => check.key === c.key)?.label || c.key} : ${resultLabels[c.result]}` }));
-  if (record.bugs === "oui") findings.push({ key: "bugs", label: "Cafards / nuisibles détectés" });
   return findings;
 }
