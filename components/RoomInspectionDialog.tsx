@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
-import { createId, statuses, today } from "@/lib/domain";
+import { createId, issueResponsible, statuses, today } from "@/lib/domain";
 import { normalizeRoomDraft, roomChecks, roomEntrySchema, roomFindings, roomProblems, type RoomEntry } from "@/lib/rooms";
 import { matchesRoomFinding, openRoomIssues, planRoomIssue } from "@/lib/roomIssueMatching";
 import { compressPhoto } from "@/lib/photos";
@@ -97,7 +97,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
         <Stack spacing={2}>
           {known.length > 0 && <Box>
             <Button color="warning" onClick={() => setShowIssues(!showIssues)} aria-expanded={showIssues}>{known.length} anomalie(s) déjà signalée(s)</Button>
-            {showIssues && <Stack spacing={1}>{known.map(issue => <Alert key={issue.id} severity="warning" icon={false}><strong>{issue.title}</strong><Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>{issue.description}</Typography><Typography variant="caption">{statuses[issue.status]} · {issue.assignee || "Non attribuée"}</Typography></Alert>)}</Stack>}
+            {showIssues && <Stack spacing={1}>{known.map(issue => <Alert key={issue.id} severity="warning" icon={false}><strong>{issue.title}</strong><Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>{issue.description}</Typography><Typography variant="caption">{statuses[issue.status]} · {issueResponsible(issue) || "Non attribuée"}</Typography></Alert>)}</Stack>}
           </Box>}
           {step === 0 && <>
             <Typography variant="body2" color="text.secondary">Un toucher par résultat. « Absent » indique que l’équipement n’existe pas dans la chambre.</Typography>

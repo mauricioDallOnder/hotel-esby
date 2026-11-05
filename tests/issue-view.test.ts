@@ -28,19 +28,35 @@ test("default ordering shows the newest reports first, breaks same-day ties by c
   assert.deepEqual(source, [a, b, c, d, e]);
 });
 
-test("status, category, priority, inclusive date range and missing assignee filters combine", () => {
-  const a = issue({ assignee: "  ", priority: "haute", status: "en_cours" });
-  const source = [a, issue({ ...a, id: createId(), assignee: "Technicien" }), issue({ ...a, id: createId(), date: "2026-10-09" }), issue({ ...a, id: createId(), category: "Plomberie" }), issue({ ...a, id: createId(), status: "resolu" })];
+test("status, category, priority, inclusive date range and missing responsible filters combine", () => {
+  const a = issue({ reportedBy: " ", assignee: "  ", priority: "haute", status: "en_cours" });
+  const source = [a, issue({ ...a, id: createId(), assignee: "Technicien" }), issue({ ...a, id: createId(), reportedBy: "Marie" }), issue({ ...a, id: createId(), date: "2026-10-09" }), issue({ ...a, id: createId(), category: "Plomberie" }), issue({ ...a, id: createId(), status: "resolu" })];
   const filters = { ...defaultIssueFilters, unassigned: true, priority: "haute" as const, category: "Électricité", status: "en_cours" as const, from: "2026-10-10", to: "2026-10-10" };
   assert.deepEqual(selectIssues(source, filters).map(i => i.id), [a.id]);
   assert.equal(selectIssues(source, { ...filters, from: "2026-10-11" }).length, 0);
   assert.equal(selectIssues(source, { ...defaultIssueFilters, status: "resolu" }).length, 1);
 });
 
+test("the responsible filter uses the reporter and legacy fallback while searches retain previous assignments and intervention authors", () => {
+  const reported = issue({ reportedBy: "  Maurício  ", assignee: "Ancien responsable", history: [
+    { ...issue().history[0], actor: "Maurício", assignee: "Ancien responsable" },
+    { at: "2026-10-12T10:00:00Z", actor: "Salima", note: "Ampoule remplacée", status: "en_cours", priority: "normale", assignee: "Équipe de nuit" },
+  ] });
+  const legacy = issue({ reportedBy: " ", assignee: "  Jean  " });
+  const missing = issue({ reportedBy: "", assignee: " " });
+  const source = [reported, legacy, missing], original = structuredClone(source);
+  assert.deepEqual(selectIssues(source, { ...defaultIssueFilters, unassigned: true }).map(item => item.id), [missing.id]);
+  assert.equal(issueShortcuts(source, defaultIssueFilters).find(shortcut => shortcut.id === "unassigned")?.count, 1);
+  for (const query of ["mauricio", "ancien responsable", "salima remplacee", "equipe nuit"])
+    assert.deepEqual(selectIssues(source, { ...defaultIssueFilters, query }).map(item => item.id), [reported.id], query);
+  assert.deepEqual(selectIssues(source, { ...defaultIssueFilters, query: "jean" }).map(item => item.id), [legacy.id]);
+  assert.deepEqual(source, original);
+});
+
 test("shortcut counts match their results within the current search, dates and category, without changing the source", () => {
   const assigned = issue({ id: "assigned", priority: "critique", assignee: "Technicien", status: "en_cours" });
-  const missing = issue({ id: "missing", date: "2026-10-12", priority: "normale" });
-  const criticalMissing = issue({ id: "critical-missing", date: "2026-10-11", priority: "critique", assignee: "  " });
+  const missing = issue({ id: "missing", date: "2026-10-12", priority: "normale", reportedBy: "" });
+  const criticalMissing = issue({ id: "critical-missing", date: "2026-10-11", priority: "critique", reportedBy: " ", assignee: "  " });
   const source = [missing, assigned, criticalMissing,
     issue({ priority: "critique", status: "resolu" }),
     issue({ priority: "critique", location: "Chambre 1204" }),
@@ -70,7 +86,7 @@ test("shortcut counts match their results within the current search, dates and c
 
 test("switching shortcuts replaces the previous view and derives the selected state from the actual filters", () => {
   const assigned = issue({ priority: "critique", assignee: "Technicien" });
-  const missing = issue({ priority: "normale" });
+  const missing = issue({ priority: "normale", reportedBy: "" });
   const source = [assigned, missing, issue({ priority: "critique", status: "resolu" })];
   const filters = { ...defaultIssueFilters, query: "204", from: "2026-10-10", to: "2026-10-10" };
   const critical = issueShortcuts(source, filters)[1];

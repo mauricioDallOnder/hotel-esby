@@ -187,6 +187,12 @@ export type Issue = IssueFields & {
   history: Event[];
 };
 
+// The person who reports an anomaly is responsible for it. Keep the stored
+// assignee only as a fallback for older records without a reporter's name.
+export function issueResponsible(issue: Pick<Issue, "reportedBy" | "assignee">): string {
+  return (issue.reportedBy || "").trim() || (issue.assignee || "").trim();
+}
+
 export type Inspection = z.infer<typeof inspectionInput> & {
   updatedAt: string;
   completedAt: string | null;
@@ -351,6 +357,7 @@ export function applyCommand(
 
     const record: Issue = {
       ...command.fields,
+      assignee: command.actor,
       id: command.id,
       date: command.date,
       reportedBy: command.actor,
@@ -367,7 +374,7 @@ export function applyCommand(
           note: "Anomalie signalée.",
           status: "ouvert",
           priority: command.fields.priority,
-          assignee: command.fields.assignee,
+          assignee: command.actor,
         },
       ],
     };
@@ -405,12 +412,15 @@ export function applyCommand(
       );
     }
 
+    const responsible = issueResponsible(current);
+
     return {
       collection: "issues",
       expectedVersion: command.version,
       record: {
         ...current,
         ...command.fields,
+        assignee: responsible,
         status: command.status,
         version: current.version + 1,
         updatedAt: now,
@@ -422,7 +432,7 @@ export function applyCommand(
             note: command.note,
             status: command.status,
             priority: command.fields.priority,
-            assignee: command.fields.assignee,
+            assignee: responsible,
           },
         ],
       },

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
 import ArrowForward from "@mui/icons-material/ArrowForward";
 import { useAppContext } from "@/context/AppContext";
-import { today, type Issue } from "@/lib/domain";
+import { issueResponsible, today, type Issue } from "@/lib/domain";
 import {
   ConnectionBar,
   EmptyState,
@@ -163,7 +163,7 @@ export default function DashboardPage() {
                   <Typography variant="h6">{issue.title}</Typography>
                   <Typography variant="body2" color="text.secondary">
                     {issue.location} ·{" "}
-                    {issue.assignee || "Responsable à désigner"}
+                    {issueResponsible(issue) || "Responsable non renseigné"}
                   </Typography>
                 </Box>
                 <Stack

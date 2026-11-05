@@ -59,8 +59,8 @@ test("anomaly shortcuts keep the search scope, show matching counts and replace 
   await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
   const issues = [
     sample({ title: "Éclairage plafond", date: "2026-10-10", priority: "critique", assignee: "Technicien" }),
-    sample({ title: "Éclairage couloir", date: "2026-10-11", priority: "critique" }),
-    sample({ title: "Éclairage salle de bain", date: "2026-10-12", priority: "normale" }),
+    sample({ title: "Éclairage couloir", date: "2026-10-11", priority: "critique", reportedBy: "" }),
+    sample({ title: "Éclairage salle de bain", date: "2026-10-12", priority: "normale", reportedBy: "" }),
     sample({ priority: "critique", date: "2026-10-09" }),
     sample({ priority: "critique", date: "2026-10-13" }),
     sample({ priority: "critique", date: "2026-10-10", location: "Chambre 1204" }),
@@ -116,7 +116,48 @@ test("anomaly shortcuts keep the search scope, show matching counts and replace 
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
 });
 
-test("direction can record an intervention with one-tap status and inspect its dated history", async ({ page }) => {
+test("employee creates an anomaly with only the reporter name and keeps the consultation read-only", async ({ page }) => {
+  expect((await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } })).ok()).toBeTruthy();
+  const title = `Responsable automatique ${crypto.randomUUID().slice(0, 8)}`;
+  const location = "Chambre 231", reporter = "Élodie test";
+  await page.goto("/anomalies");
+  await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();
+  const creation = page.getByRole("dialog", { name: "Signaler une anomalie", exact: true });
+  await expect(creation.getByLabel("Responsable de l’intervention")).toHaveCount(0);
+  await expect(creation.getByLabel("Signalé par")).toHaveCount(1);
+  await creation.getByLabel("Titre").fill(title);
+  await creation.getByLabel("Lieu précis").fill(location);
+  await creation.getByLabel("Description du problème").fill("Le robinet de la salle de bain fuit.");
+  await creation.getByLabel("Signalé par").fill(`  ${reporter}  `);
+  await creation.getByRole("button", { name: "Enregistrer l’anomalie", exact: true }).click();
+  await expect(creation).toHaveCount(0);
+
+  const response = await page.request.get("/api/hotel");
+  expect(response.ok()).toBeTruthy();
+  const state = await response.json();
+  const saved = state.issues.find((item: Issue) => item.title === title);
+  expect(saved).toBeDefined();
+  expect(saved.reportedBy).toBe(reporter);
+  expect(saved.assignee).toBe(reporter);
+  expect(saved.history).toHaveLength(1);
+  expect(saved.history[0].actor).toBe(reporter);
+  expect(saved.history[0].assignee).toBe(reporter);
+
+  const card = page.getByRole("article", { name: `${location} · ${title}`, exact: true });
+  await expect(card.getByText(`Responsable : ${reporter}`, { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Consulter", exact: true }).click();
+  const consultation = page.getByRole("dialog", { name: /Consulter l’anomalie/ });
+  await expect(consultation.getByText(`Responsable : ${reporter}`, { exact: true })).toBeVisible();
+  await expect(consultation.getByLabel("Titre")).toBeDisabled();
+  await expect(consultation.getByLabel("Description du problème")).toBeDisabled();
+  await expect(consultation.getByLabel("Responsable de l’intervention")).toHaveCount(0);
+  await expect(consultation.getByLabel("Intervention saisie par")).toHaveCount(0);
+  await expect(consultation.getByRole("radiogroup", { name: "État de résolution" })).toHaveCount(0);
+  await expect(consultation.getByRole("button", { name: "Enregistrer le suivi", exact: true })).toHaveCount(0);
+  await expect(consultation.getByText("La direction gère les interventions et les changements d’état.", { exact: true })).toBeVisible();
+});
+
+test("direction records an intervention under its author while the original reporter remains responsible", async ({ page }) => {
   await page.request.post("/api/session", { data: { role: "direction", password: "test-direction" } });
   const id = crypto.randomUUID(), title = "Suivi rapide test";
   expect((await page.request.post("/api/hotel", { data: { type: "createIssue", id, date: today(), actor: "Marie", fields: { title, location: "Chambre 230", category: "Équipements", priority: "normale", description: "Store bloqué", assignee: "" } } })).ok()).toBeTruthy();
@@ -125,10 +166,12 @@ test("direction can record an intervention with one-tap status and inspect its d
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /Suivi de l’anomalie/ });
   await expect(dialog.getByLabel("Titre", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText("Responsable : Marie", { exact: true })).toBeVisible();
   await dialog.getByRole("radiogroup", { name: "État de résolution" }).getByRole("radio", { name: "Résolu", exact: true }).click();
   await expect(dialog.getByLabel("Votre nom")).toHaveCount(0);
-  await expect(dialog.getByLabel("Responsable de l’intervention")).toHaveCount(1);
-  await dialog.getByLabel("Responsable de l’intervention").fill("Salima");
+  await expect(dialog.getByLabel("Responsable de l’intervention")).toHaveCount(0);
+  await expect(dialog.getByLabel("Intervention saisie par")).toHaveValue("");
+  await dialog.getByLabel("Intervention saisie par").fill("Salima");
   await dialog.getByLabel("Travaux effectués / résolution").fill("Store réparé et testé");
   await dialog.getByRole("button", { name: "Annuler", exact: true }).click();
   await page.getByRole("dialog", { name: "Fermer sans enregistrer ?", exact: true }).getByRole("button", { name: "Continuer la saisie" }).click();
@@ -137,14 +180,20 @@ test("direction can record an intervention with one-tap status and inspect its d
   await expect(dialog).toHaveCount(0);
   const state = await (await page.request.get("/api/hotel")).json();
   const saved = state.issues.find((item: Issue) => item.id === id);
-  expect(saved.assignee).toBe("Salima");
+  expect(saved.reportedBy).toBe("Marie");
+  expect(saved.assignee).toBe("Marie");
   expect(saved.history.at(-1).actor).toBe("Salima");
+  expect(saved.history.at(-1).assignee).toBe("Marie");
   expect(saved.history[0].actor).toBe("Marie");
   await expect(page.getByText(/Retrouvez-la avec le filtre Résolu/)).toBeVisible();
   await page.getByRole("group", { name: "Filtrer par état" }).getByRole("button", { name: "Résolu", exact: true }).click();
   await expect(page.getByRole("article").getByText("Store réparé et testé", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article").getByText("Responsable : Marie", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
+  await expect(dialog.getByLabel("Intervention saisie par")).toHaveValue("");
   await dialog.getByRole("button", { name: "Historique (2)", exact: true }).click();
   await expect(dialog.getByText("Store réparé et testé", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Salima · Résolu", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Marie · À traiter", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/Responsable indiqué à cette date : Marie/)).toHaveCount(1);
 });

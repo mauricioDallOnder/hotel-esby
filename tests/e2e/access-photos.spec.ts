@@ -8,6 +8,8 @@ test("employee reports three photos; only direction changes the status", async (
   await page.getByRole("button", { name: "Se connecter", exact: true }).click();
   await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();
   const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Responsable de l’intervention")).toHaveCount(0);
+  await expect(dialog.getByLabel("Signalé par")).toHaveCount(1);
   const jpeg = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 20;
@@ -29,18 +31,23 @@ test("employee reports three photos; only direction changes the status", async (
   await dialog.getByLabel("Description du problème").fill("Fuite de test");
   await dialog.getByLabel("Titre").fill("Test trois photos");
   await dialog.getByLabel("Lieu précis").fill("Chambre 204");
-  await dialog.getByLabel("Signalé par").fill("Employé test");
+  await dialog.getByLabel("Signalé par").fill("  Employé test  ");
   await dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await page.getByRole("button", { name: "Consulter", exact: true }).click();
   await expect(dialog.getByLabel("Titre")).toBeDisabled();
   await expect(dialog.getByLabel("État de résolution")).toHaveCount(0);
+  await expect(dialog.getByText("Responsable : Employé test", { exact: true })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Enregistrer le suivi" })).toHaveCount(0);
   await expect(dialog.locator("img")).toHaveCount(3);
   for (const img of await dialog.locator("img").all())
     await expect(img).toHaveJSProperty("naturalWidth", 20);
   const state = await (await page.request.get("/api/hotel")).json();
   const issue = state.issues[0];
+  expect(issue.reportedBy).toBe("Employé test");
+  expect(issue.assignee).toBe("Employé test");
+  expect(issue.history[0].actor).toBe("Employé test");
+  expect(issue.history[0].assignee).toBe("Employé test");
   const photoUrl = `/api/photos/${issue.id}?index=0`;
   const firstPhoto = await page.request.get(photoUrl);
   expect(firstPhoto.status()).toBe(200);
@@ -67,15 +74,20 @@ test("employee reports three photos; only direction changes the status", async (
   await page.getByLabel("Mot de passe · Direction").fill("test-direction");
   await page.getByRole("button", { name: "Se connecter", exact: true }).click();
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
-  await dialog.getByLabel("Responsable de l’intervention").fill("Direction test");
+  await expect(dialog.getByLabel("Responsable de l’intervention")).toHaveCount(0);
+  await expect(dialog.getByLabel("Intervention saisie par")).toHaveValue("");
+  await dialog.getByLabel("Intervention saisie par").fill("Direction test");
   await dialog.getByRole("radiogroup", { name: "État de résolution", exact: true }).getByRole("radio", { name: "Résolu", exact: true }).click();
   await dialog.getByLabel("Travaux effectués / résolution").fill("Fuite réparée");
   await dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   const saved = await (await page.request.get("/api/hotel")).json();
   expect(saved.issues[0].status).toBe("resolu");
-  expect(saved.issues[0].assignee).toBe("Direction test");
+  expect(saved.issues[0].reportedBy).toBe("Employé test");
+  expect(saved.issues[0].assignee).toBe("Employé test");
   expect(saved.issues[0].history.at(-1).actor).toBe("Direction test");
+  expect(saved.issues[0].history.at(-1).assignee).toBe("Employé test");
+  expect(saved.issues[0].history[0]).toEqual(issue.history[0]);
   expect(saved.issues[0].photoIds).toHaveLength(3);
   await page.reload();
   await expect(page.getByRole("button", { name: "Déconnexion" })).toBeVisible();

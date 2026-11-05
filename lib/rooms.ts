@@ -209,10 +209,10 @@ export function roomIssue(record: RoomInspection): Issue | undefined {
   const findings = roomFindings(record);
   if (!findings.length) return;
   return { room: record.room, roomFindings: findings, id: record.id, version: 1, date: record.date, createdAt: record.updatedAt, updatedAt: record.updatedAt,
-    title: `Chambre ${record.room} · Problème constaté`, location: `Chambre ${record.room}`, category: "Équipements", priority: "normale", status: "ouvert", assignee: "",
+    title: `Chambre ${record.room} · Problème constaté`, location: `Chambre ${record.room}`, category: "Équipements", priority: "normale", status: "ouvert", assignee: record.actor,
     description: [...findings.map(finding => finding.label), record.notes].filter(Boolean).join("\n").slice(0, 4000), reportedBy: record.actor,
     photoIds: record.photoIds, photoId: record.photoId,
-    history: [{ at: record.updatedAt, actor: record.actor, note: "Signalé depuis le checklist de la chambre.", status: "ouvert", priority: "normale", assignee: "" }],
+    history: [{ at: record.updatedAt, actor: record.actor, note: "Signalé depuis le checklist de la chambre.", status: "ouvert", priority: "normale", assignee: record.actor }],
   };
 }
 

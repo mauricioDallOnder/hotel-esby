@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Alert, Box, Button, Chip, Collapse, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { useAppContext } from "@/context/AppContext";
-import { categories, displayDate, issuePhotoIds, priorities, statuses, today, type Issue } from "@/lib/domain";
+import { categories, displayDate, issuePhotoIds, issueResponsible, priorities, statuses, today, type Issue } from "@/lib/domain";
 import { defaultIssueFilters, issueAge, issueShortcuts, lastIntervention, selectIssues, type IssueFilters } from "@/lib/issueView";
 import { ConnectionBar, EmptyState, IssueBadges, PageTitle } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
@@ -11,7 +11,7 @@ import { IssuePhoto } from "@/components/IssuePhoto";
 
 function IssueCard({ issue, onOpen, direction }: { issue: Issue; onOpen: () => void; direction: boolean }) {
   const [photosOpen, setPhotosOpen] = useState(false);
-  const photos = issuePhotoIds(issue), last = lastIntervention(issue), age = issueAge(issue, today());
+  const photos = issuePhotoIds(issue), last = lastIntervention(issue), age = issueAge(issue, today()), responsible = issueResponsible(issue);
   return <Paper component="article" aria-label={`${issue.location} · ${issue.title}`} variant="outlined" sx={{ p: 2, minWidth: 0, borderLeft: "4px solid", borderLeftColor: issue.status === "resolu" ? "success.main" : issue.priority === "critique" ? "error.main" : issue.priority === "haute" ? "warning.main" : "divider" }}>
     <Stack spacing={1.5}>
       <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
@@ -25,7 +25,7 @@ function IssueCard({ issue, onOpen, direction }: { issue: Issue; onOpen: () => v
       </Box>
       <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{issue.description}</Typography>
       <Box sx={{ bgcolor: "action.hover", borderRadius: 1.5, p: 1.25 }}>
-        <Typography variant="body2" sx={{ fontWeight: 600 }}>{issue.assignee ? `Responsable : ${issue.assignee}` : "Responsable à désigner"}</Typography>
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>{responsible ? `Responsable : ${responsible}` : "Responsable non renseigné"}</Typography>
         <Typography variant="caption" color="text.secondary">{last ? `Dernier suivi · ${new Date(last.at).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" })} · ${last.actor}` : "Aucune intervention enregistrée"}</Typography>
         {last && <Typography variant="body2" sx={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" }}>{last.note}</Typography>}
       </Box>
