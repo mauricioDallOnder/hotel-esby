@@ -1,7 +1,9 @@
 "use client";
 import Link from "next/link";
-import { Alert, Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
-import ArrowForward from "@mui/icons-material/ArrowForward";
+import { Alert, Box, Button, Paper, Stack, Typography } from "@mui/material";
+// Tâches du jour : imports conservés pour réactiver le panneau masqué.
+// import { Chip } from "@mui/material";
+// import ArrowForward from "@mui/icons-material/ArrowForward";
 import { useAppContext } from "@/context/AppContext";
 import { issueResponsible, type Issue } from "@/lib/domain";
 import { cafardCases, cafardTreatmentReminder } from "@/lib/cafards";
@@ -14,7 +16,7 @@ import {
   StatCards,
 } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
-import { dailyTasks } from "@/lib/work";
+// import { dailyTasks } from "@/lib/work";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 import { useRoomObservations } from "@/lib/useRoomObservations";
 import { useState } from "react";
@@ -27,7 +29,7 @@ export default function DashboardPage() {
   const { events } = useWorkEvents();
   const cafardChecks = cafardCases(history, events, cafardSeedsFromIssues(issues))
     .filter(record => cafardTreatmentReminder(record, date)?.due);
-  const daily = dailyTasks(events, date);
+  // const daily = dailyTasks(events, date);
   const rank = { critique: 0, haute: 1, normale: 2 };
   const focus = pending
     .toSorted(
@@ -67,6 +69,7 @@ export default function DashboardPage() {
           </Button>
         </Stack>
       </Alert>}
+      {/* Tâches du jour : panneau masqué temporairement.
       <Paper
         elevation={0}
         sx={{
@@ -119,6 +122,7 @@ export default function DashboardPage() {
           </Button>
         </Stack>
       </Paper>
+      */}
       <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 3 }}>
         <Button component={Link} href="/checklist" variant="outlined">Contrôler une chambre</Button>
         <Button component={Link} href="/familles" variant="outlined">Absences et départs des familles</Button>
@@ -140,11 +144,13 @@ export default function DashboardPage() {
             label: "Interventions en cours",
             value: pending.filter((i) => i.status === "en_cours").length,
           },
+          /* Tâches du jour : compteur masqué temporairement.
           {
             label: "Tâches terminées aujourd’hui",
             value: daily.filter((i) => i.done).length,
             hint: `${daily.filter((i) => !i.done).length} tâche(s) restante(s)`,
           },
+          */
         ]}
       />
       <Stack
