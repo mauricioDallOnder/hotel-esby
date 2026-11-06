@@ -23,20 +23,23 @@ const menuItems = [
   { label: "Occupation des chambres", path: "/occupation" },
   { label: "Objets récupérés", path: "/objets-recuperes" },
   { label: "Absences et départs", path: "/familles" },
-  
+  /* Menu masqué temporairement : décommenter pour réactiver.
   {
     label: "Tâches du jour",
     path: "/quotidien",
   },
+  */
   {
     label: "Problèmes techniques",
     path: "/anomalies",
   },
   { label: "Suivi des cafards", path: "/cafards" },
+  /* Menu masqué temporairement : décommenter pour réactiver.
   {
     label: "Rapports & bilan mensuel",
     path: "/relatorios",
   },
+  */
 ];
 
 type SidebarProps = {
