@@ -21,13 +21,19 @@ export const roomChecks = [
   { key: "fridge", label: "Minibar fonctionnel" },
   { key: "door_closer", label: "Ferme-porte (fermeture automatique)" },
   { key: "door_handle_clear", label: "Poignée de porte dégagée (aucun vêtement ne cache la poignée)" },
+  { key: "radiator_clear", label: "Chauffage / radiateur" },
 ] as const;
 export type RoomCheckKey = typeof roomChecks[number]["key"];
 // Other answers remain in the inspection history without creating an automatic anomaly.
-const roomAnomalyCheckKeys: readonly RoomCheckKey[] = ["taps", "switches", "leaks", "lights", "smoke", "damage", "window"];
+const roomAnomalyCheckKeys: readonly RoomCheckKey[] = ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear"];
 export const conditionLabels = { bon: "Bon état", a_revoir: "À revoir", mauvais: "Mauvais état" } as const;
 export const cleaningLabels = { faite: "Faite", non_faite: "Non faite" } as const;
 export const resultLabels = { non_verifie: "Non vérifié", ok: "Oui / OK", probleme: "Problème", absent: "Absent" } as const;
+export function roomCheckResultLabel(key: RoomCheckKey, result: keyof typeof resultLabels): string {
+  if (key === "radiator_clear" && result === "ok") return "Libre";
+  if (key === "radiator_clear" && result === "probleme") return "Caché";
+  return resultLabels[result];
+}
 export const carpetLabels = { ok: "OK", tachee: "Tachée", sale: "Sale" } as const;
 const note = z.string().trim().max(4000);
 const required = z.string().trim().min(1, "Ce champ est obligatoire.").max(200);
@@ -60,7 +66,10 @@ function validateNotes(v: z.infer<typeof roomFields>, ctx: z.RefinementCtx) {
   if ((v.checks.some(c => c.result === "probleme") || v.condition !== "bon" || v.bugs === "oui") && !v.notes) ctx.addIssue({ code: "custom", path: ["notes"], message: "Décrivez les problèmes constatés." });
 }
 
-const previousRoomChecks = roomChecks.filter(c => c.key !== "door_closer");
+// Preserve the check sets of queued controls: adding a new required check must
+// never alter the payload or hash of an earlier schema on retry.
+const roomChecksV4 = roomChecks.filter(c => c.key !== "radiator_clear");
+const previousRoomChecks = roomChecksV4.filter(c => c.key !== "door_closer");
 
 const roomEntryV2Schema = roomFields.extend({
   occupied: z.boolean(), schemaVersion: z.literal(2).default(2),
@@ -101,9 +110,10 @@ const roomEntryV3Schema = roomFields.extend({
   fridgeCleaning: v.checks.some(c => c.key === "fridge" && c.result === "absent") ? null : v.fridgeCleaning,
 }));
 
-// New controls use explicit quick choices; old queue schemas remain unchanged.
-export const roomEntrySchema = roomFields.extend({
-  occupied: z.boolean(), schemaVersion: z.literal(4).default(4),
+// Keep field order stable because the parsed payload is the offline receipt hash.
+function quickChoiceRoomSchema<V extends 4 | 5>(version: V, requiredChecks: readonly { key: RoomCheckKey }[]) {
+  return roomFields.extend({
+  occupied: z.boolean(), schemaVersion: z.literal(version).default(version),
   microwaveCleaning: applianceCleaning, fridgeCleaning: applianceCleaning,
   inspectedAt: z.iso.datetime().optional(),
   distinctProblemKeys: z.array(z.string().min(1).max(80)).max(30).optional(),
@@ -111,12 +121,14 @@ export const roomEntrySchema = roomFields.extend({
   // Legacy preview payloads must keep their original hash when an offline save is retried.
   temperatureC: z.number().finite().min(-20).max(60).optional(),
 }).superRefine((v, ctx) => {
-  if (v.checks.length !== roomChecks.length || new Set(v.checks.map(c => c.key)).size !== roomChecks.length)
+  if (v.checks.length !== requiredChecks.length || new Set(v.checks.map(c => c.key)).size !== requiredChecks.length)
     ctx.addIssue({ code: "custom", path: ["checks"], message: "Vérifiez chaque point une seule fois." });
-  roomChecks.forEach(check => {
+  requiredChecks.forEach(check => {
     if (!v.checks.some(c => c.key === check.key && c.result !== "non_verifie"))
       ctx.addIssue({ code: "custom", path: ["checks", check.key], message: "Ce point reste à vérifier." });
   });
+  if (version === 5 && v.checks.some(c => c.key === "radiator_clear" && c.result === "absent"))
+    ctx.addIssue({ code: "custom", path: ["checks", "radiator_clear"], message: "Indiquez si le chauffage / radiateur est libre ou caché." });
   if (v.microwave === "non_verifie") ctx.addIssue({ code: "custom", path: ["microwave"], message: "Vérifiez la présence du micro-ondes." });
   if (!v.occupied && !v.cleaning) ctx.addIssue({ code: "custom", path: ["cleaning"], message: "Renseignez le ménage." });
   if (!v.bugs || v.bugs === "non_verifie") ctx.addIssue({ code: "custom", path: ["bugs"], message: "Vérifiez les nuisibles." });
@@ -127,6 +139,9 @@ export const roomEntrySchema = roomFields.extend({
   microwaveCleaning: v.microwave === "oui" ? v.microwaveCleaning : null,
   fridgeCleaning: v.checks.some(c => c.key === "fridge" && c.result === "absent") ? null : v.fridgeCleaning,
 }));
+}
+const roomEntryV4Schema = quickChoiceRoomSchema(4, roomChecksV4);
+export const roomEntrySchema = quickChoiceRoomSchema(5, roomChecks);
 
 export const workEntrySchema = z.object({
   type: z.literal("createWorkEvent"), id: z.string().uuid(),
@@ -193,11 +208,11 @@ export type WorkEvent = WorkEntry & { version: number; updatedAt: string; submis
 
 export const entrySchema = z.union([familyEntrySchema, roomEntrySchema, workEntrySchema]);
 export type FamilyEntry = z.infer<typeof familyEntrySchema>;
-export type RoomEntry = z.infer<typeof roomFields> & { occupied?: boolean | null; schemaVersion?: 2 | 3 | 4; inspectedAt?: string; issueLinks?: { key: string; issueId: string }[]; distinctProblemKeys?: string[]; microwaveCleaning?: z.infer<typeof applianceCleaning>; fridgeCleaning?: z.infer<typeof applianceCleaning>; bugs?: "non" | "oui" | "non_verifie"; temperatureC?: number };
+export type RoomEntry = z.infer<typeof roomFields> & { occupied?: boolean | null; schemaVersion?: 2 | 3 | 4 | 5; inspectedAt?: string; issueLinks?: { key: string; issueId: string }[]; distinctProblemKeys?: string[]; microwaveCleaning?: z.infer<typeof applianceCleaning>; fridgeCleaning?: z.infer<typeof applianceCleaning>; bugs?: "non" | "oui" | "non_verifie"; temperatureC?: number };
 export type Entry = FamilyEntry | RoomEntry | WorkEntry;
 
 const legacyRoom = z.string().refine(v => (rooms.includes(v) && v !== "233") || ["111", "112", "113", "213", "313"].includes(v));
-const legacyKeys = roomChecks.filter(c => c.key !== "door_handle_clear" && c.key !== "door_closer").map(c => c.key);
+const legacyKeys = previousRoomChecks.filter(c => c.key !== "door_handle_clear").map(c => c.key);
 const legacyRoomSchema = roomFields.extend({
   room: legacyRoom,
   cleaning: z.enum(["faite", "non_faite"]),
@@ -212,13 +227,14 @@ export function parseEntry(input: unknown, legacy = false): Entry {
   if (input && typeof input === "object" && "type" in input && input.type === "createWorkEvent") return workEntrySchema.parse(input);
   if (input && typeof input === "object" && "schemaVersion" in input && input.schemaVersion === 2) return roomEntryV2Schema.parse(input);
   if (input && typeof input === "object" && "schemaVersion" in input && input.schemaVersion === 3) return roomEntryV3Schema.parse(input);
+  if (input && typeof input === "object" && "schemaVersion" in input && input.schemaVersion === 4) return roomEntryV4Schema.parse(input);
   if (!legacy) return entrySchema.parse(input);
   if (input && typeof input === "object" && ("schemaVersion" in input || "occupied" in input)) return entrySchema.parse(input);
   return z.discriminatedUnion("type", [legacyFamilySchema, legacyRoomSchema]).parse(input);
 }
 
-export function normalizeRoomDraft<T extends { occupied?: boolean | null; checks: RoomEntry["checks"]; schemaVersion?: 2 | 3 | 4; inspectedAt?: string; issueLinks?: { key: string; issueId: string }[]; distinctProblemKeys?: string[]; bugs?: "non" | "oui" | "non_verifie" }>(draft: T): T {
-  return { microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", ...draft, schemaVersion: 4, occupied: draft.occupied ?? null, checks: [...draft.checks,
+export function normalizeRoomDraft<T extends { occupied?: boolean | null; checks: RoomEntry["checks"]; schemaVersion?: 2 | 3 | 4 | 5; inspectedAt?: string; issueLinks?: { key: string; issueId: string }[]; distinctProblemKeys?: string[]; bugs?: "non" | "oui" | "non_verifie" }>(draft: T): T {
+  return { microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", ...draft, schemaVersion: 5, occupied: draft.occupied ?? null, checks: [...draft.checks,
     ...roomChecks.filter(check => !draft.checks.some(c => c.key === check.key)).map(check => ({ key: check.key, result: "non_verifie" as const }))] };
 }
 
@@ -235,7 +251,7 @@ export function roomProblems(record: RoomEntry | RoomInspection): string[] {
     ...(record.condition !== "bon" ? [conditionLabels[record.condition]] : []),
     ...(record.bugs === "oui" ? ["Cafards / nuisibles détectés"] : []),
     ...(record.occupied === false && record.cleaning === "non_faite" ? ["Ménage non fait"] : []),
-    ...record.checks.filter(c => c.result === "probleme" || (["smoke", "door_closer"].includes(c.key) && c.result === "absent")).map(c => `${roomChecks.find(check => check.key === c.key)?.label} : ${resultLabels[c.result]}`),
+    ...record.checks.filter(c => c.result === "probleme" || (["smoke", "door_closer"].includes(c.key) && c.result === "absent")).map(c => `${roomChecks.find(check => check.key === c.key)?.label} : ${roomCheckResultLabel(c.key, c.result)}`),
     ...(record.carpet !== "ok" ? [`Moquette ${carpetLabels[record.carpet].toLowerCase()} : ${record.carpetNotes}`] : []),
     ...(record.microwave === "oui" && record.microwaveCleaning === "sale" ? ["Micro-ondes sale"] : []),
     ...(record.checks.some(c => c.key === "fridge" && c.result !== "absent") && record.fridgeCleaning === "sale" ? ["Minibar sale"] : []),
@@ -272,6 +288,6 @@ export function roomRecordTime(record: RoomEntry | RoomInspection) {
 
 export function roomFindings(record: RoomEntry | RoomInspection): { key: string; label: string }[] {
   const findings: { key: string; label: string }[] = record.checks.filter(c => roomAnomalyCheckKeys.includes(c.key) && c.result === "probleme")
-    .map(c => ({ key: c.key, label: `${roomChecks.find(check => check.key === c.key)?.label || c.key} : ${resultLabels[c.result]}` }));
+    .map(c => ({ key: c.key, label: `${roomChecks.find(check => check.key === c.key)?.label || c.key} : ${roomCheckResultLabel(c.key, c.result)}` }));
   return findings;
 }

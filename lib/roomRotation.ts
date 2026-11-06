@@ -6,10 +6,13 @@ export function daysSince(date: string, day: string) {
 }
 
 export function completeRoomInspection(record: Record) {
-  const required = roomChecks.filter(c => c.key !== "door_closer" || record.schemaVersion === 4)
-    .filter(c => c.key !== "door_handle_clear" || !!record.schemaVersion);
-  return required.every(c => record.checks.some(check => check.key === c.key && check.result !== "non_verifie")) &&
-    record.microwave !== "non_verifie" && (record.schemaVersion !== 4 || (typeof record.occupied === "boolean" && !!record.bugs && record.bugs !== "non_verifie"));
+  const version = record.schemaVersion ?? 1;
+  const required = roomChecks.filter(c => c.key !== "radiator_clear" || version >= 5)
+    .filter(c => c.key !== "door_closer" || version >= 4)
+    .filter(c => c.key !== "door_handle_clear" || version >= 2);
+  return required.every(c => record.checks.some(check => check.key === c.key && check.result !== "non_verifie" &&
+    (check.key !== "radiator_clear" || check.result === "ok" || check.result === "probleme"))) &&
+    record.microwave !== "non_verifie" && (version < 4 || (typeof record.occupied === "boolean" && !!record.bugs && record.bugs !== "non_verifie"));
 }
 
 export function roomRotation(history: Record[], day: string, dailyGoal = 15, intervalDays = 7, deferred: string[] = []) {

@@ -26,7 +26,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const content = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
   const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
-    type: "createRoomInspection", schemaVersion: 4, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
+    type: "createRoomInspection", schemaVersion: 5, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
     cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [],
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [],
   }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
@@ -102,11 +102,13 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
           {step === 0 && <>
             <Typography variant="body2" color="text.secondary">Un toucher par résultat. « Absent » indique que l’équipement n’existe pas dans la chambre.</Typography>
             <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.result === "non_verifie" && c.key !== "smoke" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
-            <Typography variant="caption" color="text.secondary">Le ferme-porte est inclus. Le détecteur et les équipements déjà signalés restent à vérifier individuellement. Les réponses saisies sont conservées.</Typography>
+            <Typography variant="caption" color="text.secondary">Le ferme-porte est inclus. Pour le radiateur, OK signifie « Libre ». Le détecteur et les équipements déjà signalés restent à vérifier individuellement. Les réponses saisies sont conservées.</Typography>
             {roomChecks.map(check => <QuickChoice key={check.key} label={check.label} value={value.checks.find(c => c.key === check.key)?.result} error={invalidField(`checks.${check.key}`)}
-              options={[{ value: "ok", label: "OK", color: "success" }, { value: "probleme", label: "Problème", color: "error" }, { value: "absent", label: "Absent" }]}
+              options={check.key === "radiator_clear"
+                ? [{ value: "ok", label: "Libre", color: "success" }, { value: "probleme", label: "Caché", color: "error" }]
+                : [{ value: "ok", label: "OK", color: "success" }, { value: "probleme", label: "Problème", color: "error" }, { value: "absent", label: "Absent" }]}
               onChange={result => update({ checks: value.checks.map(c => c.key === check.key ? { ...c, result } : c) })}
-              hint={<>{check.key === "door_closer" && <Typography variant="caption" sx={{ display: "block" }}>Ouvrir puis relâcher la porte : vérifier qu’elle se referme. Noter aussi l’absence du mécanisme dans le contrôle.</Typography>}{known.filter(i => matchesRoomFinding(i, { key: check.key, label: "" })).map(i => <Typography key={i.id} variant="caption" color="warning.main" sx={{ display: "block" }}>Déjà signalé : {i.title}</Typography>)}</>} />)}
+              hint={<>{check.key === "door_closer" && <Typography variant="caption" sx={{ display: "block" }}>Ouvrir puis relâcher la porte : vérifier qu’elle se referme. Noter aussi l’absence du mécanisme dans le contrôle.</Typography>}{check.key === "radiator_clear" && <Typography variant="caption" sx={{ display: "block" }}>« Libre » : rien ne couvre ou ne cache le radiateur. « Caché » : un signalement sera ajouté dans « Problèmes techniques ».</Typography>}{known.filter(i => matchesRoomFinding(i, { key: check.key, label: "" })).map(i => <Typography key={i.id} variant="caption" color="warning.main" sx={{ display: "block" }}>Déjà signalé : {i.title}</Typography>)}</>} />)}
           </>}
           {step === 1 && <>
             <QuickChoice label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} options={[{ value: "oui", label: "Occupée" }, { value: "non", label: "Libre" }]} error={invalidField("occupied")} onChange={v => update({ occupied: v === "oui", cleaning: v === "oui" ? null : value.cleaning })} />

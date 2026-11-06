@@ -35,7 +35,7 @@ function table_(collection) {
   // Append-only upgrades preserve existing columns and every historical row.
   if (collection === 'roomInspections') {
     const firstMissing = existing.findIndex(value => !value);
-    if (firstMissing >= 0 && firstMissing >= headers.length - 2 && existing.slice(0, firstMissing).join('|') === headers.slice(0, firstMissing).join('|') && existing.slice(firstMissing).every(value => !value)) {
+    if (firstMissing >= headers.indexOf('Poignée dégagée') && existing.slice(0, firstMissing).join('|') === headers.slice(0, firstMissing).join('|') && existing.slice(firstMissing).every(value => !value)) {
       sheet.getRange(1, firstMissing + 1, 1, headers.length - firstMissing).setValues([headers.slice(firstMissing)]).setFontWeight('bold');
     }
   }
@@ -174,7 +174,12 @@ function writeRecord_(collection, record, isEntry, current) {
       const visible = collection === 'familyEvents'
         ? [record.id, record.version, record.date, record.room, record.family, record.kind === 'absence' ? 'Absence' : 'Départ', record.actor, record.notes, photos, record.updatedAt]
         : [record.id, record.version, record.date, record.room, record.actor, record.condition, record.cleaning, record.notes, photos, record.updatedAt];
-      const extra = collection === 'familyEvents' ? [record.returnDate || ''] : [record.carpet, record.carpetNotes, record.microwave].concat(ROOM_CHECK_KEYS.map(key => { const check = record.checks.find(c => c.key === key); return check ? check.result : ''; }));
+      const extra = collection === 'familyEvents' ? [record.returnDate || ''] : [record.carpet, record.carpetNotes, record.microwave].concat(ROOM_CHECK_KEYS.map(key => {
+        const check = record.checks.find(c => c.key === key);
+        if (!check) return '';
+        if (key === 'radiator_clear') return check.result === 'ok' ? 'Libre' : check.result === 'probleme' ? 'Caché' : check.result;
+        return check.result;
+      }));
       row = visible.map(safe).concat(chunks.map(chunk => 'j' + chunk), extra.map(safe));
     }
     if (collection === 'workEvents') {
@@ -188,12 +193,12 @@ function photoIds_(record) {
   return record.photoIds && record.photoIds.length ? record.photoIds : record.photoId ? [record.photoId] : [];
 }
 
-const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear', 'door_closer'];
+const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear', 'door_closer', 'radiator_clear'];
 function headers_(collection) {
   const data = HEADERS.slice(10);
   if (collection === 'workEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Texte', 'Type de suivi', 'Réservé', 'Auteur', 'Réservé 2', 'Enregistré le'].concat(data);
   if (collection === 'familyEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Famille', 'Événement', 'Signalé par', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Retour prévu']);
-  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée', 'Ferme-porte']);
+  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée', 'Ferme-porte', 'Chauffage / radiateur']);
   return HEADERS;
 }
 function deletionTable_() {
@@ -273,6 +278,11 @@ function matchesRoomFinding(issue, finding) {
         return issue.roomFindings.some(item => item.key === finding.key &&
             (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
     const text = normalizeIssueText(`${issue.title || ""} ${issue.description || ""}`);
+    // A heater fault is different from a heater hidden or obstructed by objects.
+    if (finding.key === "radiator_clear")
+        return /\b(chauffage\w*|radiateur\w*)\b/.test(text) &&
+            /\b(cache[es]*|recouvert[es]*|obstrue[es]*|encombre[es]*)\b/.test(text) &&
+            !/\b(pas|non|jamais|plus)(?: \w+){0,2} (cache[es]*|recouvert[es]*|obstrue[es]*|encombre[es]*)\b/.test(text);
     const dirty = /\b(sale\w*|salete\w*|nettoy\w*|proprete)\b/.test(text);
     if (finding.key === "microwave_cleaning")
         return /\bmicro ondes?\b/.test(text) && dirty;

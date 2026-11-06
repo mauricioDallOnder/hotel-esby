@@ -3,7 +3,7 @@ import autoTable from "jspdf-autotable";
 import { displayDate, today } from "./domain";
 import {
   applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels,
-  latestRoomRecords, resultLabels, roomChecks, rooms,
+  latestRoomRecords, roomCheckResultLabel, roomChecks, rooms,
   type RoomEntry, type RoomInspection,
 } from "./rooms";
 
@@ -111,7 +111,8 @@ export function buildRoomChecklist(options: Options) {
       head: [record ? ["Point de contrôle", "Résultat"] : ["Point de contrôle", "OK", "Problème", "Absent"]],
       body: roomChecks.map(check => {
         const answer = record?.checks.find(item => item.key === check.key)?.result;
-        return record ? [check.label, answer ? resultLabels[answer] : "Non renseigné"] : [check.label, "", "", ""];
+        if (record) return [check.label, answer ? roomCheckResultLabel(check.key, answer) : "Non renseigné"];
+        return check.key === "radiator_clear" ? [check.label, { content: "", colSpan: 3 }] : [check.label, "", "", ""];
       }),
       styles: { font: "helvetica", fontSize: 10, cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 }, minCellHeight: 6.7, textColor: 25, lineColor: 170, lineWidth: 0.15, valign: "middle" },
       headStyles: { fillColor: [238, 238, 238], textColor: 25, fontStyle: "bold" },
@@ -119,7 +120,19 @@ export function buildRoomChecklist(options: Options) {
       rowPageBreak: "avoid",
       willDrawPage: () => ensureHeader(room),
       didDrawCell: cell => {
-        if (!record && cell.section === "body" && cell.column.index > 0) checkbox(cell.cell.x + (cell.cell.width - 3.3) / 2, cell.cell.y + (cell.cell.height - 3.3) / 2);
+        if (record || cell.section !== "body" || cell.column.index === 0) return;
+        if (roomChecks[cell.row.index].key === "radiator_clear") {
+          let x = cell.cell.x + 4;
+          const baseline = cell.cell.y + cell.cell.height / 2 + 1.2;
+          for (const result of ["ok", "probleme"] as const) {
+            const label = roomCheckResultLabel("radiator_clear", result);
+            checkbox(x, baseline - 3);
+            text(label, x + 4.7, baseline, 9.5);
+            x += doc.getTextWidth(label) + 12;
+          }
+          return;
+        }
+        checkbox(cell.cell.x + (cell.cell.width - 3.3) / 2, cell.cell.y + (cell.cell.height - 3.3) / 2);
       },
     });
     // autoTable adds this property to jsPDF after each table.
