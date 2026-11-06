@@ -9,7 +9,7 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   test.setTimeout(90000);
   await page.setViewportSize({ width: 390, height: 844 }); await login(page);
   await page.goto("/checklist");
-  await expect(page.getByRole("button", { name: "Contrôler la chambre", exact: false })).toHaveCount(85);
+  await expect(page.getByRole("article", { name: "Chambre 114", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Contrôler la chambre 114", exact: true }).click();
   const choose = async (label: string, answer: string) => { await page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click(); };
   for (const check of roomChecks) await choose(check.label, check.key === "taps" ? "Problème" : check.key === "door_closer" ? "Absent" : check.key === "radiator_clear" ? "Libre" : "OK");
@@ -34,7 +34,8 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   await page.getByRole("button", { name: "Enregistrer le contrôle" }).click();
   expect((await send).status()).toBe(200);
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "Historique de la chambre 114", exact: true }).click();
+  await expect(page.getByRole("article", { name: "Chambre 114", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Historique de tous les contrôles", exact: true }).click();
   await page.getByRole("button", { name: /Test mobile/ }).click();
   await expect(page.getByText(/Moquette sale : Boue près de la fenêtre/)).toBeVisible();
   await page.getByRole("button", { name: "Afficher les photos", exact: true }).click();

@@ -4,7 +4,7 @@ import type { WorkEntry } from "../../lib/rooms";
 async function login(page: Page) { await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } }); }
 
 test("a mobile checkbox marks a never inspected room free, persists and updates the free filter", async ({ page, context }) => {
-  await page.setViewportSize({ width: 390, height: 844 }); await login(page); await page.goto("/checklist");
+  await page.setViewportSize({ width: 390, height: 844 }); await login(page); await page.goto("/occupation");
   const card = page.getByRole("article", { name: "Chambre 102", exact: true });
   const checkbox = card.getByRole("checkbox", { name: "Chambre 102 occupée", exact: true });
   const markFree = card.getByRole("button", { name: "Marquer libre", exact: true });
@@ -30,6 +30,8 @@ test("a mobile checkbox marks a never inspected room free, persists and updates 
   await checkbox.click();
   await expect(checkbox).toBeChecked();
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await page.goto("/checklist");
+  await expect(page.getByRole("article", { name: "Chambre 102", exact: true })).toBeVisible();
 });
 
 test("family comments can be edited and added on different dates while retaining the original", async ({ page }) => {

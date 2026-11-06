@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createId } from "../lib/domain";
-import { roomChecks, rooms, type RoomEntry } from "../lib/rooms";
+import { latestRoomRecords, roomChecks, rooms, type RoomEntry, type WorkEntry } from "../lib/rooms";
 import { completeRoomInspection, roomRotation } from "../lib/roomRotation";
+import { roomAvailability } from "../lib/work";
 
 const day = "2026-11-03", yesterday = "2026-11-02";
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
@@ -154,4 +155,78 @@ test("priority rooms respect the daily workload remaining after completed rooms"
   assert.deepEqual(rotation.plan, ["114"]);
   assert.equal(rotation.done.length + rotation.plan.length, rotation.goal);
   assert.deepEqual(roomRotation(history, day, 1, 7).plan, []);
+});
+
+test("free rooms are excluded from priority, completed counts, coverage and the remaining daily workload", () => {
+  const history = [
+    entry({ room: "101", date: day, occupied: false, cleaning: "faite" }),
+    entry({ room: "102", condition: "mauvais", occupied: false, cleaning: "faite" }),
+    entry({ room: "103", date: "2026-10-01" }),
+    entry({ room: "104", date: day }),
+  ];
+  const before = structuredClone(history);
+  const eligible = ["103", "104", "105"] as const;
+  const rotation = roomRotation(history, day, 2, 7, ["102"], eligible);
+  assert.equal(rotation.total, 3);
+  assert.equal(rotation.goal, 2);
+  assert.deepEqual(rotation.done, ["104"]);
+  assert.equal(rotation.covered, 1);
+  assert.deepEqual(rotation.priorityRooms, []);
+  assert.deepEqual(rotation.due, ["105", "103"]);
+  assert.deepEqual(rotation.plan, ["105"]);
+  assert.equal(rotation.next, "105");
+  assert.equal(rotation.cycleWorkDays, 2);
+  assert.deepEqual(history, before);
+  assert.deepEqual(eligible, ["103", "104", "105"]);
+});
+
+test("the occupancy scope honours manual Libre and reopens occupied rooms while retaining unknown occupancy", () => {
+  const history = [
+    entry({ room: "101", condition: "mauvais", occupied: true }),
+    entry({ room: "102", occupied: false, cleaning: "faite" }),
+  ];
+  const latest = latestRoomRecords(history);
+  const markedFree: WorkEntry = {
+    type: "createWorkEvent", id: createId(), kind: "roomAvailability", targetId: "101", room: "101",
+    expectedRevision: 0, date: day, actor: "Test", notes: "", occurredAt: `${day}T10:00:00Z`, free: true,
+  };
+  const eligible = (events: WorkEntry[]) => rooms.filter(room => roomAvailability(room, events, latest.get(room)).free !== true);
+  const current = roomRotation(history, day, 15, 7, [], eligible([markedFree]));
+  assert.equal(current.total, rooms.length - 2);
+  assert.equal(current.due.includes("101"), false);
+  assert.equal(current.due.includes("102"), false);
+  assert.deepEqual(current.priorityRooms, []);
+  assert.ok(current.due.includes("103"), "Unknown occupation must remain in the checklist");
+
+  const reoccupied: WorkEntry = { ...markedFree, id: createId(), expectedRevision: 1, occurredAt: `${day}T11:00:00Z`, free: false };
+  const reopened = roomRotation(history, day, 15, 7, [], eligible([reoccupied, markedFree]));
+  assert.equal(reopened.total, rooms.length - 1);
+  assert.deepEqual(reopened.priorityRooms, ["101"]);
+  assert.equal(reopened.plan[0], "101");
+  assert.equal(reopened.next, "101");
+  assert.equal(reopened.due.includes("102"), false);
+});
+
+test("a fully free hotel has an empty tour and finite zero totals", () => {
+  const rotation = roomRotation(recentHistory(), day, 15, 7, ["114"], []);
+  assert.equal(rotation.total, 0);
+  assert.equal(rotation.goal, 0);
+  assert.equal(rotation.covered, 0);
+  assert.equal(rotation.cycleWorkDays, 0);
+  assert.equal(rotation.next, undefined);
+  for (const field of ["done", "due", "plan", "priorityRooms"] as const) assert.deepEqual(rotation[field], []);
+});
+
+test("a small eligible scope caps the goal and ignores duplicate or unknown room identifiers", () => {
+  const eligible = ["114", "999", "114", "103"] as const;
+  const rotation = roomRotation([], day, 15, 7, [], eligible);
+  assert.equal(rotation.total, 2);
+  assert.equal(rotation.goal, 2);
+  assert.equal(rotation.cycleWorkDays, 1);
+  assert.deepEqual(rotation.plan, ["103", "114"]);
+  assert.deepEqual(eligible, ["114", "999", "114", "103"]);
+  const onePerDay = roomRotation([], day, 1, 7, [], eligible);
+  assert.equal(onePerDay.goal, 1);
+  assert.equal(onePerDay.cycleWorkDays, 2);
+  assert.deepEqual(onePerDay.plan, ["103"]);
 });

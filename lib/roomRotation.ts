@@ -15,25 +15,28 @@ export function completeRoomInspection(record: Record) {
     record.microwave !== "non_verifie" && (version < 4 || (typeof record.occupied === "boolean" && !!record.bugs && record.bugs !== "non_verifie"));
 }
 
-export function roomRotation(history: Record[], day: string, dailyGoal = 15, intervalDays = 7, deferred: string[] = []) {
-  const goal = Math.max(1, Math.min(rooms.length, Math.floor(dailyGoal) || 15));
+export function roomRotation(history: Record[], day: string, dailyGoal = 15, intervalDays = 7, deferred: string[] = [], eligibleRooms: readonly string[] = rooms) {
+  // Occupancy is resolved by the caller; only these rooms belong to the current tour.
+  const selected = new Set(eligibleRooms);
+  const eligible = rooms.filter(room => selected.has(room));
+  const goal = Math.min(eligible.length, Math.max(1, Math.floor(dailyGoal) || 15));
   const interval = Math.max(1, Math.min(60, Math.floor(intervalDays) || 7));
   const current = history.filter(r => r.date <= day);
   const complete = current.filter(completeRoomInspection);
   const latestComplete = latestRoomRecords(complete);
   // A newer partial visit can report deterioration or improvement without completing the rotation.
   const latest = latestRoomRecords(current);
-  const priorityRooms = rooms.filter(room => latest.get(room)?.condition === "mauvais");
+  const priorityRooms = eligible.filter(room => latest.get(room)?.condition === "mauvais");
   const priority = new Set(priorityRooms);
-  const done = rooms.filter(room => complete.some(r => r.room === room && r.date === day));
-  const due = rooms.filter(room => !done.includes(room) && (priority.has(room) || !latestComplete.has(room) || daysSince(latestComplete.get(room)!.date, day) >= interval))
+  const done = eligible.filter(room => complete.some(r => r.room === room && r.date === day));
+  const due = eligible.filter(room => !done.includes(room) && (priority.has(room) || !latestComplete.has(room) || daysSince(latestComplete.get(room)!.date, day) >= interval))
     .sort((a, b) => Number(priority.has(b)) - Number(priority.has(a)) ||
       (latestComplete.get(a)?.date || "").localeCompare(latestComplete.get(b)?.date || "") || Number(a) - Number(b));
   // Keep oldest-first ordering within each priority group and honour today's deferrals.
   const candidates = due.filter(room => !deferred.includes(room));
   // Recent poor-condition rooms can be covered by the interval and still need another visit.
-  const covered = rooms.filter(room => latestComplete.has(room) && daysSince(latestComplete.get(room)!.date, day) < interval).length;
-  return { goal, interval, done, due, covered, priorityRooms,
+  const covered = eligible.filter(room => latestComplete.has(room) && daysSince(latestComplete.get(room)!.date, day) < interval).length;
+  return { total: eligible.length, goal, interval, done, due, covered, priorityRooms,
     plan: candidates.slice(0, Math.max(0, goal - done.length)),
-    next: candidates[0], cycleWorkDays: Math.ceil(rooms.length / goal) };
+    next: candidates[0], cycleWorkDays: goal ? Math.ceil(eligible.length / goal) : 0 };
 }
