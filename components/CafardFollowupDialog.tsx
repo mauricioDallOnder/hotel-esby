@@ -2,9 +2,9 @@
 
 import { useRef, useState } from "react";
 import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
-import { cafardStatusLabels, type CafardCase, type CafardStatus } from "@/lib/cafards";
+import { cafardStatusLabels, cafardTreatmentReminder, type CafardCase, type CafardStatus } from "@/lib/cafards";
 import { deviceStore } from "@/lib/deviceStore";
-import { createId, today } from "@/lib/domain";
+import { createId, displayDate, today } from "@/lib/domain";
 import type { PendingEntry } from "@/lib/entryQueue";
 import { workEntrySchema, type WorkEntry } from "@/lib/rooms";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
@@ -24,6 +24,7 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
     resolvedOn: record.resolvedOn, product: record.product, notes: "",
   }));
   const value = draft.value;
+  const reminder = value ? cafardTreatmentReminder({ status: value.cafardStatus, treatedOn: value.treatedOn }) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [validationAttempted, setValidationAttempted] = useState(false);
@@ -88,7 +89,7 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
                     {cafardStatusLabels[status]}
                   </Button>)}
                 </Box>
-                {value.cafardStatus === "traite" && <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>Une vérification reste nécessaire après l’application du produit.</Typography>}
+                {value.cafardStatus === "traite" && <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>Un rappel apparaîtra dans l’application 7 jours après l’application du produit.</Typography>}
               </Box>
               <TextField required type="date" label="Date de la mise à jour" value={value.date} onChange={event => update({ date: event.target.value })}
                 error={!!fieldError("date")} helperText={fieldError("date") || "Jour de la vérification ou de l’intervention."}
@@ -97,7 +98,9 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
                 error={!!fieldError("detectedOn")} helperText={fieldError("detectedOn") || "Laissez vide si la date n’est pas connue."}
                 slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: value.date || today() } }} />
               <TextField type="date" label="Date d’application du produit" required={value.cafardStatus === "traite"} value={value.treatedOn || ""} onChange={event => update({ treatedOn: event.target.value || null })}
-                error={!!fieldError("treatedOn")} helperText={fieldError("treatedOn") || "Pour une nouvelle application, indiquez sa date."}
+                error={!!fieldError("treatedOn")} helperText={fieldError("treatedOn") || (reminder
+                  ? `Vérification prévue le ${displayDate(reminder.dueOn)}. Pour une nouvelle application, modifiez la date.`
+                  : "Pour une nouvelle application, indiquez sa date.")}
                 slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: value.detectedOn || undefined, max: value.date || today() } }} />
               <TextField label="Produit utilisé (facultatif)" value={value.product} onChange={event => update({ product: event.target.value })}
                 error={!!fieldError("product")} helperText={fieldError("product")} slotProps={{ htmlInput: { maxLength: 200 } }} />

@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, AlertTitle, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { CafardFollowupDialog } from "@/components/CafardFollowupDialog";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { RoomSelect } from "@/components/RoomSelect";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
-import { cafardCases, cafardStatusLabels, type CafardCase, type CafardStatus } from "@/lib/cafards";
+import { cafardCases, cafardStatusLabels, cafardTreatmentReminder, type CafardCase, type CafardStatus } from "@/lib/cafards";
 import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
 import { displayDate } from "@/lib/domain";
 import { roomGroups } from "@/lib/rooms";
@@ -16,13 +16,27 @@ import { useRoomObservations } from "@/lib/useRoomObservations";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 
 const statusColors = { a_verifier: "warning", signale: "error", traite: "info", resolu: "success" } as const;
-const filters = { pending: "À suivre", resolved: "Résolus", all: "Tous" } as const;
+const filters = {
+  pending: "Suivis en cours", all: "Tous les états",
+  a_verifier: cafardStatusLabels.a_verifier, signale: cafardStatusLabels.signale,
+  traite: cafardStatusLabels.traite, resolu: cafardStatusLabels.resolu,
+  due: "À vérifier après traitement",
+} as const;
+type CafardFilter = keyof typeof filters;
 const dateText = (date: string | null) => date ? displayDate(date) : "Non renseignée";
 
-function CafardCard({ record, pending, onEdit }: { record: CafardCase; pending: boolean; onEdit: () => void }) {
+function matchesFilter(record: CafardCase, filter: CafardFilter, day: string): boolean {
+  if (filter === "all") return true;
+  if (filter === "pending") return record.status !== "resolu";
+  if (filter === "due") return cafardTreatmentReminder(record, day)?.due === true;
+  return record.status === filter;
+}
+
+function CafardCard({ record, day, pending, onEdit }: { record: CafardCase; day: string; pending: boolean; onEdit: () => void }) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const reminder = cafardTreatmentReminder(record, day);
   return <Paper component="article" aria-label={"Chambre " + record.room} variant="outlined"
-    sx={{ p: 2, minWidth: 0, borderTop: "4px solid", borderTopColor: statusColors[record.status] + ".main" }}>
+    sx={{ p: 2, minWidth: 0, borderTop: "4px solid", borderTopColor: (reminder?.due ? "warning" : statusColors[record.status]) + ".main" }}>
     <Stack spacing={1.5}>
       <Stack direction="row" useFlexGap sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
         <Typography component="h3" variant="h4" sx={{ fontWeight: 800 }}>{record.room}</Typography>
@@ -32,6 +46,7 @@ function CafardCard({ record, pending, onEdit }: { record: CafardCase; pending: 
         {([
           ["Détection", record.detectedOn],
           ["Dernière application", record.treatedOn],
+          ...(reminder ? [["Vérification prévue", reminder.dueOn]] : []),
           ["Dernière mise à jour", record.updatedOn],
           ...(record.status === "resolu" ? [["Résolution", record.resolvedOn]] : []),
         ] as [string, string | null][]).map(([label, date]) => <Box key={label} sx={{ display: "contents" }}>
@@ -39,6 +54,10 @@ function CafardCard({ record, pending, onEdit }: { record: CafardCase; pending: 
           <Typography component="dd" variant="body2" sx={{ m: 0, textAlign: "right", fontWeight: date ? 600 : 400 }}>{dateText(date)}</Typography>
         </Box>)}
       </Box>
+      {reminder?.due && <Alert severity="warning" role="note">
+        <AlertTitle>Vérification à faire</AlertTitle>
+        Passez dans cette chambre pour vérifier la présence de cafards, puis mettez le suivi à jour.
+      </Alert>}
       {record.product && <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>Produit : {record.product}</Typography>}
       {record.notes && <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{record.notes}</Typography>}
       {pending && <Typography role="status" variant="caption" color="warning.main">En attente d’envoi</Typography>}
@@ -75,19 +94,20 @@ function emptyCase(room: string): CafardCase {
 
 export default function CafardsPage() {
   const { issues } = useAppContext();
-  const { history, pendingIds } = useRoomObservations();
+  const { history, pendingIds, day } = useRoomObservations();
   const { events, isPending } = useWorkEvents();
   const { ready } = useEntries();
   const records = cafardCases(history, events, cafardSeedsFromIssues(issues));
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<keyof typeof filters>("pending");
+  const [filter, setFilter] = useState<CafardFilter>("pending");
   const [editing, setEditing] = useState<CafardCase | null>(null);
   const [adding, setAdding] = useState(false);
   const [room, setRoom] = useState("");
   const [saved, setSaved] = useState<{ room: string; status: CafardStatus } | null>(null);
   const scoped = records.filter(record => record.room.includes(search.trim()));
-  const counts = { all: scoped.length, pending: scoped.filter(record => record.status !== "resolu").length, resolved: scoped.filter(record => record.status === "resolu").length };
-  const visible = scoped.filter(record => filter === "all" || (filter === "resolved" ? record.status === "resolu" : record.status !== "resolu"));
+  const dueRooms = records.filter(record => cafardTreatmentReminder(record, day)?.due);
+  const counts = Object.fromEntries((Object.keys(filters) as CafardFilter[]).map(key => [key, scoped.filter(record => matchesFilter(record, key, day)).length])) as Record<CafardFilter, number>;
+  const visible = scoped.filter(record => matchesFilter(record, filter, day));
   const groups = roomGroups.map(group => ({ ...group, records: visible.filter(record => (group.rooms as readonly string[]).includes(record.room)) })).filter(group => group.records.length);
   const existing = records.find(record => record.room === room);
   function openRoom() {
@@ -101,25 +121,30 @@ export default function CafardsPage() {
       action={<Button variant="contained" startIcon={<Add />} disabled={!ready} onClick={() => { setRoom(""); setAdding(true); }} sx={{ minHeight: 48, flexShrink: 0 }}>Ajouter une chambre</Button>} />
     <Stack spacing={3}>
       {saved && <Alert severity="success" onClose={() => setSaved(null)} closeText="Masquer ce message">
-        Suivi de la chambre {saved.room} conservé.{saved.status === "resolu" ? " Retrouvez-le dans « Résolus »." : ""}
+        Suivi de la chambre {saved.room} conservé.{saved.status === "resolu" ? " Retrouvez-le en choisissant « Résolu » dans le filtre." : ""}
       </Alert>}
-      <Typography variant="body2" color="text.secondary">Les cafards détectés pendant un contrôle apparaissent ici. Après application du produit, vérifiez la chambre avant de la marquer résolue.</Typography>
+      <Typography variant="body2" color="text.secondary">Les cafards détectés pendant un contrôle apparaissent ici. Un rappel s’affiche 7 jours après l’application du produit : vérifiez la chambre, puis mettez le suivi à jour.</Typography>
+      {!!dueRooms.length && <Alert severity="warning" role="status" sx={{ "& .MuiAlert-message": { minWidth: 0, width: "100%" } }}>
+        <AlertTitle>{dueRooms.length} {dueRooms.length === 1 ? "chambre à vérifier" : "chambres à vérifier"} après traitement</AlertTitle>
+        <Typography variant="body2">Le produit a été appliqué il y a au moins 7 jours. Passez dans les chambres concernées pour vérifier la présence de cafards.</Typography>
+        <Button variant="outlined" color="inherit" onClick={() => { setFilter("due"); setSearch(""); }} sx={{ mt: 1.5, minHeight: 44 }}>
+          Voir les chambres à vérifier
+        </Button>
+      </Alert>}
       <Stack spacing={1.5}>
-        <TextField type="search" label="Rechercher une chambre" value={search} onChange={event => setSearch(event.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
-        <Box role="group" aria-label="Filtrer les suivis de cafards" sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }}>
-          {(Object.keys(filters) as (keyof typeof filters)[]).map(key => <Button key={key} variant={filter === key ? "contained" : "outlined"} onClick={() => setFilter(key)}
-            aria-label={filters[key] + " : " + counts[key]} aria-pressed={filter === key}
-            sx={{ minHeight: 48, px: 1, flexWrap: "wrap", gap: 0.75 }}>
-            {filters[key]} <Typography component="span" sx={{ fontWeight: 800 }}>{counts[key]}</Typography>
-          </Button>)}
-        </Box>
-        <Typography variant="caption" color="text.secondary" role="status">{visible.length} chambre(s) affichée(s). Les compteurs suivent la recherche.</Typography>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+          <TextField type="search" label="Rechercher une chambre" value={search} onChange={event => setSearch(event.target.value)} fullWidth slotProps={{ htmlInput: { inputMode: "numeric" } }} />
+          <TextField select label="État du suivi" value={filter} onChange={event => setFilter(event.target.value as CafardFilter)} fullWidth slotProps={{ select: { native: true } }}>
+            {(Object.keys(filters) as CafardFilter[]).map(key => <option key={key} value={key}>{filters[key]} · {counts[key]}</option>)}
+          </TextField>
+        </Stack>
+        <Typography variant="caption" color="text.secondary" role="status">{visible.length} {visible.length === 1 ? "chambre affichée" : "chambres affichées"}. Les nombres du filtre suivent la recherche.</Typography>
       </Stack>
       {!groups.length && <Alert severity="info">Aucun suivi ne correspond à cette recherche.</Alert>}
       {groups.map(group => <Box component="section" key={group.label} aria-label={group.label}>
         <Typography component="h2" variant="h6" sx={{ mb: 1.5 }}>{group.label} · {group.records.length}</Typography>
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(3, minmax(0, 1fr))" }, alignItems: "start", gap: 2 }}>
-          {group.records.map(record => <CafardCard key={record.room} record={record}
+          {group.records.map(record => <CafardCard key={record.room} record={record} day={day}
             pending={isPending(record.lastEventId || undefined) || pendingIds.has(record.lastEventId || "")}
             onEdit={() => setEditing(record)} />)}
         </Box>
