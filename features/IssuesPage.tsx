@@ -55,7 +55,7 @@ export default function IssuesPage() {
   const changed = JSON.stringify(filters) !== JSON.stringify(defaultIssueFilters);
   return <>
     <ConnectionBar />
-    <PageTitle eyebrow="Maintenance" title="Anomalies & suivi" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={<Button variant="contained" startIcon={<Add />} onClick={() => setDialog("new")}>Signaler une anomalie</Button>} />
+    <PageTitle eyebrow="Maintenance" title="Problèmes techniques" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={<Button variant="contained" startIcon={<Add />} onClick={() => setDialog("new")}>Signaler une anomalie</Button>} />
     <Stack spacing={2.5}>
       {message && <Alert severity="success" onClose={() => setMessage("")}>{message}</Alert>}
       <Stack spacing={0.75}>

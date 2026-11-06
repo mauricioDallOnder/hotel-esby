@@ -21,6 +21,7 @@ const menuItems = [
     path: "/checklist",
   },
   { label: "Occupation des chambres", path: "/occupation" },
+  { label: "Objets récupérés", path: "/objets-recuperes" },
   { label: "Absences et départs", path: "/familles" },
   
   {
@@ -28,7 +29,7 @@ const menuItems = [
     path: "/quotidien",
   },
   {
-    label: "Anomalies & suivi",
+    label: "Problèmes techniques",
     path: "/anomalies",
   },
   { label: "Suivi des cafards", path: "/cafards" },
