@@ -8,7 +8,7 @@ import Search from "@mui/icons-material/Search";
 import { CollectedItemDialog, type CollectedItemAction } from "@/components/CollectedItemDialog";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { useEntries } from "@/context/EntriesContext";
-import { collectedItems, filterCollectedItems, type CollectedItemHistoryEvent, type CollectedItemRecord } from "@/lib/collectedItems";
+import { collectedItems, collectedItemRoomLabel, filterCollectedItems, type CollectedItemHistoryEvent, type CollectedItemRecord } from "@/lib/collectedItems";
 import { displayDate } from "@/lib/domain";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 
@@ -31,13 +31,13 @@ function ItemCard({ record, pending, ready, onAction }: {
   const [historyOpen, setHistoryOpen] = useState(false);
   const returned = !!record.returnedOn;
   const color = returned ? "success" : "warning";
-  return <Paper component="article" aria-label={`Chambre ${record.room} · ${record.itemName}`} variant="outlined"
+  return <Paper component="article" aria-label={`${collectedItemRoomLabel(record.room)} · ${record.itemName}`} variant="outlined"
     sx={{ p: 2.5, minWidth: 0, borderTop: "4px solid", borderTopColor: color + ".main" }}>
     <Stack spacing={1.5}>
       <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
         <Box>
           <Typography variant="caption" color="text.secondary">Chambre</Typography>
-          <Typography component="h2" variant="h4" sx={{ fontWeight: 800, lineHeight: 1.2 }}>{record.room}</Typography>
+          <Typography component="h2" variant={record.room ? "h4" : "h6"} sx={{ fontWeight: 800, lineHeight: 1.2 }}>{record.room || "Non identifiée"}</Typography>
         </Box>
         <Chip size="small" variant="outlined" color={color} label={returned ? "Restitué" : "En armoire"} />
       </Stack>
@@ -68,7 +68,7 @@ function ItemCard({ record, pending, ready, onAction }: {
               <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
                 {new Date(event.occurredAt).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" })} · {actor}
               </Typography>
-              <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: "anywhere" }}>Chambre {event.room} · {event.itemName}</Typography>
+              <Typography variant="body2" sx={{ mt: 0.75, overflowWrap: "anywhere" }}>{collectedItemRoomLabel(event.room)} · {event.itemName}</Typography>
               <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>Récupéré le {displayDate(event.collectedOn)} par {event.collectedBy}.</Typography>
               {event.returnedOn ? <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>Restitué le {displayDate(event.returnedOn)} par {event.returnedBy}.</Typography> : <Typography variant="body2">En armoire</Typography>}
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{event.reason ? "Motif : " + event.reason : "Motif non renseigné."}</Typography>
@@ -93,7 +93,7 @@ export default function CollectedItemsPage() {
   const visible = scoped.filter(record => filter === "all" || (filter === "returned" ? !!record.returnedOn : !record.returnedOn));
   const emptyTitle = search.trim() ? "Aucun objet trouvé" : !records.length ? "Aucun objet enregistré" : filter === "stored" ? "Aucun objet en armoire" : "Aucun objet restitué";
   const emptyDetail = search.trim() ? "Essayez un numéro de chambre, un nom ou un autre mot." : !records.length ?
-    "Ajoutez un objet dès qu’il est étiqueté et rangé dans l’armoire." : filter === "stored" ?
+    "Ajoutez un objet dès qu’il est rangé dans l’armoire." : filter === "stored" ?
       "Les objets déjà rendus restent consultables dans « Restitués »." : "Les objets rendus apparaîtront ici avec leur date de restitution.";
   return <>
     <ConnectionBar />
@@ -128,10 +128,11 @@ export default function CollectedItemsPage() {
     </Stack>
     {dialog && <CollectedItemDialog key={dialog.action + ":" + (dialog.record?.id || "new") + ":" + (dialog.record?.revision || 0)} action={dialog.action} record={dialog.record}
       onClose={() => setDialog(null)} onSaved={result => {
-        const message = dialog.action === "return" ? `Restitution conservée · chambre ${result.room}. Retrouvez l’objet dans « Restitués ».` :
-          dialog.action === "restore" ? `Restitution annulée · chambre ${result.room}. L’objet est de nouveau « En armoire ».` :
-            dialog.action === "edit" ? `Fiche corrigée · chambre ${result.room}. Les anciennes informations restent dans l’historique.` :
-              `Objet conservé · chambre ${result.room}. Pensez à mettre l’étiquette et à le ranger dans l’armoire.`;
+        const roomLabel = collectedItemRoomLabel(result.room);
+        const message = dialog.action === "return" ? `Restitution conservée · ${roomLabel}. Retrouvez l’objet dans « Restitués ».` :
+          dialog.action === "restore" ? `Restitution annulée · ${roomLabel}. L’objet est de nouveau « En armoire ».` :
+            dialog.action === "edit" ? `Fiche corrigée · ${roomLabel}. Les anciennes informations restent dans l’historique.` :
+              `Objet conservé · ${roomLabel}. ${result.room ? "Pensez à mettre l’étiquette et à le ranger dans l’armoire." : "Vous pourrez renseigner le numéro plus tard avec « Corriger la fiche »."}`;
         setSaved({ message, returned: result.returned });
         if (dialog.action === "create" || dialog.action === "restore") { setFilter("stored"); setSearch(""); }
         setDialog(null);

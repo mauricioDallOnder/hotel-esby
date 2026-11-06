@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createId } from "../lib/domain";
-import { collectedItems, filterCollectedItems } from "../lib/collectedItems";
-import { parseEntry, workEntrySchema, type WorkEntry, type WorkEvent } from "../lib/rooms";
+import { collectedItemRoomLabel, collectedItems, filterCollectedItems } from "../lib/collectedItems";
+import { parseEntry, roomSchema, workEntrySchema, type WorkEntry, type WorkEvent } from "../lib/rooms";
 import { validateWorkEntry } from "../lib/work";
 
 function item(patch: Partial<WorkEntry> = {}): WorkEntry {
@@ -19,7 +19,7 @@ function next(entry: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry {
     occurredAt: "2026-10-13T10:00:00.000Z", date: "2026-10-13", ...patch };
 }
 
-test("collected items require a real room, object, collection date and collector while the reason is optional", () => {
+test("collected items require a known or explicitly unidentified room, object, collection date and collector", () => {
   const stored = item({ itemName: " Multiprise blanche ", collectedBy: " Agent test A ", notes: "   " });
   const parsed = workEntrySchema.parse(stored);
   assert.equal(parsed.itemName, "Multiprise blanche");
@@ -28,8 +28,20 @@ test("collected items require a real room, object, collection date and collector
   assert.equal(parsed.returnedOn, null);
   assert.equal(parsed.returnedBy, "");
   assert.deepEqual(parseEntry(stored), parsed);
+  const unidentified = workEntrySchema.parse({ ...stored, room: "", roomUnidentified: true });
+  assert.equal(unidentified.room, "");
+  assert.equal(unidentified.roomUnidentified, true);
+  assert.equal(unidentified.notes, "");
+  assert.deepEqual(parseEntry(unidentified), unidentified);
+  assert.equal(roomSchema.safeParse("").success, false);
+  assert.equal(roomSchema.safeParse("unidentified").success, false);
+  for (const flag of [false, null, "true", 1]) {
+    assert.equal(workEntrySchema.safeParse({ ...stored, room: "", roomUnidentified: flag }).success, false);
+  }
   const invalid = [
-    { room: "" }, { room: "999" }, { targetId: "101" }, { actor: " " },
+    { room: "" }, { room: "999" }, { room: "unidentified", roomUnidentified: true as const },
+    { room: "999", roomUnidentified: true as const }, { room: "101", roomUnidentified: true as const },
+    { targetId: "101" }, { actor: " " },
     { itemName: undefined }, { itemName: " " }, { itemName: "x".repeat(201) },
     { collectedOn: undefined }, { collectedOn: "2026-02-30" }, { collectedOn: "2026-10-13" },
     { collectedBy: undefined }, { collectedBy: " " }, { collectedBy: "x".repeat(201) },
@@ -68,7 +80,13 @@ test("existing work payloads retain their serialized shape and reject fields bel
     { ...common, kind: "cafardFollowup", room: "101", targetId: "101", notes: "", cafardStatus: "a_verifier",
       detectedOn: null, treatedOn: null, resolvedOn: null, product: "" },
   ];
-  const objectFields = { itemName: "Multiprise", collectedOn: "2026-10-10", collectedBy: "Agent test A", returnedOn: null, returnedBy: "" };
+  const legacyItem = item();
+  assert.equal(JSON.stringify(workEntrySchema.parse(legacyItem)), JSON.stringify(legacyItem));
+  assert.equal(Object.hasOwn(workEntrySchema.parse(legacyItem), "roomUnidentified"), false);
+  const legacyRecord = collectedItems([legacyItem])[0];
+  assert.equal(legacyRecord.roomUnidentified, false);
+  assert.equal(legacyRecord.history[0].roomUnidentified, false);
+  const objectFields = { roomUnidentified: true, itemName: "Multiprise", collectedOn: "2026-10-10", collectedBy: "Agent test A", returnedOn: null, returnedBy: "" };
   for (const old of oldEntries) {
     // Existing queue hashes use JSON.stringify(parseEntry(payload)). New optional
     // fields must not add keys/defaults or change the serialized property order.
@@ -100,6 +118,48 @@ test("each physical object has an independent record and revision even when the 
   assert.equal(b.revision, 1);
   assert.equal(b.history.length, 1);
   assert.deepEqual(collectedItems([]), []);
+});
+
+test("unidentified objects remain independent through return and later identification without rewriting history", () => {
+  const first = item({ room: "", roomUnidentified: true, itemName: "Plaque électrique", notes: "" });
+  const second = item({ room: "", roomUnidentified: true, itemName: "Multiprise bleue" });
+  const returned = next(first, { returnedOn: "2026-10-13", returnedBy: "Agent test B", actor: "Agent test B" });
+  assert.equal(workEntrySchema.safeParse(returned).success, true);
+  assert.equal(validateWorkEntry(second, [first], []), undefined);
+  assert.equal(validateWorkEntry(returned, [first, second], []), undefined);
+  const beforeIdentification = collectedItems([first, second, returned]);
+  assert.equal(beforeIdentification.length, 2);
+  assert.equal(beforeIdentification.find(record => record.id === first.targetId)?.revision, 2);
+  assert.equal(beforeIdentification.find(record => record.id === second.targetId)?.returnedOn, null);
+  assert.deepEqual(filterCollectedItems(beforeIdentification, "non identifiee plaque").map(record => record.id), [first.targetId]);
+  assert.equal(collectedItemRoomLabel(first.room), "Chambre non identifiée");
+
+  const stillFlagged = next(returned, { room: "102" });
+  assert.equal(workEntrySchema.safeParse(stillFlagged).success, false);
+  const identified = workEntrySchema.parse({ ...stillFlagged, roomUnidentified: undefined });
+  assert.equal(validateWorkEntry(identified, [first, second, returned], []), undefined);
+  const records = collectedItems([returned, first, identified, second]);
+  const record = records.find(record => record.id === first.targetId)!;
+  assert.equal(records.length, 2);
+  assert.equal(record.id, first.targetId);
+  assert.equal(record.room, "102");
+  assert.equal(record.roomUnidentified, false);
+  assert.equal(record.revision, 3);
+  assert.equal(record.returnedOn, returned.returnedOn);
+  assert.equal(record.returnedBy, "Agent test B");
+  assert.deepEqual(record.history.map(event => [event.room, event.roomUnidentified]), [["102", false], ["", true], ["", true]]);
+  assert.deepEqual(record.history.map(event => event.id), [identified.id, returned.id, first.id]);
+  assert.equal(collectedItemRoomLabel(record.room), "Chambre 102");
+  assert.deepEqual(filterCollectedItems(records, "non identifiee").map(record => record.id), [second.targetId]);
+  assert.deepEqual(filterCollectedItems(records, "CHAMBRE 102").map(record => record.id), [first.targetId]);
+  assert.deepEqual(filterCollectedItems(records, "NON IDENTIFIÉE multiprise").map(record => record.id), [second.targetId]);
+
+  // Projection also refuses malformed persisted data, so an accidentally blank
+  // room or an inconsistent flag cannot silently become an unidentified object.
+  assert.deepEqual(collectedItems([
+    item({ room: "" }), item({ room: "999", roomUnidentified: true }),
+    item({ room: "101", roomUnidentified: true }),
+  ]), []);
 });
 
 test("corrections and cancellation of a return preserve every dated snapshot and author", () => {

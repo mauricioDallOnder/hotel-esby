@@ -141,6 +141,7 @@ export const workEntrySchema = z.object({
   resolvedOn: z.iso.date().nullable().optional(), product: z.string().trim().max(200).optional(),
   itemName: required.optional(), collectedOn: z.iso.date().optional(), collectedBy: required.optional(),
   returnedOn: z.iso.date().nullable().optional(), returnedBy: z.string().trim().max(200).optional(),
+  roomUnidentified: z.literal(true).optional(),
 }).superRefine((v, ctx) => {
   const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
   if (v.kind === "roomAvailability") {
@@ -160,7 +161,8 @@ export const workEntrySchema = z.object({
     if (v.cafardStatus !== "resolu" && v.resolvedOn) invalid("resolvedOn", "Un suivi en cours ne peut pas avoir de date de résolution.");
   } else if (v.kind === "collectedItem") {
     if (!z.string().uuid().safeParse(v.targetId).success) invalid("targetId", "Identifiant de l’objet invalide.");
-    if (!v.room) invalid("room", "Choisissez la chambre où l’objet a été récupéré.");
+    if (!v.room && v.roomUnidentified !== true) invalid("room", "Choisissez la chambre ou indiquez « Chambre non identifiée ».");
+    if (v.room && v.roomUnidentified === true) invalid("roomUnidentified", "Une chambre connue ne peut pas être non identifiée.");
     if (!v.itemName) invalid("itemName", "Indiquez l’objet récupéré.");
     if (!v.collectedOn) invalid("collectedOn", "Indiquez la date de récupération.");
     if (!v.collectedBy) invalid("collectedBy", "Indiquez qui a récupéré l’objet.");
@@ -182,7 +184,7 @@ export const workEntrySchema = z.object({
   if (v.kind !== "roomAvailability" && v.free !== undefined) invalid("free", "Disponibilité inattendue.");
   if (v.kind !== "cafardFollowup" && [v.cafardStatus, v.detectedOn, v.treatedOn, v.resolvedOn, v.product].some(value => value !== undefined))
     invalid("kind", "Données de suivi des cafards inattendues.");
-  if (v.kind !== "collectedItem" && [v.itemName, v.collectedOn, v.collectedBy, v.returnedOn, v.returnedBy].some(value => value !== undefined))
+  if (v.kind !== "collectedItem" && [v.itemName, v.collectedOn, v.collectedBy, v.returnedOn, v.returnedBy, v.roomUnidentified].some(value => value !== undefined))
     invalid("kind", "Données d’objet récupéré inattendues.");
   if (v.kind === "dailyTask" && v.room) invalid("room", "Une tâche n’est pas un contrôle de chambre.");
 });

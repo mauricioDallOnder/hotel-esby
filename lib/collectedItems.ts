@@ -4,6 +4,7 @@ type Work = WorkEntry | WorkEvent;
 
 type ItemDetails = {
   room: string;
+  roomUnidentified: boolean;
   itemName: string;
   collectedOn: string;
   collectedBy: string;
@@ -32,10 +33,14 @@ export type CollectedItemRecord = ItemDetails & {
 function snapshot(event: Work): CollectedItemHistoryEvent {
   return {
     id: event.id, date: event.date, occurredAt: event.occurredAt, actor: event.actor,
-    expectedRevision: event.expectedRevision, room: event.room, itemName: event.itemName!,
+    expectedRevision: event.expectedRevision, room: event.room, roomUnidentified: event.roomUnidentified === true, itemName: event.itemName!,
     collectedOn: event.collectedOn!, collectedBy: event.collectedBy!, reason: event.notes,
     returnedOn: event.returnedOn ?? null, returnedBy: event.returnedBy || "",
   };
+}
+
+export function collectedItemRoomLabel(room: string): string {
+  return room ? `Chambre ${room}` : "Chambre non identifiée";
 }
 
 /**
@@ -45,7 +50,8 @@ function snapshot(event: Work): CollectedItemHistoryEvent {
  */
 export function collectedItems(events: readonly Work[]): CollectedItemRecord[] {
   const histories = new Map<string, Work[]>();
-  const unique = new Map(events.filter(event => event.kind === "collectedItem" && rooms.includes(event.room)
+  const unique = new Map(events.filter(event => event.kind === "collectedItem"
+    && (event.roomUnidentified === true ? event.room === "" : event.roomUnidentified === undefined && rooms.includes(event.room))
     && event.itemName && event.collectedOn && event.collectedBy).map(event => [event.id, event]));
   for (const event of unique.values()) {
     const history = histories.get(event.targetId) || [];
@@ -55,9 +61,9 @@ export function collectedItems(events: readonly Work[]): CollectedItemRecord[] {
   return [...histories.entries()].map(([id, events]): CollectedItemRecord => {
     const ordered = [...events].sort((a, b) => b.expectedRevision - a.expectedRevision || b.id.localeCompare(a.id));
     const latest = ordered[0];
-    const { room, itemName, collectedOn, collectedBy, reason, returnedOn, returnedBy } = snapshot(latest);
+    const { room, roomUnidentified, itemName, collectedOn, collectedBy, reason, returnedOn, returnedBy } = snapshot(latest);
     return {
-      id, room, itemName, collectedOn, collectedBy, reason, returnedOn, returnedBy,
+      id, room, roomUnidentified, itemName, collectedOn, collectedBy, reason, returnedOn, returnedBy,
       updatedAt: latest.occurredAt, revision: latest.expectedRevision + 1, lastEventId: latest.id,
       history: ordered.map(snapshot),
     };
@@ -72,7 +78,7 @@ function normalizeSearch(value: string): string {
 export function filterCollectedItems(records: readonly CollectedItemRecord[], query: string): CollectedItemRecord[] {
   const terms = normalizeSearch(query).trim().split(/\s+/).filter(Boolean);
   return records.filter(record => {
-    const text = normalizeSearch([record.room, record.itemName, record.collectedBy, record.reason, record.returnedBy].join(" "));
+    const text = normalizeSearch([collectedItemRoomLabel(record.room), record.itemName, record.collectedBy, record.reason, record.returnedBy].join(" "));
     return terms.every(term => text.includes(term));
   });
 }

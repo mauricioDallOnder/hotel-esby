@@ -17,6 +17,74 @@ async function send(page: Page, entry: WorkEntry) {
   return response.json();
 }
 
+test("an object without a room label can be returned and identified later without losing its history", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.goto("/objets-recuperes");
+  await page.getByRole("button", { name: "Ajouter un objet", exact: true }).click();
+  const add = page.getByRole("dialog", { name: "Ajouter un objet", exact: true });
+  await expect(add.getByLabel(/^Chambre/)).toHaveValue("");
+  await add.getByLabel(/^Chambre/).selectOption({ label: "Chambre non identifiée" });
+  await add.getByRole("textbox", { name: /^Objet/ }).fill("Multiprise bleue sans étiquette de test");
+  await add.getByLabel(/^Récupéré par/).fill("Agent exemple sans étiquette");
+  await add.getByRole("button", { name: "Fermer", exact: true }).click();
+  await page.getByRole("button", { name: "Ajouter un objet", exact: true }).click();
+  await expect(add.locator("select option:checked")).toHaveText("Chambre non identifiée");
+  await expect(add.getByRole("textbox", { name: /^Objet/ })).toHaveValue("Multiprise bleue sans étiquette de test");
+  await add.getByRole("button", { name: "Enregistrer l’objet", exact: true }).click();
+  await expect(add).toHaveCount(0);
+  await expect.poll(async () => (await savedItems(page, "")).length).toBe(1);
+  const original = (await savedItems(page, ""))[0];
+  expect(original.roomUnidentified).toBe(true);
+  expect(original.collectedBy).toBe("Agent exemple sans étiquette");
+  expect(original.notes).toBe("");
+
+  await page.reload();
+  await page.getByLabel("Rechercher un objet", { exact: true }).fill("non identifiee");
+  const unknown = page.getByRole("article", { name: "Chambre non identifiée · Multiprise bleue sans étiquette de test", exact: true });
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await expect(unknown).toContainText("Non identifiée");
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await page.screenshot({ path: test.info().outputPath("unidentified-item-mobile.png"), fullPage: true, animations: "disabled" });
+  await unknown.getByRole("button", { name: "Restituer", exact: true }).click();
+  const giveBack = page.getByRole("dialog", { name: "Restituer l’objet", exact: true });
+  await expect(giveBack).toContainText("Chambre non identifiée");
+  await giveBack.getByLabel(/^Restitué par/).fill("Agent restitution test");
+  await giveBack.getByRole("button", { name: "Confirmer la restitution", exact: true }).click();
+  await expect(giveBack).toHaveCount(0);
+  await expect.poll(async () => (await savedItems(page, "")).length).toBe(2);
+  await page.getByRole("button", { name: /^Restitués :/ }).click();
+  await expect(unknown).toContainText("Agent restitution test");
+
+  await unknown.getByRole("button", { name: "Corriger la fiche", exact: true }).click();
+  const correction = page.getByRole("dialog", { name: "Corriger la fiche", exact: true });
+  await expect(correction.locator("select option:checked")).toHaveText("Chambre non identifiée");
+  await correction.getByLabel(/^Chambre/).selectOption("101");
+  await correction.getByRole("button", { name: "Enregistrer la correction", exact: true }).click();
+  await expect(correction).toHaveCount(0);
+  await expect.poll(async () => (await savedItems(page, "101")).length).toBe(1);
+  await page.getByLabel("Rechercher un objet", { exact: true }).fill("101");
+  const identified = page.getByRole("article", { name: "Chambre 101 · Multiprise bleue sans étiquette de test", exact: true });
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await expect(identified).toContainText("Agent restitution test");
+  await page.reload();
+  await page.getByRole("button", { name: /^Restitués :/ }).click();
+  await identified.getByRole("button", { name: /^Historique/ }).click();
+  await expect(identified).toContainText("Chambre non identifiée");
+  await expect(identified).toContainText("Agent exemple sans étiquette");
+  const events = (await state(page)).workEvents?.filter(event => event.targetId === original.targetId) || [];
+  expect(events).toHaveLength(3);
+  expect(events.map(event => event.room)).toEqual(["", "", "101"]);
+  expect(events.map(event => event.roomUnidentified)).toEqual([true, true, undefined]);
+  expect(new Set(events.map(event => event.targetId)).size).toBe(1);
+
+  await page.goto("/cafards");
+  await page.getByRole("button", { name: "Ajouter une chambre", exact: true }).click();
+  const otherRoomSelector = page.getByRole("dialog", { name: "Ajouter une chambre au suivi", exact: true });
+  await expect(otherRoomSelector.locator("option", { hasText: "Chambre non identifiée" })).toHaveCount(0);
+});
+
 test("employees can find, return and correct separate objects from the same room on mobile", async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
