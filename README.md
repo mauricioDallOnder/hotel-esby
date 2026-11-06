@@ -9,6 +9,10 @@ sua própria ficha, mesmo quando vários pertencem ao mesmo quarto.
 - Informe **Chambre**, o objeto, a data de recolhimento e **Récupéré par**. O motivo
   é facultativo. Os atalhos **Plaque de cuisson**, **Multiprise** e
   **Appareil > 100 W** ajudam a preencher o objeto; a descrição pode ser ajustada.
+- Para um objeto sem identificação, selecione **Chambre non identifiée**. Ele
+  permanece disponível na busca, nos filtros e no histórico, e pode ser devolvido
+  normalmente. Se descobrir o quarto depois, use **Corriger la fiche** para
+  informar o número. A ficha e seu histórico continuam sendo os mesmos.
 - A página abre em **En armoire**. A busca encontra quarto, objeto, nomes e motivo,
   sem diferenciar maiúsculas ou acentos. Os filtros **Restitués** e **Tous** permitem
   consultar também as devoluções. As fichas mais recentemente recolhidas vêm primeiro.

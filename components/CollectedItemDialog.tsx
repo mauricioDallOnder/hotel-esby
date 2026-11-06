@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Paper, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { RoomSelect } from "@/components/RoomSelect";
-import type { CollectedItemRecord } from "@/lib/collectedItems";
+import { collectedItemRoomLabel, type CollectedItemRecord } from "@/lib/collectedItems";
 import { deviceStore } from "@/lib/deviceStore";
 import { createId, displayDate, today } from "@/lib/domain";
 import type { PendingEntry } from "@/lib/entryQueue";
@@ -24,12 +24,13 @@ type Saved = { room: string; itemName: string; returned: boolean };
 const titles = { create: "Ajouter un objet", edit: "Corriger la fiche", return: "Restituer l’objet", restore: "Annuler la restitution" };
 const submitLabels = { create: "Enregistrer l’objet", edit: "Enregistrer la correction", return: "Confirmer la restitution", restore: "Confirmer l’annulation" };
 const suggestions = ["Plaque de cuisson", "Multiprise", "Appareil > 100 W"];
+const unidentifiedRoomOption = "unidentified";
 
 // Compare the editable content, ignoring the submission envelope. A retry must
 // never report that changed input was saved when this UUID is already durable.
 function sameDetails(draft: Draft, previous: WorkEntry) {
   return draft.targetId === previous.targetId && draft.expectedRevision === previous.expectedRevision &&
-    draft.room === previous.room && draft.itemName.trim() === previous.itemName &&
+    draft.room === previous.room && draft.roomUnidentified === previous.roomUnidentified && draft.itemName.trim() === previous.itemName &&
     draft.collectedOn === previous.collectedOn && draft.collectedBy.trim() === previous.collectedBy &&
     draft.notes.trim() === previous.notes && draft.returnedOn === previous.returnedOn &&
     draft.returnedBy.trim() === previous.returnedBy;
@@ -48,6 +49,7 @@ export function CollectedItemDialog({ action, record, onClose, onSaved }: {
     return {
       type: "createWorkEvent", kind: "collectedItem", id: createId(), targetId: record?.id || createId(),
       expectedRevision: record?.revision || 0, room: record?.room || "", date: today(), occurredAt: new Date().toISOString(),
+      roomUnidentified: record?.roomUnidentified ? true : undefined,
       actor: action === "edit" ? profile : "", itemName: record?.itemName || "",
       collectedOn: record?.collectedOn || today(), collectedBy: record?.collectedBy || "", notes: record?.reason || "",
       returnedOn: action === "return" ? today() : action === "restore" ? null : record?.returnedOn || null,
@@ -84,7 +86,7 @@ export function CollectedItemDialog({ action, record, onClose, onSaved }: {
     ...(validationAttempted && returnFields && !value?.returnedBy.trim() ? [{ path: ["returnedBy"], message: "Indiquez qui a restitué l’objet." }] : []),
   ];
   const fieldError = (field: string) => problems.find(problem => problem.path[0] === field)?.message;
-  const unchanged = action === "edit" && value && record && value.room === record.room && value.itemName.trim() === record.itemName &&
+  const unchanged = action === "edit" && value && record && value.room === record.room && !!value.roomUnidentified === record.roomUnidentified && value.itemName.trim() === record.itemName &&
     value.collectedOn === record.collectedOn && value.collectedBy.trim() === record.collectedBy && value.notes.trim() === record.reason &&
     value.returnedOn === record.returnedOn && value.returnedBy.trim() === record.returnedBy;
   function update(patch: Partial<Draft>) { if (value) draft.update({ ...value, ...patch }); }
@@ -92,7 +94,7 @@ export function CollectedItemDialog({ action, record, onClose, onSaved }: {
     const next = initial();
     // The user explicitly chose another physical object. Keep their entered
     // details while allocating both a new object ID and a new event ID.
-    if (value) Object.assign(next, { room: value.room, itemName: value.itemName, collectedOn: value.collectedOn, collectedBy: value.collectedBy, notes: value.notes });
+    if (value) Object.assign(next, { room: value.room, roomUnidentified: value.roomUnidentified, itemName: value.itemName, collectedOn: value.collectedOn, collectedBy: value.collectedBy, notes: value.notes });
     draft.update(next);
     setAlreadySaved(false);
     setError("");
@@ -154,7 +156,7 @@ export function CollectedItemDialog({ action, record, onClose, onSaved }: {
           {!value ? <Typography role="status">Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
             <Stack spacing={2.5}>
               {!collectionFields && <Paper variant="outlined" sx={{ p: 2 }}>
-                <Chip size="small" label={"Chambre " + value.room} sx={{ mb: 1 }} />
+                <Chip size="small" label={collectedItemRoomLabel(value.room)} sx={{ mb: 1 }} />
                 <Typography variant="h6" sx={{ overflowWrap: "anywhere" }}>{value.itemName}</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, overflowWrap: "anywhere" }}>Récupéré le {displayDate(value.collectedOn)} par {value.collectedBy}.</Typography>
               </Paper>}
@@ -165,8 +167,11 @@ export function CollectedItemDialog({ action, record, onClose, onSaved }: {
               </Alert>}
               {collectionFields && <>
                 <Box>
-                  <RoomSelect value={value.room} onChange={room => update({ room })} />
+                  <RoomSelect value={value.roomUnidentified ? unidentifiedRoomOption : value.room}
+                    extraOption={{ value: unidentifiedRoomOption, label: collectedItemRoomLabel("") }}
+                    onChange={room => update(room === unidentifiedRoomOption ? { room: "", roomUnidentified: true } : { room, roomUnidentified: undefined })} />
                   {fieldError("room") && <Typography role="alert" variant="caption" color="error" sx={{ display: "block", mt: 0.5 }}>{fieldError("room")}</Typography>}
+                  {value.roomUnidentified && <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>Vous pourrez renseigner le numéro plus tard avec « Corriger la fiche ».</Typography>}
                 </Box>
                 <Stack spacing={1}>
                   <TextField required label="Objet" name="itemName" value={value.itemName} onChange={event => update({ itemName: event.target.value })}
@@ -202,7 +207,7 @@ export function CollectedItemDialog({ action, record, onClose, onSaved }: {
               <Typography variant="caption" color="text.secondary">
                 {draft.saving ? "Sauvegarde du brouillon…" : "Brouillon conservé sur cet appareil."}
                 {action === "edit" ? ` Correction enregistrée avec le profil ${profile}. Les anciennes informations restent dans l’historique.` :
-                  action === "create" ? " Pensez à étiqueter l’objet avec le numéro de chambre avant de le ranger." : " Le nom de la personne qui a récupéré l’objet reste conservé."}
+                  action === "create" ? (value.roomUnidentified ? " Ajoutez une description précise pour retrouver cet objet sans numéro de chambre." : " Pensez à étiqueter l’objet avec le numéro de chambre avant de le ranger.") : " Le nom de la personne qui a récupéré l’objet reste conservé."}
               </Typography>
             </Stack>
           </Box>}

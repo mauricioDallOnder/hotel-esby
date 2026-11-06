@@ -47,9 +47,9 @@ function sheets() {
   process.env.GOOGLE_API_TOKEN = "test-token";
 }
 
-test("collected items retain original custody, corrections and returns as immutable revisions", async t => {
+test("unidentified items retain custody, returns and later room identification as immutable local revisions", async t => {
   local(t);
-  const collected = item(), first = await executeEntry(collected);
+  const collected = item({ room: "", roomUnidentified: true }), first = await executeEntry(collected);
   const corrected = next(collected, {
     date: "2025-06-02", occurredAt: "2025-06-02T10:00:00.000Z", actor: "Direction",
     itemName: "Plaque rouge de démonstration", notes: "Cordon rangé avec l’appareil.",
@@ -60,14 +60,23 @@ test("collected items retain original custody, corrections and returns as immuta
     returnedOn: "2025-06-03", returnedBy: "Autre agent exemple",
   });
   const third = await executeEntry(returned);
+  const identified = next(returned, {
+    room: "102", roomUnidentified: undefined, date: "2025-06-04",
+    occurredAt: "2025-06-04T10:00:00.000Z", actor: "Direction",
+  });
+  delete identified.roomUnidentified;
+  const fourth = await executeEntry(identified);
   assert.equal(first.collection, "workEvents");
   assert.deepEqual(await executeEntry(collected), first);
   assert.deepEqual(await executeEntry(returned), third);
+  assert.deepEqual(await executeEntry(identified), fourth);
   await assert.rejects(executeEntry(next(collected, { notes: "Correction concurrente." })), { code: 409 });
   await assert.rejects(executeEntry({ ...collected, notes: "Autre contenu pour le même identifiant." }), { code: 409 });
 
   const state = await readState();
-  assert.deepEqual(state.workEvents, [first.record, second.record, third.record]);
+  assert.deepEqual(state.workEvents, [first.record, second.record, third.record, fourth.record]);
+  assert.deepEqual(state.workEvents?.slice(0, 3).map(event => [event.room, event.roomUnidentified]), [["", true], ["", true], ["", true]]);
+  assert.equal(Object.hasOwn(state.workEvents![3], "roomUnidentified"), false);
   assert.equal(state.issues.length, 0);
   const current = collectedItems(state.workEvents || [])[0];
   assert.equal(current.id, collected.targetId);
@@ -76,11 +85,16 @@ test("collected items retain original custody, corrections and returns as immuta
   assert.equal(current.collectedBy, "Agent exemple");
   assert.equal(current.returnedOn, "2025-06-03");
   assert.equal(current.returnedBy, "Autre agent exemple");
-  assert.equal(current.revision, 3);
-  assert.equal(current.history.length, 3);
-  assert.equal(current.history[2].itemName, collected.itemName);
-  assert.equal(current.history[2].reason, collected.notes);
-  assert.equal(current.history[2].returnedOn, null);
+  assert.equal(current.room, "102");
+  assert.equal(current.roomUnidentified, false);
+  assert.equal(current.revision, 4);
+  assert.equal(current.history.length, 4);
+  assert.deepEqual(current.history.map(event => event.roomUnidentified), [false, true, true, true]);
+  assert.equal(current.history[1].returnedOn, "2025-06-03");
+  assert.equal(current.history[1].room, "");
+  assert.equal(current.history[3].itemName, collected.itemName);
+  assert.equal(current.history[3].reason, collected.notes);
+  assert.equal(current.history[3].returnedOn, null);
 });
 
 test("separate items from the same room synchronize independently of each other and occupancy", async t => {
@@ -143,7 +157,7 @@ function googleFixture() {
   };
 }
 
-test("the unchanged protected Apps Script work transaction preserves item fields and rejects stale returns", async t => {
+test("the unchanged Apps Script preserves unidentified items, returns and identification while rejecting stale updates", async t => {
   restoreEnvironment(t);
   sheets();
   const google = googleFixture();
@@ -153,7 +167,7 @@ test("the unchanged protected Apps Script work transaction preserves item fields
     requests.push(input);
     return Response.json(google.call(input));
   });
-  const collected = item(), first = await executeEntry(collected);
+  const collected = item({ room: "", roomUnidentified: true }), first = await executeEntry(collected);
   const returned = next(collected, {
     date: "2025-06-03", occurredAt: "2025-06-03T10:00:00.000Z", actor: "Agent restitution",
     returnedOn: "2025-06-03", returnedBy: "Agent restitution",
@@ -165,11 +179,20 @@ test("the unchanged protected Apps Script work transaction preserves item fields
   assert.deepEqual(await executeEntry(returned), second);
   await assert.rejects(executeEntry(next(collected, { returnedOn: collected.date, returnedBy: "Autre agent" })), { code: 409 });
   await assert.rejects(executeEntry({ ...collected, collectedBy: "Nom modifié" }), { code: 409 });
-  await executeEntry(item({ notes: "", itemName: "Autre objet de démonstration" }));
+  const identified = next(returned, {
+    room: "102", roomUnidentified: undefined, date: "2025-06-04", occurredAt: "2025-06-04T10:00:00.000Z",
+  });
+  delete identified.roomUnidentified;
+  const third = await executeEntry(identified);
+  assert.deepEqual(await executeEntry(returned), second);
+  assert.deepEqual(await executeEntry(identified), third);
+  await executeEntry(item({ room: "", roomUnidentified: true, notes: "", itemName: "Autre objet de démonstration" }));
   assert.ok(requests.every(request => request.action === "commitWorkEvent" && request.expectedVersion === 0 && request.token === "test-token"));
   const events = google.records();
-  assert.equal(events.length, 3);
-  assert.deepEqual(events.slice(0, 2), [first.record, second.record]);
+  assert.equal(events.length, 4);
+  assert.deepEqual(events.slice(0, 3), [first.record, second.record, third.record]);
+  assert.deepEqual(events.slice(0, 2).map(event => [event.room, event.roomUnidentified]), [["", true], ["", true]]);
+  assert.equal(Object.hasOwn(events[2], "roomUnidentified"), false);
   assert.equal(events[1].itemName, collected.itemName);
   assert.equal(events[1].collectedBy, collected.collectedBy);
   assert.equal(events[1].collectedOn, collected.collectedOn);
@@ -178,5 +201,11 @@ test("the unchanged protected Apps Script work transaction preserves item fields
   assert.match(events[1].submissionHash, /^[a-f0-9]{64}$/);
   const records = collectedItems(events);
   assert.equal(records.length, 2);
-  assert.equal(records.find(record => record.id === collected.targetId)?.revision, 2);
+  const current = records.find(record => record.id === collected.targetId)!;
+  assert.equal(current.revision, 3);
+  assert.equal(current.room, "102");
+  assert.equal(current.roomUnidentified, false);
+  assert.equal(current.returnedOn, returned.returnedOn);
+  assert.deepEqual(current.history.map(event => [event.room, event.roomUnidentified]), [["102", false], ["", true], ["", true]]);
+  assert.equal(records.find(record => record.id !== collected.targetId)?.roomUnidentified, true);
 });
