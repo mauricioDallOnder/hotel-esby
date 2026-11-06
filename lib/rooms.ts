@@ -130,7 +130,7 @@ export const roomEntrySchema = roomFields.extend({
 
 export const workEntrySchema = z.object({
   type: z.literal("createWorkEvent"), id: z.string().uuid(),
-  kind: z.enum(["roomAvailability", "familyComment", "dailyTask", "cafardFollowup"]),
+  kind: z.enum(["roomAvailability", "familyComment", "dailyTask", "cafardFollowup", "collectedItem"]),
   targetId: z.string().min(1).max(80), expectedRevision: z.number().int().min(0),
   room: z.union([roomSchema, z.literal("")]), date: z.iso.date(), actor: required,
   notes: note, occurredAt: z.iso.datetime(),
@@ -139,6 +139,8 @@ export const workEntrySchema = z.object({
   cafardStatus: z.enum(["a_verifier", "signale", "traite", "resolu"]).optional(),
   detectedOn: z.iso.date().nullable().optional(), treatedOn: z.iso.date().nullable().optional(),
   resolvedOn: z.iso.date().nullable().optional(), product: z.string().trim().max(200).optional(),
+  itemName: required.optional(), collectedOn: z.iso.date().optional(), collectedBy: required.optional(),
+  returnedOn: z.iso.date().nullable().optional(), returnedBy: z.string().trim().max(200).optional(),
 }).superRefine((v, ctx) => {
   const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
   if (v.kind === "roomAvailability") {
@@ -156,6 +158,19 @@ export const workEntrySchema = z.object({
     if (v.cafardStatus === "traite" && !v.treatedOn) invalid("treatedOn", "Renseignez la date d’application du produit.");
     if (v.cafardStatus === "resolu" && !v.resolvedOn) invalid("resolvedOn", "Renseignez la date de résolution.");
     if (v.cafardStatus !== "resolu" && v.resolvedOn) invalid("resolvedOn", "Un suivi en cours ne peut pas avoir de date de résolution.");
+  } else if (v.kind === "collectedItem") {
+    if (!z.string().uuid().safeParse(v.targetId).success) invalid("targetId", "Identifiant de l’objet invalide.");
+    if (!v.room) invalid("room", "Choisissez la chambre où l’objet a été récupéré.");
+    if (!v.itemName) invalid("itemName", "Indiquez l’objet récupéré.");
+    if (!v.collectedOn) invalid("collectedOn", "Indiquez la date de récupération.");
+    if (!v.collectedBy) invalid("collectedBy", "Indiquez qui a récupéré l’objet.");
+    if (v.collectedOn && v.collectedOn > v.date) invalid("collectedOn", "La récupération ne peut pas suivre la date de mise à jour.");
+    if (v.returnedOn === undefined) invalid("returnedOn", "Indiquez une date de restitution ou laissez l’objet en armoire.");
+    if (v.returnedOn && v.collectedOn && v.returnedOn < v.collectedOn) invalid("returnedOn", "La restitution ne peut pas précéder la récupération.");
+    if (v.returnedOn && v.returnedOn > v.date) invalid("returnedOn", "La restitution ne peut pas suivre la date de mise à jour.");
+    if (v.returnedOn && !v.returnedBy) invalid("returnedBy", "Indiquez qui a restitué l’objet.");
+    if (!v.returnedOn && v.returnedBy) invalid("returnedBy", "Un objet en armoire ne peut pas avoir de responsable de restitution.");
+    if (v.returnedBy === undefined) invalid("returnedBy", "Renseignez la restitution ou laissez ce champ vide.");
   } else {
     if (!z.string().uuid().safeParse(v.targetId).success) invalid("targetId", "Identifiant invalide.");
     if (!v.notes.trim()) invalid("notes", "Saisissez un texte.");
@@ -167,6 +182,8 @@ export const workEntrySchema = z.object({
   if (v.kind !== "roomAvailability" && v.free !== undefined) invalid("free", "Disponibilité inattendue.");
   if (v.kind !== "cafardFollowup" && [v.cafardStatus, v.detectedOn, v.treatedOn, v.resolvedOn, v.product].some(value => value !== undefined))
     invalid("kind", "Données de suivi des cafards inattendues.");
+  if (v.kind !== "collectedItem" && [v.itemName, v.collectedOn, v.collectedBy, v.returnedOn, v.returnedBy].some(value => value !== undefined))
+    invalid("kind", "Données d’objet récupéré inattendues.");
   if (v.kind === "dailyTask" && v.room) invalid("room", "Une tâche n’est pas un contrôle de chambre.");
 });
 export type WorkEntry = z.infer<typeof workEntrySchema>;

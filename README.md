@@ -1,5 +1,39 @@
 # Hôtel Contrôle
 
+## Objetos recolhidos dos quartos
+
+O menu **Objets récupérés** (`/objets-recuperes`) permite que os perfis Employé e
+Direction registrem e consultem os objetos guardados no armário. Cada objeto tem
+sua própria ficha, mesmo quando vários pertencem ao mesmo quarto.
+
+- Informe **Chambre**, o objeto, a data de recolhimento e **Récupéré par**. O motivo
+  é facultativo. Os atalhos **Plaque de cuisson**, **Multiprise** e
+  **Appareil > 100 W** ajudam a preencher o objeto; a descrição pode ser ajustada.
+- A página abre em **En armoire**. A busca encontra quarto, objeto, nomes e motivo,
+  sem diferenciar maiúsculas ou acentos. Os filtros **Restitués** e **Tous** permitem
+  consultar também as devoluções. As fichas mais recentemente recolhidas vêm primeiro.
+- Use **Restituer** depois de entregar o objeto, informando a data e o nome de quem
+  devolveu. O nome de quem recolheu permanece na ficha.
+- As correções e o cancelamento de uma devolução registrada por engano geram novas
+  versões. O histórico preserva os dados anteriores; não há exclusão definitiva.
+
+Os nomes de quem recolheu e devolveu são preenchidos pela equipe: os perfis
+compartilhados Employé e Direction não identificam automaticamente a pessoa.
+O registro pode ser consultado por quarto para conferir a etiqueta do objeto.
+
+Os rascunhos e envios pendentes usam o armazenamento já existente no aparelho.
+Depois de restabelecida a conexão, a fila sincroniza as alterações sem duplicar
+as fichas. Revisões concorrentes são recusadas explicitamente, preservando o
+registro confirmado e os detalhes do envio em conflito para conferência.
+
+Os eventos `collectedItem` ficam em **Suivi quotidien**, com um identificador por
+objeto e um identificador por atualização. O Apps Script atual já aceita esse
+tipo pelo `commitWorkEvent`; não é necessária uma nova aba nem uma atualização
+adicional do script. Nenhum registro de objeto real é incluído no código público.
+
+O menu e o título **Anomalies & suivi** passam a se chamar **Problèmes techniques**.
+O endereço `/anomalies` e os registros existentes são preservados.
+
 ## Suivi des cafards
 
 O menu **Suivi des cafards** (`/cafards`) reúne uma ficha por quarto, com os estados
@@ -10,7 +44,7 @@ preserva os acompanhamentos anteriores e as aplicações já registradas.
 
 Ao marcar **Détectés** em cafards/nuisibles no controle do quarto, o próprio
 controle alimenta esse menu. Essa resposta não cria uma nova anomalia. Outros
-defeitos elegíveis do mesmo controle continuam indo para **Anomalies & suivi**.
+defeitos elegíveis do mesmo controle continuam indo para **Problèmes techniques**.
 Marcar **Aucun** no controle não encerra um acompanhamento: confirme **Résolu**
 na ficha. Uma detecção posterior à resolução reabre o acompanhamento; um envio
 antigo que chega atrasado não deve reabrir um caso resolvido mais recentemente.
