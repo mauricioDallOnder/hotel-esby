@@ -10,10 +10,10 @@ import { parseEntry, roomChecks, roomFindings, roomIssue, roomProblems, type Ent
 import { prepareRoomIssue } from "../lib/roomIssueMatching";
 import { executeEntry, readPhoto, readState } from "../lib/storage";
 
-const allowed = ["taps", "switches", "leaks", "lights", "smoke", "damage", "window"];
+const allowed = ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear"];
 const excluded = ["bed", "mattress", "fridge", "door_closer", "door_handle_clear"];
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", schemaVersion: 4, id: createId(), room: "114", date: today(), actor: "Marie",
+  type: "createRoomInspection", schemaVersion: 5, id: createId(), room: "114", date: today(), actor: "Marie",
   notes: "", occupied: true, condition: "bon", cleaning: null, carpet: "ok", carpetNotes: "",
   microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non", photosData: [],
   checks: roomChecks.map(check => ({ key: check.key, result: "ok" })), ...patch,
@@ -101,7 +101,7 @@ function assertSavedWithoutAnomaly(receipt: EntryChange, input: RoomEntry) {
   assert.deepEqual(receipt.record.relatedIssueIds, []);
 }
 
-test("only Problème on the seven allowed repair checks triggers an automatic anomaly", () => {
+test("only Problème on eligible repair checks or Caché on the radiator triggers an automatic anomaly", () => {
   for (const key of allowed) for (const result of ["ok", "non_verifie", "absent", "probleme"] as const) {
     const record = saved(entry({ checks: checks([key], result) }));
     const expected = result === "probleme" ? [key] : [];
@@ -115,6 +115,20 @@ test("only Problème on the seven allowed repair checks triggers an automatic an
     assert.equal(roomIssue(record), undefined);
     assert.equal(roomProblems(record).includes("Cafards / nuisibles détectés"), bugs === "oui");
   }
+});
+
+test("a hidden radiator produces a clear technical problem and keeps the inspector and photos", () => {
+  const record = saved(entry({ checks: checks(["radiator_clear"]), notes: "Un meuble devant le radiateur.", photosData: ["data:image/jpeg;base64,YQ=="] }));
+  const issue = roomIssue(record)!;
+  assert.deepEqual(issue.roomFindings, [{ key: "radiator_clear", label: "Chauffage / radiateur : Caché" }]);
+  assert.equal(issue.description, "Chauffage / radiateur : Caché\nUn meuble devant le radiateur.");
+  assert.equal(issue.assignee, record.actor);
+  assert.equal(issue.reportedBy, record.actor);
+  assert.deepEqual(issue.photoIds, record.photoIds);
+  assert.deepEqual(roomProblems(record), ["Chauffage / radiateur : Caché"]);
+  const clear = saved(entry());
+  assert.equal(roomIssue(clear), undefined);
+  assert.deepEqual(roomProblems(clear), []);
 });
 
 test("excluded equipment, condition, cleaning, observations and photos never trigger by themselves", () => {

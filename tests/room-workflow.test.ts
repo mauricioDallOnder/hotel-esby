@@ -6,13 +6,13 @@ import path from "node:path";
 import vm from "node:vm";
 import { createHash } from "node:crypto";
 import { createId, today, type Issue } from "../lib/domain";
-import { normalizeRoomDraft, parseEntry, roomChecks, roomEntrySchema, roomIssue, roomProblems, rooms, type RoomEntry, type RoomInspection } from "../lib/rooms";
+import { normalizeRoomDraft, parseEntry, roomChecks, roomCheckResultLabel, roomEntrySchema, roomIssue, roomProblems, rooms, type RoomEntry, type RoomInspection } from "../lib/rooms";
 import { completeRoomInspection, roomRotation } from "../lib/roomRotation";
 import { issueRoom, planRoomIssue, prepareRoomIssue } from "../lib/roomIssueMatching";
 import { execute, executeEntry, readState } from "../lib/storage";
 
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", id: createId(), schemaVersion: 4, room: "114", date: today(), actor: "Marie", notes: "", occupied: true, condition: "bon", cleaning: null,
+  type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "114", date: today(), actor: "Marie", notes: "", occupied: true, condition: "bon", cleaning: null,
   carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non", photosData: [],
   checks: roomChecks.map(c => ({ key: c.key, result: "ok" })), ...patch,
 });
@@ -27,19 +27,62 @@ test("new checks require a door closer answer, absence stays in history and old 
   input.checks.find(c => c.key === "door_closer")!.result = "absent";
   assert.equal(roomEntrySchema.safeParse(input).success, true);
   assert.ok(roomProblems(input).some(p => /Ferme-porte.*Absent/.test(p)));
-  const draft = normalizeRoomDraft({ ...input, schemaVersion: 3 as const, checks: input.checks.filter(c => c.key !== "door_closer") });
+  const draft = normalizeRoomDraft({ ...input, schemaVersion: 3 as const, checks: input.checks.filter(c => !["door_closer", "radiator_clear"].includes(c.key)) });
   assert.equal(draft.checks.find(c => c.key === "door_closer")?.result, "non_verifie");
+  assert.equal(draft.checks.find(c => c.key === "radiator_clear")?.result, "non_verifie");
   assert.equal(draft.id, input.id);
 });
 
 test("v3 replay keeps the exact original parsed payload and hash without requiring the new check", () => {
   const v3 = { type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", cleaning: null,
-    checks: entry().checks.filter(c => c.key !== "door_closer"), carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 3, microwaveCleaning: null, fridgeCleaning: "propre" };
+    checks: entry().checks.filter(c => !["door_closer", "radiator_clear"].includes(c.key)), carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 3, microwaveCleaning: null, fridgeCleaning: "propre" };
   const parsed = parseEntry(v3);
   assert.deepEqual(parsed, v3);
   const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   assert.equal(hash(parsed), hash(v3));
   assert.equal(hash(parseEntry(parsed)), hash(v3));
+});
+
+test("v2 queued controls keep their original fields and hash without later checks", () => {
+  const v2 = { type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", cleaning: "faite",
+    checks: entry().checks.filter(c => !["door_closer", "radiator_clear"].includes(c.key)), carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 2 };
+  const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  assert.deepEqual(parseEntry(v2), v2);
+  assert.equal(hash(parseEntry(v2)), hash(v2));
+  assert.equal(hash(parseEntry(parseEntry(v2))), hash(v2));
+});
+
+test("an existing v4 draft gains an unanswered radiator check while a queued v4 control stays unchanged", () => {
+  const old = entry({ schemaVersion: 4, checks: entry().checks.filter(c => c.key !== "radiator_clear"),
+    inspectedAt: "2026-11-01T10:00:00Z", photosData: ["data:image/jpeg;base64,YQ=="],
+    issueLinks: [{ key: "taps", issueId: createId() }], distinctProblemKeys: ["lights"] });
+  const original = structuredClone(old);
+  const parsed = parseEntry(old) as RoomEntry;
+  assert.equal(parsed.schemaVersion, 4);
+  assert.deepEqual(parsed.checks, old.checks);
+  assert.equal(parsed.checks.some(c => c.key === "radiator_clear"), false);
+  const draft = normalizeRoomDraft(old);
+  assert.equal(draft.schemaVersion, 5);
+  assert.deepEqual(draft.checks, [...old.checks, { key: "radiator_clear", result: "non_verifie" }]);
+  assert.deepEqual(draft.photosData, old.photosData);
+  assert.deepEqual(draft.issueLinks, old.issueLinks);
+  assert.deepEqual(draft.distinctProblemKeys, old.distinctProblemKeys);
+  assert.equal(draft.inspectedAt, old.inspectedAt);
+  assert.equal(draft.id, old.id);
+  assert.equal(roomEntrySchema.safeParse(draft).success, false);
+  assert.deepEqual(old, original);
+});
+
+test("new controls require Libre or Caché for the radiator and use these labels consistently", () => {
+  for (const result of ["ok", "probleme", "non_verifie", "absent"] as const) {
+    const input = entry({ checks: entry().checks.map(check => check.key === "radiator_clear" ? { ...check, result } : check) });
+    assert.equal(roomEntrySchema.safeParse(input).success, result === "ok" || result === "probleme");
+  }
+  assert.equal(roomCheckResultLabel("radiator_clear", "ok"), "Libre");
+  assert.equal(roomCheckResultLabel("radiator_clear", "probleme"), "Caché");
+  assert.equal(roomCheckResultLabel("radiator_clear", "non_verifie"), "Non vérifié");
+  assert.equal(roomCheckResultLabel("taps", "probleme"), "Problème");
+  assert.equal(roomCheckResultLabel("smoke", "absent"), "Absent");
 });
 
 test("rotation caps the daily workload, carries old rooms forward and never excludes defective rooms", () => {
@@ -80,6 +123,26 @@ test("deduplication uses the exact room and finding, supports manual links, and 
   const linked = { ...record, issueLinks: [{ key: "taps", issueId: unclear.id }] };
   assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).relatedIssueIds, [unclear.id]);
   assert.equal(planRoomIssue(roomIssue(linked), linked, [{ ...unclear, location: "115" }]).relatedIssueIds.length, 0);
+});
+
+test("a hidden radiator links only to the same obstruction, not an unrelated heating fault", () => {
+  const record = saved(problem(["radiator_clear"])), candidate = roomIssue(record)!;
+  assert.deepEqual(candidate.roomFindings, [{ key: "radiator_clear", label: "Chauffage / radiateur : Caché" }]);
+  for (const description of ["Radiateur caché par un meuble", "Chauffage obstrué", "Radiateur recouvert de vêtements", "Radiateurs encombrés"]) {
+    const known = manual({ title: "À vérifier", description });
+    const plan = planRoomIssue(candidate, record, [known]);
+    assert.equal(plan.issue, undefined, description);
+    assert.deepEqual(plan.relatedIssueIds, [known.id], description);
+  }
+  for (const description of ["Radiateur en panne, ne chauffe plus", "Chauffage froid", "Radiateur non caché", "Radiateur pas du tout obstrué", "Fenêtre cachée par un meuble"]) {
+    const plan = planRoomIssue(candidate, record, [manual({ title: "À réparer", description })]);
+    assert.deepEqual(plan.issue?.roomFindings, candidate.roomFindings, description);
+    assert.deepEqual(plan.relatedIssueIds, [], description);
+  }
+  const known = { ...candidate, id: createId(), title: "À vérifier", description: "Voir photo" };
+  assert.equal(planRoomIssue(candidate, record, [known]).issue, undefined);
+  assert.deepEqual(planRoomIssue(candidate, { ...record, distinctProblemKeys: ["radiator_clear"] }, [known]).issue?.roomFindings, candidate.roomFindings);
+  assert.deepEqual(planRoomIssue(candidate, record, [{ ...known, status: "resolu" }]).issue?.roomFindings, candidate.roomFindings);
 });
 
 test("local save deduplicates against Anomalies, keeps new findings, photos and the existing intervention untouched", async () => {

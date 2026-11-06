@@ -6,7 +6,7 @@ import CancelRounded from "@mui/icons-material/CancelRounded";
 import HelpOutlineRounded from "@mui/icons-material/HelpOutlineRounded";
 import { IssuePhoto } from "./IssuePhoto";
 import { displayDate, issuePhotoIds, statuses, type Issue } from "@/lib/domain";
-import { applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels, resultLabels, roomChecks, roomProblems, roomRecordTime, type RoomEntry, type RoomInspection } from "@/lib/rooms";
+import { applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels, roomCheckResultLabel, roomChecks, roomProblems, roomRecordTime, type RoomEntry, type RoomInspection } from "@/lib/rooms";
 import { openRoomIssues } from "@/lib/roomIssueMatching";
 import { completeRoomInspection } from "@/lib/roomRotation";
 
@@ -42,7 +42,7 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
   const linked = record && "relatedIssueIds" in record ? issues.filter(i => record.relatedIssueIds?.includes(i.id) || (record.createdIssue && i.id === record.id)) : [];
   const changes = record && previous ? roomChecks.flatMap(check => {
     const before = previous.checks.find(c => c.key === check.key)?.result, after = record.checks.find(c => c.key === check.key)?.result;
-    return before !== after ? [`${check.label} : ${before ? resultLabels[before] : "Non renseigné"} → ${after ? resultLabels[after] : "Non renseigné"}`] : [];
+    return before !== after ? [`${check.label} : ${before ? roomCheckResultLabel(check.key, before) : "Non renseigné"} → ${after ? roomCheckResultLabel(check.key, after) : "Non renseigné"}`] : [];
   }) : [];
   return <Dialog open fullWidth fullScreen={mobile} maxWidth="md" onClose={onClose} aria-labelledby="room-history-title" slotProps={{ paper: { sx: { overflowWrap: "anywhere" } } }}>
     <DialogTitle id="room-history-title">{room ? `Historique · chambre ${room}` : "Historique des contrôles"}</DialogTitle>
@@ -82,7 +82,7 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
           <Result label="Cafards / nuisibles" text={record.bugs === "oui" ? "Détectés" : record.bugs === "non" ? "Aucun" : "Non vérifié"} status={record.bugs === "non" ? "ok" : record.bugs === "oui" ? "bad" : "neutral"} />
           {roomChecks.map(check => {
             const result = record.checks.find(c => c.key === check.key)?.result;
-            return <Result key={check.key} label={check.label} text={result ? resultLabels[result] : "Non renseigné (ancien contrôle)"} status={result === "ok" ? "ok" : result === "probleme" || (result === "absent" && ["smoke", "door_closer"].includes(check.key)) ? "bad" : "neutral"} />;
+            return <Result key={check.key} label={check.label} text={result ? roomCheckResultLabel(check.key, result) : "Non renseigné (ancien contrôle)"} status={result === "ok" ? "ok" : result === "probleme" || (result === "absent" && ["smoke", "door_closer"].includes(check.key)) ? "bad" : "neutral"} />;
           })}
           <Result label="Moquette" text={carpetLabels[record.carpet]} status={record.carpet === "ok" ? "ok" : "bad"} />
           {record.carpetNotes && <Typography>{record.carpetNotes}</Typography>}

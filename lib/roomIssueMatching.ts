@@ -39,6 +39,10 @@ export function matchesRoomFinding(issue: Issue, finding: { key: string; label: 
   if (issue.roomFindings?.length) return issue.roomFindings.some(item => item.key === finding.key &&
     (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
   const text = normalizeIssueText(`${issue.title || ""} ${issue.description || ""}`);
+  // A heater fault is different from a heater hidden or obstructed by objects.
+  if (finding.key === "radiator_clear") return /\b(chauffage\w*|radiateur\w*)\b/.test(text) &&
+    /\b(cache[es]*|recouvert[es]*|obstrue[es]*|encombre[es]*)\b/.test(text) &&
+    !/\b(pas|non|jamais|plus)(?: \w+){0,2} (cache[es]*|recouvert[es]*|obstrue[es]*|encombre[es]*)\b/.test(text);
   const dirty = /\b(sale\w*|salete\w*|nettoy\w*|proprete)\b/.test(text);
   if (finding.key === "microwave_cleaning") return /\bmicro ondes?\b/.test(text) && dirty;
   if (finding.key === "fridge_cleaning") return keywords.fridge.test(text) && dirty;

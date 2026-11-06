@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { roomChecks, roomEntrySchema } from "../lib/rooms";
+import { parseEntry, roomChecks } from "../lib/rooms";
 import { executeEntry, readState } from "../lib/storage";
 
 test("removing the temperature UI preserves the hash and receipt of controls saved by the preview", async t => {
@@ -22,12 +22,14 @@ test("removing the temperature UI preserves the hash and receipt of controls sav
   const input = {
     type: "createRoomInspection", id: "a1111111-1111-4111-8111-111111111111", room: "114",
     date: "2026-10-20", actor: "Marie", notes: "", condition: "bon", cleaning: "faite",
-    checks: roomChecks.map(check => ({ key: check.key, result: "ok" })),
+    checks: roomChecks.filter(check => check.key !== "radiator_clear").map(check => ({ key: check.key, result: "ok" })),
     carpet: "ok", carpetNotes: "", microwave: "oui", photosData: [],
     schemaVersion: 4, occupied: true, bugs: "non", microwaveCleaning: "propre", fridgeCleaning: "propre",
     inspectedAt: "2026-10-20T10:15:00Z", distinctProblemKeys: [], issueLinks: [], temperatureC: 21.5,
   };
-  const parsed = roomEntrySchema.parse(input);
+  const parsed = parseEntry(input);
+  assert.equal(parsed.type, "createRoomInspection");
+  if (parsed.type !== "createRoomInspection") throw new Error("Expected a room inspection");
   assert.equal(createHash("sha256").update(JSON.stringify(parsed)).digest("hex"), submissionHash);
   assert.equal(parsed.temperatureC, 21.5);
   const { photosData, ...fields } = parsed;

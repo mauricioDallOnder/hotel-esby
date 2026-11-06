@@ -62,7 +62,7 @@ test("legacy responsibility uses the reporter first and retains a stored assigne
 
 test("an automatic room anomaly assigns the inspector and preserves the inspection payload", () => {
   const record: RoomInspection = {
-    type: "createRoomInspection", schemaVersion: 4, id: createId(), room: "204", date: "2026-11-05", actor: "Mauricio",
+    type: "createRoomInspection", schemaVersion: 5, id: createId(), room: "204", date: "2026-11-05", actor: "Mauricio",
     notes: "", condition: "bon", occupied: true, cleaning: null, carpet: "ok", carpetNotes: "", microwave: "non", fridgeCleaning: "propre", bugs: "non",
     checks: roomChecks.map(check => ({ key: check.key, result: check.key === "taps" ? "probleme" : "ok" })),
     version: 1, updatedAt: at, submissionHash: "a".repeat(64), photoId: null, photoIds: [],

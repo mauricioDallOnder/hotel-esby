@@ -12,7 +12,7 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   await expect(page.getByRole("button", { name: "Contrôler la chambre", exact: false })).toHaveCount(85);
   await page.getByRole("button", { name: "Contrôler la chambre 114", exact: true }).click();
   const choose = async (label: string, answer: string) => { await page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click(); };
-  for (const check of roomChecks) await choose(check.label, check.key === "taps" ? "Problème" : check.key === "door_closer" ? "Absent" : "OK");
+  for (const check of roomChecks) await choose(check.label, check.key === "taps" ? "Problème" : check.key === "door_closer" ? "Absent" : check.key === "radiator_clear" ? "Libre" : "OK");
   await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("État général de la chambre", "À revoir");
   await choose("Chambre occupée", "Occupée");
@@ -55,6 +55,79 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   await expect(page.getByRole("dialog").getByLabel("Description du problème")).toHaveValue(/Robinet bloqué/);
   await expect(page.getByRole("dialog").locator("img").first()).toHaveJSProperty("naturalWidth", 1);
 });
+
+test("radiator Libre stays in the checklist while Caché creates one technical problem and repeat visits reuse it", async ({ page }, testInfo) => {
+  test.setTimeout(120000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.goto("/checklist");
+  const choose = async (label: string, answer: string) => page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click();
+  const inspect = async (room: string, answer: "Libre" | "Caché", actor: string, repeated = false) => {
+    await page.getByRole("button", { name: `Contrôler la chambre ${room}`, exact: true }).click();
+    const radiator = page.getByRole("radiogroup", { name: "Chauffage / radiateur", exact: true });
+    await expect(radiator.getByRole("radio")).toHaveCount(2);
+    await expect(radiator.getByRole("radio", { checked: true })).toHaveCount(0);
+    await choose("Chauffage / radiateur", answer);
+    await page.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK", exact: true }).click();
+    await expect(radiator.getByRole("radio", { name: answer, exact: true })).toHaveAttribute("aria-checked", "true");
+    await choose("Détecteur de fumée fonctionnel", "OK");
+    if (answer === "Caché" && !repeated) {
+      await radiator.scrollIntoViewIfNeeded();
+      await expect(radiator.getByText(/Problèmes techniques/)).toBeVisible();
+      await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+      await page.screenshot({ path: testInfo.outputPath("radiator-choice-mobile.png") });
+    }
+    await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
+    await choose("Chambre occupée", "Occupée");
+    await choose("État général de la chambre", "Bon");
+    await choose("Présence de cafards ou nuisibles", "Aucun");
+    await choose("État de la moquette", "OK");
+    await choose("Micro-ondes présent ?", "Non");
+    await choose("Propreté du minibar", "Propre");
+    await page.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
+    await page.getByLabel(/^Inspecteur/).fill(actor);
+    if (answer === "Caché") {
+      await expect(page.getByText("Chauffage / radiateur : Caché", { exact: true })).toBeVisible();
+      if (repeated) await expect(page.getByText(/aucun doublon/)).toBeVisible();
+    } else {
+      await expect(page.getByText(/Aucune anomalie automatique à signaler/)).toBeVisible();
+    }
+    const sent = page.waitForResponse(response => response.url().endsWith("/api/entries") && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
+    expect((await sent).status()).toBe(200);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  };
+
+  await inspect("123", "Libre", "Test radiateur libre");
+  let state = await (await page.request.get("/api/hotel")).json();
+  expect(state.issues.filter((issue: { room: string }) => issue.room === "123")).toHaveLength(0);
+  expect(state.roomInspections.find((record: { room: string }) => record.room === "123").checks.find((check: { key: string }) => check.key === "radiator_clear").result).toBe("ok");
+
+  await inspect("124", "Caché", "Test radiateur caché");
+  state = await (await page.request.get("/api/hotel")).json();
+  const issues = state.issues.filter((issue: { room: string }) => issue.room === "124");
+  expect(issues).toHaveLength(1);
+  expect(issues[0].description).toBe("Chauffage / radiateur : Caché");
+  expect(issues[0].roomFindings).toEqual([{ key: "radiator_clear", label: "Chauffage / radiateur : Caché" }]);
+  await page.goto("/anomalies");
+  await expect(page.getByRole("heading", { name: "Problèmes techniques", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Consulter", exact: true }).first().click();
+  await expect(page.getByRole("dialog").getByLabel("Description du problème")).toHaveValue("Chauffage / radiateur : Caché");
+
+  await page.goto("/checklist");
+  await inspect("124", "Caché", "Test radiateur toujours caché", true);
+  state = await (await page.request.get("/api/hotel")).json();
+  expect(state.issues.filter((issue: { room: string }) => issue.room === "124")).toHaveLength(1);
+  const repeated = state.roomInspections.find((record: { actor: string }) => record.actor === "Test radiateur toujours caché");
+  expect(repeated.schemaVersion).toBe(5);
+  expect(repeated.relatedIssueIds).toEqual([issues[0].id]);
+  await page.getByRole("button", { name: "Historique de la chambre 124", exact: true }).click();
+  await page.getByRole("button", { name: /Test radiateur toujours caché/ }).click();
+  await expect(page.getByText(/déjà signalée, non dupliquée/)).toBeVisible();
+  await page.getByRole("button", { name: "Afficher tous les points de contrôle", exact: true }).click();
+  await expect(page.locator('[data-result="bad"]').filter({ hasText: "Chauffage / radiateur : Caché" })).toBeVisible();
+});
+
 test("family drafts survive reload and offline entries synchronize without losing data", async ({ page, context }) => {
   await login(page); await page.goto("/familles");
   await page.getByLabel(/^Chambre/).selectOption("332");

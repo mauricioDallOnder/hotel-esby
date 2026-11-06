@@ -1,5 +1,35 @@
 # Hôtel Contrôle
 
+## Chauffage / radiateur no controle dos quartos
+
+Em **Contrôle des chambres → Équipements**, o item **Chauffage / radiateur**
+tem duas respostas: **Libre** (nada cobre ou esconde o radiador) e **Caché**.
+É preciso verificá-lo antes de concluir um novo controle. O atalho dos equipamentos
+restantes marca o radiador como **Libre**, preservando uma resposta já escolhida;
+um problema conhecido continua exigindo resposta individual.
+
+- **Libre** fica registrado no controle, sem criar um problema técnico.
+- **Caché** gera um signalement em **Problèmes techniques**, com o quarto e o
+  responsável pelo controle. Se o mesmo problema já estiver aberto, o controle
+  é vinculado a ele. Um controle posterior **Libre** não encerra o problema
+  automaticamente; o acompanhamento continua na ficha do problema.
+- O histórico e o checklist em PDF mostram **Libre / Caché**. Controles antigos
+  mantêm esse ponto como não informado. Rascunhos antigos recebem o campo como
+  não verificado, para que a equipe o preencha.
+
+Novos controles usam o formato v5. Os formatos anteriores e seus hashes de reenvio
+são preservados, inclusive os controles que aguardam sincronização no aparelho.
+A rotação continua reconhecendo os controles completos antigos sem exigir uma
+resposta que ainda não existia.
+
+O Apps Script que já oferece `commitRoomInspection` grava o novo campo no JSON
+da aba **Contrôles chambres** e aceita o problema automático sem migração.
+O arquivo `google-apps-script/Code.gs` também adiciona uma coluna visível ao final
+e reconhece descrições manuais de radiador coberto para evitar duplicatas.
+Para aplicar essas duas melhorias na planilha, copie esse arquivo completo no
+projeto Apps Script existente, execute `setup()` e publique uma nova versão da
+implantação existente. As colunas e os dados anteriores mantêm suas posições.
+
 ## Objetos recolhidos dos quartos
 
 O menu **Objets récupérés** (`/objets-recuperes`) permite que os perfis Employé e
@@ -149,7 +179,8 @@ recibos em reenvios. Não há coleta nem exibição de temperatura na interface.
 O **Contrôle des chambres** cria uma anomalia automática somente quando se marca
 **Problème** em **Robinets fonctionnels**, **Interrupteurs fonctionnels**,
 **Aucune fuite d’eau**, **Éclairage fonctionnel**, **Détecteur de fumée fonctionnel**,
-**Rien de cassé** ou **Fenêtre fonctionnelle**. **Détectés** em cafards/nuisibles
+**Rien de cassé** ou **Fenêtre fonctionnelle**, ou **Caché** em
+**Chauffage / radiateur**. **Détectés** em cafards/nuisibles
 alimenta o menu **Suivi des cafards**, sem gerar uma anomalia.
 **Absent** não dispara uma anomalia automática. Lit, matelas, minibar, ferme-porte,
 poignée de porte, estado geral, ménage, moquette, limpeza dos equipamentos,
