@@ -46,6 +46,25 @@ permite registrar a data da detecção, a aplicação do produto, a data de cada
 atualização e a resolução, além do produto e das observações. O histórico
 preserva os acompanhamentos anteriores e as aplicações já registradas.
 
+O filtro **État du suivi** permite consultar os acompanhamentos em curso, todos
+os estados ou um estado específico. A opção **À vérifier après traitement**
+mostra somente os quartos cuja verificação já está prevista para hoje ou atrasada.
+A busca por número de quarto pode ser combinada com esse filtro.
+
+Para fichas em **Produit appliqué**, ou em **À vérifier** com uma aplicação
+registrada, o aplicativo calcula uma verificação **7 dias corridos após a
+última aplicação**. Isso inclui aplicações conhecidas do histórico antigo.
+No dia previsto e enquanto a verificação estiver pendente, aparece um aviso na
+tela inicial e em **Suivi des cafards**, com acesso aos quartos a verificar. A data prevista também
+fica na ficha e no formulário. O cálculo usa o dia de **Europe/Paris** e se
+atualiza com a página aberta ou ao voltar ao aplicativo. Datas desconhecidas
+não geram um prazo inventado.
+
+Depois da visita, atualize o estado para **Résolu** ou **Cafards présents**,
+conforme o resultado. Para uma nova aplicação, mantenha **Produit appliqué** e
+informe a nova data: o prazo de sete dias será recalculado. Os avisos são
+exibidos no aplicativo; não alteram o estado nem criam registros automaticamente.
+
 Ao marcar **Détectés** em cafards/nuisibles no controle do quarto, o próprio
 controle alimenta esse menu. Essa resposta não cria uma nova anomalia. Outros
 defeitos elegíveis do mesmo controle continuam indo para **Problèmes techniques**.

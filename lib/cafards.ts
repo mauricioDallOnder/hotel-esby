@@ -35,6 +35,33 @@ export type CafardCase = {
   lastEventId: string | null;
 };
 
+export type CafardTreatmentReminder = { dueOn: string; due: boolean };
+
+function calendarDay(value: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const day = new Date(value + "T00:00:00.000Z");
+  return Number.isFinite(day.getTime()) && day.toISOString().slice(0, 10) === value ? day : null;
+}
+
+/**
+ * A treatment awaiting verification needs a visit from its seventh calendar
+ * day, including imported applications marked "a_verifier". Keep its history
+ * and status unchanged, and compare with the current civil day in Paris.
+ * UTC arithmetic keeps the visit date stable across daylight-saving changes.
+ */
+export function cafardTreatmentReminder(
+  record: Pick<CafardCase, "status" | "treatedOn">,
+  day = today(),
+): CafardTreatmentReminder | null {
+  if (record.status !== "traite" && record.status !== "a_verifier") return null;
+  const application = calendarDay(record.treatedOn), current = calendarDay(day);
+  if (!application || !current) return null;
+  application.setUTCDate(application.getUTCDate() + 7);
+  const dueOn = application.toISOString().split("T")[0];
+  if (!calendarDay(dueOn)) return null;
+  return { dueOn, due: application.getTime() <= current.getTime() };
+}
+
 export type CafardSeed = Omit<CafardCase, "history" | "revision" | "lastEventId"> & {
   importedAt: string;
   sourceIssueIds: readonly string[];

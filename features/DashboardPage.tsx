@@ -1,9 +1,11 @@
 "use client";
 import Link from "next/link";
-import { Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
 import ArrowForward from "@mui/icons-material/ArrowForward";
 import { useAppContext } from "@/context/AppContext";
-import { issueResponsible, today, type Issue } from "@/lib/domain";
+import { issueResponsible, type Issue } from "@/lib/domain";
+import { cafardCases, cafardTreatmentReminder } from "@/lib/cafards";
+import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
 import {
   ConnectionBar,
   EmptyState,
@@ -14,14 +16,17 @@ import {
 import { IssueDialog } from "@/components/IssueDialog";
 import { dailyTasks } from "@/lib/work";
 import { useWorkEvents } from "@/lib/useWorkEvents";
+import { useRoomObservations } from "@/lib/useRoomObservations";
 import { useState } from "react";
 export default function DashboardPage() {
   const { issues, hotelName } = useAppContext();
   const [active, setActive] = useState<Issue | "new" | null>(null);
-  const date = today();
+  const { history, day: date } = useRoomObservations();
   const pending = issues.filter((i) => i.status !== "resolu");
   const critical = pending.filter((i) => i.priority === "critique");
   const { events } = useWorkEvents();
+  const cafardChecks = cafardCases(history, events, cafardSeedsFromIssues(issues))
+    .filter(record => cafardTreatmentReminder(record, date)?.due);
   const daily = dailyTasks(events, date);
   const rank = { critique: 0, haute: 1, normale: 2 };
   const focus = pending
@@ -49,6 +54,19 @@ export default function DashboardPage() {
           </Button>
         }
       />
+      {cafardChecks.length > 0 && <Alert severity="warning" sx={{ mb: 3, "& .MuiAlert-message": { width: "100%", minWidth: 0 } }}>
+        <Stack spacing={1} sx={{ alignItems: "flex-start" }}>
+          <Typography sx={{ fontWeight: 700 }}>
+            Cafards : {cafardChecks.length} chambre{cafardChecks.length > 1 ? "s" : ""} à vérifier après traitement
+          </Typography>
+          <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
+            Le produit a été appliqué il y a au moins 7 jours. Chambre{cafardChecks.length > 1 ? "s" : ""} : {cafardChecks.map(record => record.room).join(", ")}.
+          </Typography>
+          <Button component={Link} href="/cafards" color="inherit" variant="outlined" sx={{ minHeight: 44 }}>
+            Ouvrir le suivi des cafards
+          </Button>
+        </Stack>
+      </Alert>}
       <Paper
         elevation={0}
         sx={{
