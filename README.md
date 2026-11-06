@@ -1,5 +1,26 @@
 # Hôtel Contrôle
 
+## Checklist conforme a ocupação dos quartos
+
+Os quartos marcados como **Libre** em **Occupation des chambres** ficam fora
+de **Contrôle des chambres**. A regra vale para a lista, a pesquisa, os filtros,
+a tournée, os atalhos para continuar ou retomar um controle e o PDF dos quartos
+exibidos. Mesmo um quarto em mau estado deixa a tournée enquanto estiver livre.
+
+Ao marcar novamente **Occupée**, o quarto volta ao checklist e segue as regras
+normais da rotação. Quartos com ocupação **Non renseignée** continuam visíveis,
+pois ainda não foram confirmados como livres. O checklist oferece um atalho
+para atualizar a ocupação; os filtros **Libres** e **Ménage à faire** saem dessa tela.
+
+Os contadores e o cálculo da tournée usam somente os quartos incluídos. A meta
+efetiva é limitada à quantidade deles, mantendo a preferência diária salva.
+Quando todos estiverem livres, a página informa que não há quartos a controlar.
+As alterações aceitas na fila sem conexão também atualizam a lista imediatamente.
+
+O histórico, os rascunhos e o relatório específico **Chambres libres** continuam
+disponíveis. Este ajuste reutiliza os dados de ocupação existentes e não exige
+migração da planilha nem atualização do Apps Script.
+
 ## Chauffage / radiateur no controle dos quartos
 
 Em **Contrôle des chambres → Équipements**, o item **Chauffage / radiateur**
@@ -141,6 +162,7 @@ Esta alteração não exige migração nem atualização adicional do Google App
 - A checkbox **Occupée** tem o mesmo significado em **Occupation des chambres**
   e **Contrôle des chambres**: marcada = ocupado; desmarcada = livre. O estado
   desconhecido continua separado e permite usar **Marquer libre** diretamente.
+  Ao marcar livre, o quarto sai do checklist e continua acessível no menu de ocupação.
 - Os totais de ocupação também são botões de filtro. Eles consideram a busca e
   o andar selecionado. Azul identifica ocupado, verde identifica livre e cinza
   identifica não informado, sempre com o estado escrito no cartão.
@@ -380,8 +402,8 @@ arquivos locais não modifica a implantação online.
 
 A interface continua em francês. As rotas disponíveis são:
 
-- `/checklist`: **Checklist des chambres**, com os 85 quartos cadastrados,
-  agrupados por andar. Há pesquisa, filtros e histórico individual.
+- `/checklist`: **Checklist des chambres**, com os quartos ocupados ou de ocupação
+  ainda não informada, agrupados por andar. Há pesquisa, filtros e histórico individual.
 - `/familles`: **Absences et départs**, com quarto, família, ausência temporária
   ou saída definitiva, data, retorno previsto opcional, responsável e observações.
 - `/quotidien`: as tarefas diárias que antes estavam em `/checklist`.

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { today, type State } from "../../lib/domain";
-import type { WorkEvent } from "../../lib/rooms";
+import { rooms, type WorkEvent } from "../../lib/rooms";
 
 async function login(page: Page) {
   const response = await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
@@ -53,7 +53,9 @@ test("the mobile occupancy menu keeps unknown rooms separate and synchronizes th
   await expect(card.getByText(/^Enregistré ·/)).toBeVisible();
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
   await page.goto("/checklist");
-  await expect(page.getByRole("checkbox", { name: "Chambre 101 occupée", exact: true })).not.toBeChecked();
+  await expect(page.getByRole("article", { name: "Chambre 101", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Ouvrir la chambre 101 dans la tournée", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Chambre 103", exact: true })).toBeVisible();
 
   const after = await state(page);
   expect(after.roomInspections?.length || 0).toBe(before.roomInspections?.length || 0);
@@ -94,45 +96,67 @@ test("occupancy filter counts follow search and floor independently of the selec
 
   for (const path of ["/occupation", "/checklist"]) {
     await page.goto(path);
+    const checklist = path === "/checklist";
+    const total = checklist ? 82 : 85;
+    const floorTotal = checklist ? 22 : 23;
+    const searchTotal = checklist ? 9 : 10;
     const filters = page.getByRole("group", { name: "Filtrer par occupation", exact: true });
     const floors = page.getByRole("group", { name: "Filtrer par étage", exact: true });
     const search = page.getByLabel("Rechercher une chambre", { exact: true });
     const reset = page.getByRole("button", { name: "Réinitialiser les filtres", exact: true });
-    await expect(filters.getByRole("button", { name: "Toutes : 85", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(filters.getByRole("button", { name: `Toutes : ${total}`, exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(filters.getByRole("button", { name: "Occupées : 2", exact: true })).toBeVisible();
-    await expect(filters.getByRole("button", { name: "Libres : 3", exact: true })).toBeVisible();
+    if (checklist) await expect(filters.getByRole("button", { name: /^Libres :/ })).toHaveCount(0);
+    else await expect(filters.getByRole("button", { name: "Libres : 3", exact: true })).toBeVisible();
     await expect(filters.getByRole("button", { name: "Non renseignées : 80", exact: true })).toBeVisible();
     await expect(reset).toBeDisabled();
 
     await floors.getByRole("button", { name: "1er étage", exact: true }).click();
-    await expect(filters.getByRole("button", { name: "Toutes : 23", exact: true })).toBeVisible();
+    await expect(filters.getByRole("button", { name: `Toutes : ${floorTotal}`, exact: true })).toBeVisible();
     await search.fill("10");
-    await expect(filters.getByRole("button", { name: "Toutes : 10", exact: true })).toBeVisible();
+    await expect(filters.getByRole("button", { name: `Toutes : ${searchTotal}`, exact: true })).toBeVisible();
     await expect(filters.getByRole("button", { name: "Occupées : 1", exact: true })).toBeVisible();
-    await expect(filters.getByRole("button", { name: "Libres : 1", exact: true })).toBeVisible();
+    if (!checklist) await expect(filters.getByRole("button", { name: "Libres : 1", exact: true })).toBeVisible();
     await expect(filters.getByRole("button", { name: "Non renseignées : 8", exact: true })).toBeVisible();
 
-    await filters.getByRole("button", { name: "Libres : 1", exact: true }).click();
+    const selected = checklist ? "Occupées : 1" : "Libres : 1";
+    await filters.getByRole("button", { name: selected, exact: true }).click();
     await expect(page.getByRole("article")).toHaveCount(1);
-    await expect(page.getByRole("article", { name: "Chambre 102", exact: true })).toBeVisible();
-    await expect(filters.getByRole("button", { name: "Toutes : 10", exact: true })).toBeVisible();
+    await expect(page.getByRole("article", { name: `Chambre ${checklist ? "101" : "102"}`, exact: true })).toBeVisible();
+    await expect(filters.getByRole("button", { name: `Toutes : ${searchTotal}`, exact: true })).toBeVisible();
     await expect(filters.getByRole("button", { name: "Occupées : 1", exact: true })).toBeVisible();
-    await expect(filters.getByRole("button", { name: "Libres : 1", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(filters.getByRole("button", { name: selected, exact: true })).toHaveAttribute("aria-pressed", "true");
     await filters.getByRole("button", { name: "Non renseignées : 8", exact: true }).click();
     await expect(page.getByRole("article")).toHaveCount(8);
-    await expect(filters.getByRole("button", { name: "Libres : 1", exact: true })).toBeVisible();
+    if (!checklist) await expect(filters.getByRole("button", { name: "Libres : 1", exact: true })).toBeVisible();
 
     await search.fill("999");
     await expect(filters.getByRole("button", { name: "Toutes : 0", exact: true })).toBeVisible();
     await expect(filters.getByRole("button", { name: "Occupées : 0", exact: true })).toBeVisible();
-    await expect(filters.getByRole("button", { name: "Libres : 0", exact: true })).toBeVisible();
+    if (!checklist) await expect(filters.getByRole("button", { name: "Libres : 0", exact: true })).toBeVisible();
     await expect(filters.getByRole("button", { name: "Non renseignées : 0", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("article")).toHaveCount(0);
     await reset.click();
     await expect(search).toHaveValue("");
     await expect(floors.getByRole("button", { name: "Tous les étages", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(filters.getByRole("button", { name: "Toutes : 85", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("article")).toHaveCount(85);
+    await expect(filters.getByRole("button", { name: `Toutes : ${total}`, exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("article")).toHaveCount(total);
+    if (checklist) for (const room of ["102", "202", "302"]) {
+      await expect(page.getByRole("article", { name: `Chambre ${room}`, exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: `Ouvrir la chambre ${room} dans la tournée`, exact: true })).toHaveCount(0);
+    }
     await expect(reset).toBeDisabled();
   }
+
+  data.workEvents = [...data.workEvents, ...rooms.map(room => ({
+    ...availability(room, true), expectedRevision: data.workEvents.some(event => event.room === room) ? 1 : 0,
+  }))];
+  await page.reload();
+  await expect(page.getByText("Toutes les chambres sont marquées libres. Aucune tournée à prévoir.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(0);
+  await expect(page.getByRole("progressbar", { name: "Objectif du jour", exact: true })).toHaveAttribute("aria-valuenow", "0");
+  await expect(page.getByRole("button", { name: /^Continuer la tournée/ })).toHaveCount(0);
+  await expect(page.getByText(/NaN/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Imprimer le checklist (PDF)", exact: true }).click();
+  await expect(page.getByRole("radio", { name: "Derniers contrôles des chambres affichées (0)", exact: true })).toBeDisabled();
 });
