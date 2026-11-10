@@ -1,7 +1,7 @@
 import type { WorkEntry, WorkEvent } from "./rooms";
-import { getLaundryMachine, latestWork, laundryMachines, type LaundryMachine, type LaundryMachineId, type LaundryStatus } from "./work";
+import { getLaundryEndsAt, getLaundryMachine, latestWork, laundryMachines, type LaundryMachine, type LaundryMachineId, type LaundryStatus } from "./work";
 
-export { getLaundryMachine, laundryMachines } from "./work";
+export { getLaundryEndsAt, getLaundryMachine, laundryMachines } from "./work";
 export type { LaundryMachine, LaundryMachineId, LaundryStatus } from "./work";
 
 type Work = WorkEntry | WorkEvent;
@@ -12,6 +12,9 @@ export type LaundryCycle = {
   owner: string;
   startedAt: string;
   endsAt: string;
+  initialDurationMinutes: number;
+  addedMinutes: number;
+  extensionId?: string;
   status: LaundryStatus;
   collectedAt: string | null;
   collectedBy: string;
@@ -30,7 +33,7 @@ export function laundryCycles(events: Work[]): LaundryCycle[] {
   const groups = new Map<string, Work[]>();
   for (const event of events) {
     if (event.kind !== "laundryCycle" || !event.laundryCycleId || !event.laundryStartedAt || !event.laundryStatus ||
-      !getLaundryMachine(event.targetId) || !Number.isFinite(Date.parse(event.laundryStartedAt))) continue;
+      !getLaundryEndsAt(event)) continue;
     const group = groups.get(event.laundryCycleId) || [];
     if (!group.some(item => item.id === event.id)) group.push(event);
     groups.set(event.laundryCycleId, group);
@@ -39,10 +42,15 @@ export function laundryCycles(events: Work[]): LaundryCycle[] {
     history.sort((a, b) => b.expectedRevision - a.expectedRevision || b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id));
     const current = history[0], first = history.at(-1)!;
     const machine = getLaundryMachine(current.targetId)!;
+    const planned = history.find(event => event.laundryEndsAt !== undefined) || first;
+    const extension = history.find(event => event.laundryAddedMinutes !== undefined);
     return {
       cycleId, machineId: machine.id, room: current.room, owner: current.laundryOwner || "",
       startedAt: current.laundryStartedAt!,
-      endsAt: new Date(Date.parse(current.laundryStartedAt!) + machine.durationMinutes * 60_000).toISOString(),
+      endsAt: getLaundryEndsAt(planned)!,
+      initialDurationMinutes: (Date.parse(getLaundryEndsAt(first)!) - Date.parse(first.laundryStartedAt!)) / 60_000,
+      addedMinutes: history.reduce((minutes, event) => minutes + (event.laundryAddedMinutes || 0), 0),
+      ...(extension ? { extensionId: extension.id } : {}),
       status: current.laundryStatus!, collectedAt: current.laundryCollectedAt || null,
       collectedBy: current.laundryCollectedBy || "", actor: first.actor,
       revision: current.expectedRevision + 1, lastEventId: current.id,
@@ -52,10 +60,9 @@ export function laundryCycles(events: Work[]): LaundryCycle[] {
   }).sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.cycleId.localeCompare(a.cycleId));
 }
 
-export function laundryTiming(cycle: Pick<LaundryCycle, "machineId" | "startedAt">, now = Date.now()) {
-  const machine = getLaundryMachine(cycle.machineId)!;
-  const totalMs = machine.durationMinutes * 60_000;
-  const endsAt = new Date(Date.parse(cycle.startedAt) + totalMs).toISOString();
+export function laundryTiming(cycle: Pick<LaundryCycle, "startedAt" | "endsAt">, now = Date.now()) {
+  const endsAt = cycle.endsAt;
+  const totalMs = Date.parse(endsAt) - Date.parse(cycle.startedAt);
   const remainingMs = Math.max(0, Date.parse(endsAt) - now);
   const progress = Math.min(100, Math.max(0, (totalMs - remainingMs) / totalMs * 100));
   return { endsAt, remainingMs, totalMs, progress };

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import webpush from "web-push";
 import { createId } from "../lib/domain";
 import { laundryCycles } from "../lib/laundry";
-import { laundryForegroundReady, laundryNoticeForCycle, laundryNotices } from "../lib/laundryNotifications";
+import { laundryForegroundReady, laundryNoticeForCycle, laundryNoticeIsObsolete, laundryNotices } from "../lib/laundryNotifications";
 import { isLaundryPushEndpoint, laundryDeliveryId, laundryPushSubscriptionSchema, laundryVapidConfig, requireLaundryDispatch, sendLaundryPush } from "../lib/laundryPush";
 import type { WorkEntry } from "../lib/rooms";
 
@@ -66,6 +66,67 @@ test("a healthy scheduler only delays foreground fallback for ninety seconds, in
     assert.equal(laundryForegroundReady(notice, true, now + 90_000), true, "An unacknowledged push cannot suppress the whole phase");
     assert.equal(laundryForegroundReady(notice, true, Date.parse(notice.expiresAt)), false);
   }
+});
+
+test("captured new durations drive notifications while legacy plans keep their existing IDs and deadlines", () => {
+  for (const [machineId, duration] of [["washer-1", 44], ["washer-2", 38], ["washer-3", 38], ["dryer-1", 80]] as const) {
+    const end = Date.parse(startedAt) + duration * 60_000;
+    const input = entry({ targetId: machineId, laundryEndsAt: new Date(end).toISOString() });
+    const projected = laundryCycles([input])[0];
+    assert.equal(laundryNoticeForCycle(projected, end - 10 * 60_000 - 1), null);
+    assert.equal(laundryNoticeForCycle(projected, end - 10 * 60_000)?.id, `${input.laundryCycleId}:soon`);
+    assert.equal(laundryNoticeForCycle(projected, end)?.id, `${input.laundryCycleId}:finished`);
+    assert.match(laundryNoticeForCycle(projected, end)!.body, machineId.startsWith("washer") ? /prêt à sécher/ : /prêt à récupérer/);
+  }
+  const legacy = entry(), oldNotice = laundryNotices([legacy], Date.parse("2026-11-10T09:40:00.000Z"))[0];
+  assert.equal(oldNotice.id, `${legacy.laundryCycleId}:finished`);
+  assert.equal(oldNotice.extensionId, undefined);
+});
+
+test("adding time after completion rearms distinct phases and a short extension has only its new completion notice", () => {
+  const original = entry({ laundryEndsAt: "2026-11-10T09:44:00.000Z" });
+  const firstFinished = laundryNotices([original], Date.parse(original.laundryEndsAt!))[0];
+  const extended = { ...original, id: createId(), expectedRevision: 1, occurredAt: "2026-11-10T09:45:00.000Z",
+    laundryAddedMinutes: 20, laundryEndsAt: "2026-11-10T10:05:00.000Z" };
+  assert.deepEqual(laundryNotices([original, extended], Date.parse(extended.occurredAt)), []);
+  const soon = laundryNotices([original, extended], Date.parse("2026-11-10T09:55:00.000Z"))[0];
+  assert.equal(soon.id, `${original.laundryCycleId}:${extended.id}:soon`);
+  assert.equal(soon.extensionId, extended.id);
+  const secondFinished = laundryNotices([original, extended], Date.parse(extended.laundryEndsAt))[0];
+  assert.equal(secondFinished.id, `${original.laundryCycleId}:${extended.id}:finished`);
+  assert.notEqual(laundryDeliveryId("device", firstFinished.id), laundryDeliveryId("device", secondFinished.id));
+  const short = { ...extended, id: createId(), expectedRevision: 2, occurredAt: "2026-11-10T10:06:00.000Z",
+    laundryAddedMinutes: 5, laundryEndsAt: "2026-11-10T10:11:00.000Z" };
+  for (const at of ["2026-11-10T10:06:00.000Z", "2026-11-10T10:10:59.999Z"])
+    assert.deepEqual(laundryNotices([original, extended, short], Date.parse(at)), []);
+  assert.equal(laundryNotices([original, extended, short], Date.parse(short.laundryEndsAt))[0].id, `${original.laundryCycleId}:${short.id}:finished`);
+});
+
+test("an extension during the initial warning moves the threshold, while exactly ten added minutes can warn immediately", () => {
+  const original = entry({ laundryEndsAt: "2026-11-10T09:44:00.000Z" });
+  const originalSoon = laundryNotices([original], Date.parse("2026-11-10T09:34:00.000Z"))[0];
+  const extended = { ...original, id: createId(), expectedRevision: 1, occurredAt: "2026-11-10T09:36:00.000Z", laundryAddedMinutes: 5,
+    laundryEndsAt: "2026-11-10T09:49:00.000Z" };
+  assert.deepEqual(laundryNotices([original, extended], Date.parse("2026-11-10T09:38:59.999Z")), []);
+  const moved = laundryNotices([original, extended], Date.parse("2026-11-10T09:39:00.000Z"))[0];
+  assert.notEqual(moved.id, originalSoon.id);
+  assert.equal(moved.expiresAt, extended.laundryEndsAt);
+  const ten = { ...extended, id: createId(), expectedRevision: 2, occurredAt: "2026-11-10T10:00:00.000Z", laundryAddedMinutes: 10,
+    laundryEndsAt: "2026-11-10T10:10:00.000Z" };
+  assert.equal(laundryNotices([original, extended, ten], Date.parse(ten.occurredAt))[0].stage, "soon");
+});
+
+test("notification cleanup keeps an unknown extension until its newer history arrives", () => {
+  const original = entry(), previous = laundryCycles([original])[0];
+  const extended = { ...original, id: createId(), expectedRevision: 1, occurredAt: "2026-11-10T09:40:00.000Z", laundryAddedMinutes: 20,
+    laundryEndsAt: "2026-11-10T10:00:00.000Z" };
+  const remoteNoticeId = `${original.laundryCycleId}:${extended.id}:soon`;
+  assert.equal(laundryNoticeIsObsolete(previous, remoteNoticeId), false, "A remote push may arrive before the hotel-state poll");
+  const current = laundryCycles([original, extended])[0];
+  assert.equal(laundryNoticeIsObsolete(current, remoteNoticeId), false);
+  assert.equal(laundryNoticeIsObsolete(current, `${original.laundryCycleId}:finished`), true);
+  assert.equal(laundryNoticeIsObsolete(current, `${original.laundryCycleId}:${createId()}:finished`), false);
+  assert.equal(laundryNoticeIsObsolete({ ...current, status: "recupere" }, remoteNoticeId), true);
 });
 
 test("push subscriptions allow browser providers and reject SSRF, credentials, redirects and malformed keys", () => {

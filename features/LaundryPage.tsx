@@ -14,8 +14,14 @@ import { useWorkEvents } from "@/lib/useWorkEvents";
 
 type MachineState = ReturnType<typeof laundryMachineStates>[number];
 const phaseLabels = { available: "Libre", running: "En cours", soon: "Bientôt terminé", ready: "À récupérer", collected: "Récupéré", cancelled: "Annulé" } as const;
-const statusFilters = { all: "Tous les cycles", active: "En cours / à récupérer", collected: "Linge récupéré", cancelled: "Annulés" } as const;
+const statusFilters = { all: "Tous les cycles", active: "En cours / à retirer", collected: "Linge retiré", cancelled: "Annulés" } as const;
 const colors = { available: "success", running: "info", soon: "warning", ready: "warning", collected: "success", cancelled: "default" } as const;
+
+function phaseLabel(phase: keyof typeof phaseLabels, kind?: "washer" | "dryer") {
+  if (kind === "washer" && phase === "ready") return "Prêt à sécher";
+  if (kind === "washer" && phase === "collected") return "Lavage terminé";
+  return phaseLabels[phase];
+}
 
 function dateTime(value: string) {
   return new Date(value).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" });
@@ -56,9 +62,9 @@ function MachineCard({ state, pending, ready, onAction }: {
           <Typography variant="overline" color="text.secondary">{machine.kind === "washer" ? `Lavage · ${machine.capacityKg} kg` : "Séchage"}</Typography>
           <Typography component="h3" variant="h6" sx={{ fontWeight: 800 }}>{machine.label}</Typography>
         </Box>
-        <Chip label={phaseLabels[phase]} color={color} size="small" variant="outlined" sx={{ mt: 0.5 }} />
+        <Chip label={phaseLabel(phase, machine.kind)} color={color} size="small" variant="outlined" sx={{ mt: 0.5 }} />
       </Stack>
-      <Typography variant="body2" color="text.secondary">{machine.program}{machine.kind === "washer" ? ` · ${machine.durationMinutes} min` : ""}</Typography>
+      <Typography variant="body2" color="text.secondary">{machine.program}{machine.kind === "washer" ? ` · ${cycle?.initialDurationMinutes ?? machine.durationMinutes} min` : ""}</Typography>
       {active ? <>
         <Box sx={{ p: 1.75, bgcolor: "action.hover", borderRadius: 2 }}>
           <Typography variant="caption" color="text.secondary">Linge de la chambre</Typography>
@@ -72,13 +78,17 @@ function MachineCard({ state, pending, ready, onAction }: {
           </Typography>
           <LinearProgress variant="determinate" value={state.progress} color={phase === "ready" || phase === "soon" ? "warning" : "primary"} aria-label={`Avancement · ${machine.label}`} sx={{ mt: 1, height: 6, borderRadius: 4 }} />
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Fin prévue à {clockTime(cycle.endsAt)}</Typography>
+          {cycle.addedMinutes > 0 && <Typography variant="caption" sx={{ display: "block", mt: 0.5 }}>+{cycle.addedMinutes} min ajoutées</Typography>}
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5, overflowWrap: "anywhere" }}>Démarré le {dateTime(cycle.startedAt)} · {cycle.actor}</Typography>
         </Box>
         {cycle.notes && <Typography variant="body2" sx={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{cycle.notes}</Typography>}
         {pending && <Typography role="status" variant="caption" color="warning.main">En attente d’envoi · suivi conservé sur cet appareil</Typography>}
         <Box sx={{ flexGrow: 1 }} />
-        {phase === "ready" && <Typography variant="body2" sx={{ fontWeight: 700 }}>Le linge attend dans la machine. Retirez-le avant de libérer la place.</Typography>}
-        <Button variant={phase === "ready" ? "contained" : "outlined"} disabled={!ready} onClick={() => onAction("collect")} sx={{ minHeight: 48 }}>Linge récupéré</Button>
+        {phase === "ready" && <Typography variant="body2" sx={{ fontWeight: 700 }}>{machine.kind === "washer"
+          ? "Le linge est prêt à passer au séchage. Retirez-le avant de libérer la machine à laver."
+          : "Le linge attend dans la machine. Retirez-le avant de libérer la place."}</Typography>}
+        <Button variant="outlined" disabled={!ready} onClick={() => onAction("extend")} sx={{ minHeight: 48 }}>Ajouter du temps</Button>
+        <Button variant={phase === "ready" ? "contained" : "outlined"} disabled={!ready} onClick={() => onAction("collect")} sx={{ minHeight: 48 }}>{machine.kind === "washer" ? "Terminé · prêt à sécher" : "Linge récupéré"}</Button>
         <Button color="inherit" disabled={!ready} onClick={() => onAction("cancel")} sx={{ minHeight: 44 }}>Annuler le cycle</Button>
       </> : <>
         <Stack direction="row" spacing={1} sx={{ py: 1, alignItems: "center", flexGrow: 1 }}>
@@ -124,7 +134,7 @@ export default function LaundryPage() {
       {saved && <Alert severity="success" onClose={() => setSaved("")}>{saved} Le statut d’envoi reste indiqué jusqu’à la confirmation du serveur.</Alert>}
       <LaundryNotificationSettings />
       <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }} aria-label="État des machines">
-        {[{ label: "Libres", count: availableCount, color: "success.main" }, { label: "En cours", count: activeCount, color: "info.main" }, { label: "À récupérer", count: awaitingCount, color: "warning.main" }].map(item => <Paper key={item.label} variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, minWidth: 0 }}>
+        {[{ label: "Libres", count: availableCount, color: "success.main" }, { label: "En cours", count: activeCount, color: "info.main" }, { label: "À retirer", count: awaitingCount, color: "warning.main" }].map(item => <Paper key={item.label} variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, minWidth: 0 }}>
           <Typography variant="h4" component="p" sx={{ color: item.color, fontWeight: 800 }}>{ready ? item.count : "—"}</Typography>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.label}</Typography>
         </Paper>)}
@@ -135,7 +145,7 @@ export default function LaundryPage() {
       </Tabs>
       {!ready ? <Typography role="status">Chargement des cycles conservés sur cet appareil…</Typography> : tab === 0 ? <Box role="tabpanel" id="laundry-machines-panel" aria-labelledby="laundry-machines-tab">
         <Stack spacing={4}>
-          <Typography variant="body2" color="text.secondary">La fin du minuteur indique que le programme devrait être terminé. La machine reste occupée jusqu’à « Linge récupéré ».</Typography>
+          <Typography variant="body2" color="text.secondary">La fin du minuteur indique que le programme devrait être terminé. La machine reste occupée jusqu’à la confirmation du retrait du linge.</Typography>
           {(["washer", "dryer"] as const).map(kind => <Box component="section" key={kind} aria-label={kind === "washer" ? "Machines à laver" : "Machines à sécher"}>
             <Typography component="h2" variant="h6" sx={{ mb: 1.5, fontWeight: 800 }}>{kind === "washer" ? "Machines à laver" : "Machines à sécher"}</Typography>
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(3, minmax(0, 1fr))" }, gap: 2, alignItems: "stretch" }}>
@@ -166,12 +176,18 @@ export default function LaundryPage() {
               <Stack spacing={1.25}>
                 <Stack direction="row" sx={{ justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
                   <Typography component="h2" variant="h6" sx={{ fontWeight: 800 }}>Chambre {cycle.room} · {machine?.label}</Typography>
-                  <Chip label={phaseLabels[phase]} color={colors[phase]} size="small" variant="outlined" />
+                  <Chip label={phaseLabel(phase, machine?.kind)} color={colors[phase]} size="small" variant="outlined" />
                 </Stack>
                 {cycle.owner && <Typography sx={{ fontWeight: 600, overflowWrap: "anywhere" }}>{cycle.owner}</Typography>}
                 <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>Début : {dateTime(cycle.startedAt)} · {cycle.actor}</Typography>
+                <Typography variant="body2" color="text.secondary">Durée initiale : {cycle.initialDurationMinutes} min{cycle.addedMinutes > 0 ? ` · +${cycle.addedMinutes} min ajoutées` : ""}</Typography>
                 <Typography variant="body2" color="text.secondary">Fin prévue : {dateTime(cycle.endsAt)}</Typography>
-                {cycle.collectedAt && <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: "anywhere" }}>Linge récupéré le {dateTime(cycle.collectedAt)} · {cycle.collectedBy}</Typography>}
+                {cycle.addedMinutes > 0 && <Box component="ul" aria-label="Ajouts de temps" sx={{ m: 0, pl: 2.5 }}>
+                  {cycle.history.filter(event => event.laundryAddedMinutes !== undefined).map(event => <Box component="li" key={event.id} sx={{ mb: 0.5 }}>
+                    <Typography variant="caption" sx={{ overflowWrap: "anywhere" }}>+{event.laundryAddedMinutes} min le {dateTime(event.occurredAt)} · {event.actor}</Typography>
+                  </Box>)}
+                </Box>}
+                {cycle.collectedAt && <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: "anywhere" }}>{machine?.kind === "washer" ? "Lavage terminé le" : "Linge récupéré le"} {dateTime(cycle.collectedAt)} · {cycle.collectedBy}</Typography>}
                 {cycle.cancelledAt && <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>Annulé le {dateTime(cycle.cancelledAt)} · {cycle.history[0]?.actor}</Typography>}
                 {cycle.notes && <Typography variant="body2" sx={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{cycle.notes}</Typography>}
                 {isPending(cycle.lastEventId) && <Typography variant="caption" color="warning.main" role="status">En attente d’envoi</Typography>}
@@ -183,7 +199,9 @@ export default function LaundryPage() {
     </Stack>
     {dialog && <LaundryCycleDialog key={`${dialog.state.machine.id}:${dialog.action}:${dialog.state.revision}`} action={dialog.action} machine={dialog.state.machine} cycle={dialog.state.cycle}
       revision={dialog.state.revision} unchanged={unchanged} onClose={() => setDialog(null)} onSaved={room => {
-        setSaved(dialog.action === "start" ? `Suivi démarré · chambre ${room} · ${dialog.state.machine.label}.` : dialog.action === "collect" ? `Récupération conservée · chambre ${room} · ${dialog.state.machine.label}.` : `Annulation conservée · chambre ${room} · ${dialog.state.machine.label}.`);
+        const result = dialog.action === "start" ? "Suivi démarré" : dialog.action === "extend" ? "Temps ajouté" : dialog.action === "collect"
+          ? dialog.state.machine.kind === "washer" ? "Lavage terminé · prêt à sécher" : "Récupération conservée" : "Annulation conservée";
+        setSaved(`${result} · chambre ${room} · ${dialog.state.machine.label}.`);
         setDialog(null);
       }} />}
   </>;

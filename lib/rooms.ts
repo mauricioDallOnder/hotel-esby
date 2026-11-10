@@ -164,6 +164,8 @@ export const workEntrySchema = z.object({
   laundryCollectedAt: z.iso.datetime().nullable().optional(),
   laundryCollectedBy: z.string().trim().max(200).optional(),
   laundryOwner: z.string().trim().max(200).optional(),
+  laundryEndsAt: z.iso.datetime().optional(),
+  laundryAddedMinutes: z.number().int().min(1).max(120).optional(),
 }).superRefine((v, ctx) => {
   const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
   if (v.kind === "roomAvailability") {
@@ -196,15 +198,26 @@ export const workEntrySchema = z.object({
     if (!v.returnedOn && v.returnedBy) invalid("returnedBy", "Un objet en armoire ne peut pas avoir de responsable de restitution.");
     if (v.returnedBy === undefined) invalid("returnedBy", "Renseignez la restitution ou laissez ce champ vide.");
   } else if (v.kind === "laundryCycle") {
-    if (!getLaundryMachine(v.targetId)) invalid("targetId", "Choisissez une machine de la lingerie.");
+    const machine = getLaundryMachine(v.targetId);
+    if (!machine) invalid("targetId", "Choisissez une machine de la lingerie.");
     if (!v.room) invalid("room", "Indiquez la chambre à laquelle appartient le linge.");
     if (!v.laundryCycleId) invalid("laundryCycleId", "Identifiant du cycle requis.");
     if (!v.laundryStatus) invalid("laundryStatus", "Choisissez l’état du cycle.");
     if (!v.laundryStartedAt) invalid("laundryStartedAt", "Date et heure de démarrage requises.");
     if (v.laundryStartedAt && Date.parse(v.occurredAt) < Date.parse(v.laundryStartedAt))
       invalid("occurredAt", "Cette action ne peut pas précéder le démarrage du cycle.");
-    if (v.laundryStatus === "en_cours" && v.laundryStartedAt !== v.occurredAt)
-      invalid("laundryStartedAt", "Le démarrage doit correspondre à l’heure de cette action.");
+    if (v.laundryEndsAt && v.laundryStartedAt && Date.parse(v.laundryEndsAt) <= Date.parse(v.laundryStartedAt))
+      invalid("laundryEndsAt", "L’heure de fin prévue doit suivre le démarrage.");
+    if (v.laundryAddedMinutes !== undefined) {
+      if (v.laundryStatus !== "en_cours") invalid("laundryAddedMinutes", "Seul un cycle en cours peut être prolongé.");
+      if (!v.laundryEndsAt || Date.parse(v.laundryEndsAt) <= Date.parse(v.occurredAt))
+        invalid("laundryEndsAt", "Indiquez la nouvelle heure de fin après cette prolongation.");
+    } else if (v.laundryStatus === "en_cours") {
+      if (v.laundryStartedAt !== v.occurredAt)
+        invalid("laundryStartedAt", "Le démarrage doit correspondre à l’heure de cette action.");
+      if (v.laundryEndsAt && v.laundryStartedAt && machine && Date.parse(v.laundryEndsAt) !== Date.parse(v.laundryStartedAt) + machine.durationMinutes * 60_000)
+        invalid("laundryEndsAt", "Le nouveau cycle doit utiliser la durée prévue pour cette machine.");
+    }
     if (v.laundryCollectedAt === undefined) invalid("laundryCollectedAt", "Indiquez la récupération ou laissez la date explicitement inconnue.");
     if (v.laundryCollectedBy === undefined) invalid("laundryCollectedBy", "Renseignez la récupération ou laissez ce champ vide.");
     if (v.laundryStatus === "recupere") {
@@ -228,7 +241,7 @@ export const workEntrySchema = z.object({
     invalid("kind", "Données de suivi des cafards inattendues.");
   if (v.kind !== "collectedItem" && [v.itemName, v.collectedOn, v.collectedBy, v.returnedOn, v.returnedBy, v.roomUnidentified].some(value => value !== undefined))
     invalid("kind", "Données d’objet récupéré inattendues.");
-  if (v.kind !== "laundryCycle" && [v.laundryCycleId, v.laundryStatus, v.laundryStartedAt, v.laundryCollectedAt, v.laundryCollectedBy, v.laundryOwner].some(value => value !== undefined))
+  if (v.kind !== "laundryCycle" && [v.laundryCycleId, v.laundryStatus, v.laundryStartedAt, v.laundryCollectedAt, v.laundryCollectedBy, v.laundryOwner, v.laundryEndsAt, v.laundryAddedMinutes].some(value => value !== undefined))
     invalid("kind", "Données de lingerie inattendues.");
   if (v.kind === "dailyTask" && v.room) invalid("room", "Une tâche n’est pas un contrôle de chambre.");
 });

@@ -239,6 +239,32 @@ test("Google push grants the next pending notifications after skipping a complet
   assert.equal(google.call({ action: "laundryPushComplete", results: [{ ...next[0], leaseToken: "invalid", outcome: "sent" }], now: warningTime }).code, 400);
 });
 
+test("Google notification leases use the saved end, reject stale schedules and allow a new completion after extension", () => {
+  const google = googleFixture(), running = cycle({ laundryEndsAt: "2026-11-10T10:44:00.000Z" });
+  google.work.push(running);
+  let sequence = 0;
+  const claim = (patch: object) => google.successful<Lease[]>({ action: "laundryPushClaim",
+    requests: [request(running, { id: hash("extended plan " + sequence++), ...patch })], now: new Date(google.clock.now).toISOString() });
+  google.clock.now = Date.parse("2026-11-10T10:34:00.000Z");
+  assert.deepEqual(claim({ expiresAt: endTime }), [], "The captured 44-minute plan replaces the legacy 40-minute deadline");
+  assert.equal(claim({ expiresAt: running.laundryEndsAt }).length, 1);
+  const extended: WorkEntry = { ...running, id: randomUUID(), expectedRevision: 1,
+    occurredAt: "2026-11-10T10:35:00.000Z", laundryAddedMinutes: 5, laundryEndsAt: "2026-11-10T10:49:00.000Z" };
+  google.work.push(extended);
+  google.clock.now = Date.parse("2026-11-10T10:40:00.000Z");
+  assert.deepEqual(claim({ expiresAt: running.laundryEndsAt }), [], "An old queued warning cannot claim the revised plan");
+  assert.equal(claim({ expiresAt: extended.laundryEndsAt }).length, 1);
+  google.clock.now = Date.parse(extended.laundryEndsAt!);
+  assert.equal(claim({ stage: "finished", expiresAt: "2026-11-10T11:04:00.000Z" }).length, 1);
+  const overdue: WorkEntry = { ...extended, id: randomUUID(), expectedRevision: 2,
+    occurredAt: "2026-11-10T10:50:00.000Z", laundryEndsAt: "2026-11-10T10:55:00.000Z" };
+  google.work.push(overdue); google.clock.now = Date.parse(overdue.occurredAt);
+  assert.deepEqual(claim({ expiresAt: overdue.laundryEndsAt }), []);
+  assert.deepEqual(claim({ stage: "finished", expiresAt: "2026-11-10T11:04:00.000Z" }), []);
+  google.clock.now = Date.parse(overdue.laundryEndsAt!);
+  assert.equal(claim({ stage: "finished", expiresAt: "2026-11-10T11:10:00.000Z" }).length, 1);
+});
+
 test("Google notification setup preserves unrelated triggers and dispatches without a held lock or redirected credentials", () => {
   const google = googleFixture();
   assert.deepEqual(google.successful({ action: "laundryPushStatus" }), { configured: false });

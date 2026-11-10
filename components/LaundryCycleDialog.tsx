@@ -11,11 +11,11 @@ import { workEntrySchema, type WorkEntry } from "@/lib/rooms";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 
-export type LaundryAction = "start" | "collect" | "cancel";
+export type LaundryAction = "start" | "extend" | "collect" | "cancel";
 type Machine = typeof laundryMachines[number];
-type Draft = { eventId: string; cycleId: string; room: string; owner: string; actor: string; notes: string };
-const titles = { start: "Démarrer", collect: "Récupérer le linge", cancel: "Annuler le cycle" };
-const labels = { start: "Démarrer", collect: "Confirmer la récupération", cancel: "Confirmer l’annulation" };
+type Draft = { eventId: string; cycleId: string; room: string; owner: string; actor: string; notes: string; addedMinutes: string };
+const titles = { start: "Démarrer", extend: "Ajouter du temps", collect: "Récupérer le linge", cancel: "Annuler le cycle" };
+const labels = { start: "Démarrer", extend: "Confirmer l’ajout", collect: "Confirmer la récupération", cancel: "Confirmer l’annulation" };
 
 function rememberedActor() {
   try { return localStorage.getItem("laundry-actor") || localStorage.getItem("room-inspector") || ""; }
@@ -41,10 +41,11 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
   const [showNotes, setShowNotes] = useState(false);
   function initial(previous?: Draft): Draft {
     return { eventId: createId(), cycleId: cycle?.cycleId || createId(), room: cycle?.room || previous?.room || "",
-      owner: cycle?.owner || previous?.owner || "", actor: previous?.actor || rememberedActor(), notes: cycle?.notes || previous?.notes || "" };
+      owner: cycle?.owner || previous?.owner || "", actor: previous?.actor || rememberedActor(), notes: cycle?.notes || previous?.notes || "",
+      addedMinutes: previous?.addedMinutes || "5" };
   }
   const draft = useDeviceDraft<Draft>(`draft:laundry:${machine.id}:${action}:${cycle?.cycleId || "new"}`, initial,
-    value => events.some(event => event.id === value.eventId) ? initial(value) : value);
+    value => events.some(event => event.id === value.eventId) ? initial(value) : { ...value, addedMinutes: value.addedMinutes ?? "5" });
   const value = draft.value;
   function update(patch: Partial<Draft>) {
     if (value) draft.update({ ...value, ...patch });
@@ -52,12 +53,18 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
   }
   function candidate(current: Draft): WorkEntry {
     const at = new Date().toISOString();
+    if (action !== "start" && !cycle) throw new Error("Le cycle n’est plus disponible. Actualisez la lingerie.");
+    const endsAt = action === "start" ? new Date(Date.parse(at) + machine.durationMinutes * 60_000).toISOString()
+      : action === "extend" ? new Date(Math.max(Date.parse(cycle!.endsAt), Date.parse(at)) + Number(current.addedMinutes) * 60_000).toISOString()
+      : cycle!.endsAt;
     return {
       type: "createWorkEvent", kind: "laundryCycle", id: current.eventId, targetId: machine.id,
       expectedRevision: revision, room: current.room, date: today(), actor: current.actor, notes: current.notes,
       occurredAt: at, laundryCycleId: current.cycleId, laundryOwner: current.owner,
       laundryStartedAt: cycle?.startedAt || at,
-      laundryStatus: action === "start" ? "en_cours" : action === "collect" ? "recupere" : "annule",
+      laundryEndsAt: endsAt,
+      ...(action === "extend" ? { laundryAddedMinutes: Number(current.addedMinutes) } : {}),
+      laundryStatus: action === "collect" ? "recupere" : action === "cancel" ? "annule" : "en_cours",
       laundryCollectedAt: action === "collect" ? at : null,
       laundryCollectedBy: action === "collect" ? current.actor : "",
     };
@@ -67,13 +74,21 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
     if (!value || saving.current || !unchanged) return;
     saving.current = true; setBusy(true); setError("");
     try {
+      const addedMinutes = Number(value.addedMinutes);
+      if (action === "extend" && (!Number.isInteger(addedMinutes) || addedMinutes < 1 || addedMinutes > 120)) {
+        setInvalid(["laundryAddedMinutes"]);
+        setError("Indiquez un nombre entier de minutes entre 1 et 120.");
+        content.current?.scrollTo({ top: 0 });
+        return;
+      }
       const queued = await deviceStore<PendingEntry | undefined>("get", "queue:" + value.eventId);
       const previous = queued?.entry.type === "createWorkEvent" ? queued.entry : events.find(item => item.id === value.eventId);
       if (queued?.blocked) {
         setError("Cet envoi nécessite votre attention. Fermez cette fenêtre et consultez le message de synchronisation avant de recommencer.");
         return;
       }
-      if (previous && (previous.room !== value.room || previous.laundryOwner !== value.owner.trim() || previous.actor !== value.actor.trim() || previous.notes !== value.notes.trim())) {
+      if (previous && (previous.room !== value.room || previous.laundryOwner !== value.owner.trim() || previous.actor !== value.actor.trim() || previous.notes !== value.notes.trim() ||
+        action === "extend" && previous.laundryAddedMinutes !== addedMinutes)) {
         setError("Cette action a déjà été conservée. Fermez cette fenêtre pour retrouver son résultat ; les nouvelles informations n’ont pas été envoyées.");
         return;
       }
@@ -96,7 +111,7 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
   }
   return <Dialog open fullWidth fullScreen={mobile} maxWidth="sm" onClose={busy ? undefined : onClose} aria-labelledby="laundry-action-title">
     <Box component="form" noValidate onSubmit={submit} sx={{ display: "flex", flexDirection: "column", minHeight: 0, height: mobile ? "100%" : undefined }}>
-      <DialogTitle id="laundry-action-title">{titles[action]} · {machine.label}</DialogTitle>
+      <DialogTitle id="laundry-action-title">{action === "collect" && machine.kind === "washer" ? "Terminer le lavage" : titles[action]} · {machine.label}</DialogTitle>
       <DialogContent ref={content} dividers>
         <Stack spacing={2.5}>
           {error && <Alert severity="error">{error}</Alert>}
@@ -120,7 +135,19 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
                   <Typography variant="h5" sx={{ fontWeight: 800 }}>Chambre {value.room}</Typography>
                   {value.owner && <Typography sx={{ mt: 0.5, overflowWrap: "anywhere" }}>{value.owner}</Typography>}
                 </Box>
-                {action === "collect" ? <Typography>Confirmez après avoir retiré tout le linge de la machine. La date et l’heure de récupération seront enregistrées et la machine sera libérée.</Typography> :
+                {action === "extend" ? <>
+                  <Typography>Ajoutez du temps à la fin prévue. Si le minuteur est déjà terminé, le nouveau temps commencera à la confirmation.</Typography>
+                  <Typography variant="body2" color="text.secondary">Fin prévue actuellement : {cycle && new Date(cycle.endsAt).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" })}.</Typography>
+                  <Stack direction="row" spacing={1}>
+                    {[5, 10, 15].map(minutes => <Button key={minutes} variant={Number(value.addedMinutes) === minutes ? "contained" : "outlined"}
+                      onClick={() => update({ addedMinutes: String(minutes) })} sx={{ flex: 1, minHeight: 44 }}>+{minutes} min</Button>)}
+                  </Stack>
+                  <TextField required type="number" label="Minutes à ajouter" value={value.addedMinutes} onChange={event => update({ addedMinutes: event.target.value })}
+                    error={invalid.includes("laundryAddedMinutes")} helperText="De 1 à 120 minutes. Réglez aussi le temps sur la machine si nécessaire."
+                    slotProps={{ htmlInput: { min: 1, max: 120, step: 1, inputMode: "numeric" } }} />
+                </> : action === "collect" ? <Typography>{machine.kind === "washer"
+                  ? "Confirmez après avoir retiré tout le linge de la machine à laver. Le lavage sera enregistré comme terminé et la machine sera libérée. Vous pourrez ensuite démarrer un suivi sur une machine à sécher."
+                  : "Confirmez après avoir retiré tout le linge de la machine. La date et l’heure de récupération seront enregistrées et la machine sera libérée."}</Typography> :
                   <Alert severity="warning">Cette annulation libère la machine dans l’application. Vérifiez qu’elle est arrêtée et vide avant de confirmer. Le cycle restera dans l’historique.</Alert>}
               </>}
               <TextField required label="Votre nom" value={value.actor} onChange={event => update({ actor: event.target.value })} error={invalid.includes("actor") || invalid.includes("laundryCollectedBy")}
@@ -134,7 +161,7 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
       <DialogActions sx={{ p: 2, gap: 1 }}>
         <Button onClick={onClose} disabled={busy} sx={{ minHeight: 48 }}>Fermer</Button>
         <Button type="submit" variant="contained" color={action === "cancel" ? "error" : "primary"} disabled={busy || !value || !unchanged} sx={{ minHeight: 48 }}>
-          {busy ? "Enregistrement…" : labels[action]}
+          {busy ? "Enregistrement…" : action === "collect" && machine.kind === "washer" ? "Confirmer · prêt à sécher" : labels[action]}
         </Button>
       </DialogActions>
     </Box>

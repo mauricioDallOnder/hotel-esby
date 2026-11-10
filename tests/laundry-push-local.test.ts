@@ -111,6 +111,26 @@ test("delivered candidates do not starve other devices in the next bounded batch
   assert.ok(second.every(claim => !first.some(prior => prior.id === claim.id)));
 });
 
+test("local notification claims reject an old plan and follow each extension without repeating an immediate short warning", async t => {
+  local(t);
+  const entry = cycle(); await executeEntry(entry);
+  const original = await claimLaundryPushDeliveries([request(entry)], soon);
+  await completeLaundryPushDeliveries(original.map(claim => ({ ...claim, outcome: "sent" })), soon);
+  const extended: WorkEntry = { ...entry, id: randomUUID(), expectedRevision: 1,
+    occurredAt: "2026-10-01T09:31:00.000Z", laundryAddedMinutes: 5, laundryEndsAt: "2026-10-01T09:45:00.000Z" };
+  await executeEntry(extended);
+  const currentTime = "2026-10-01T09:36:00.000Z";
+  assert.deepEqual(await claimLaundryPushDeliveries([request(entry, 2)], currentTime), [], "The old end is stale even while both warning windows overlap");
+  const updated = { ...request(entry, 3), expiresAt: extended.laundryEndsAt! };
+  assert.equal((await claimLaundryPushDeliveries([updated], currentTime)).length, 1);
+  assert.equal((await claimLaundryPushDeliveries([{ ...request(entry, 4), stage: "finished", expiresAt: "2026-10-01T10:00:00.000Z" }], extended.laundryEndsAt!)).length, 1);
+  const overdue: WorkEntry = { ...extended, id: randomUUID(), expectedRevision: 2,
+    occurredAt: "2026-10-01T09:50:00.000Z", laundryEndsAt: "2026-10-01T09:55:00.000Z" };
+  await executeEntry(overdue);
+  assert.deepEqual(await claimLaundryPushDeliveries([{ ...request(entry, 5), expiresAt: overdue.laundryEndsAt! }], overdue.occurredAt), [], "Adding five minutes after zero must not emit a new ten-minute warning");
+  assert.equal((await claimLaundryPushDeliveries([{ ...request(entry, 6), stage: "finished", expiresAt: "2026-10-01T10:10:00.000Z" }], overdue.laundryEndsAt!)).length, 1);
+});
+
 test("damaged private storage is surfaced instead of silently dropping notification registrations", async t => {
   const directory = local(t);
   writeFileSync(path.join(directory, "laundry-notifications.json"), "not valid JSON");

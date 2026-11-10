@@ -89,13 +89,17 @@ function doPost(e) {
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection' && input.action !== 'commitWorkEvent' && input.action !== 'commitLaundryCycle') throw new Error('Action invalide.');
+    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection' && input.action !== 'commitWorkEvent' && input.action !== 'commitLaundryCycle' && input.action !== 'commitLaundryCycleV2') throw new Error('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
-    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection' || input.action === 'commitWorkEvent' || input.action === 'commitLaundryCycle';
+    const isLaundry = input.action === 'commitLaundryCycle' || input.action === 'commitLaundryCycleV2';
+    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection' || input.action === 'commitWorkEvent' || isLaundry;
     if (input.action === 'commitWorkEvent' && input.collection !== 'workEvents') throw new Error('Collection invalide.');
-    if (input.action === 'commitLaundryCycle' && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'laundryCycle')) throw new Error('Cycle de lingerie invalide.');
-    if (input.collection === 'workEvents' && input.record && input.record.kind === 'laundryCycle' && input.action !== 'commitLaundryCycle') throw new Error('Utilisez commitLaundryCycle.');
+    if (isLaundry && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'laundryCycle')) throw new Error('Cycle de lingerie invalide.');
+    if (input.collection === 'workEvents' && input.record && input.record.kind === 'laundryCycle' && !isLaundry) throw new Error('Utilisez commitLaundryCycleV2.');
+    // Old clients keep their original payloads, while plans and extensions must
+    // use a versioned action that an old deployment rejects before writing.
+    if (input.action === 'commitLaundryCycle' && (input.record.laundryEndsAt !== undefined || input.record.laundryAddedMinutes !== undefined)) throw new Error('Utilisez commitLaundryCycleV2.');
     if (input.action === 'commitRoomInspection' && input.collection !== 'roomInspections') throw new Error('Collection invalide.');
     if (isEntry && !['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Collection invalide.');
     if (!isEntry && ['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Utilisez commitEntry.');
@@ -330,12 +334,12 @@ function laundryPushAction_(input) {
         const previous = deliveries.get(request.id);
         if (previous && (previous.sentAt || Date.parse(previous.leaseUntil) > now || previous.cycleId !== request.cycleId || previous.stage !== request.stage)) continue;
         const cycle = current.find(item => item.laundryCycleId === request.cycleId && item.laundryStatus === 'en_cours');
-        const machine = cycle && WorkLogic.getLaundryMachine(cycle.targetId);
-        const end = machine ? Date.parse(cycle.laundryStartedAt) + machine.durationMinutes * 60000 : NaN;
+        const end = cycle ? Date.parse(WorkLogic.getLaundryEndsAt(cycle)) : NaN;
         const begins = request.stage === 'soon' ? end - 10 * 60000 : end;
         const expires = request.stage === 'soon' ? end : end + 15 * 60000;
         const requestedExpiry = Date.parse(request.expiresAt);
-        if (!Number.isFinite(end) || now < begins || now >= expires || requestedExpiry <= now || requestedExpiry > expires) continue;
+        if (!Number.isFinite(end) || now < begins || now >= expires || requestedExpiry <= now || requestedExpiry !== expires) continue;
+        if (request.stage === 'soon' && cycle.laundryAddedMinutes !== undefined && Date.parse(cycle.occurredAt) > begins) continue;
         const leaseToken = Utilities.getUuid();
         const delivery = { id: request.id, cycleId: request.cycleId, stage: request.stage, expiresAt: request.expiresAt,
           leaseToken: leaseToken, leaseUntil: new Date(now + 2 * 60000).toISOString(), sentAt: null, updatedAt: nowISO };
@@ -563,6 +567,7 @@ var exports = {};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.laundryMachines = void 0;
 exports.getLaundryMachine = getLaundryMachine;
+exports.getLaundryEndsAt = getLaundryEndsAt;
 exports.validateLaundryEntry = validateLaundryEntry;
 exports.latestWork = latestWork;
 exports.validateWorkEntry = validateWorkEntry;
@@ -572,9 +577,9 @@ exports.familyComments = familyComments;
 // The visible numbers match the physical labels. Washers and dryers have
 // distinct IDs so a cycle can never reserve the wrong kind of appliance.
 exports.laundryMachines = [
-    { id: "washer-1", label: "Machine à laver 1", kind: "washer", capacityKg: 18, durationMinutes: 40, program: "Rapide 40" },
-    { id: "washer-2", label: "Machine à laver 2", kind: "washer", capacityKg: 8, durationMinutes: 30, program: "Rapide 30" },
-    { id: "washer-3", label: "Machine à laver 3", kind: "washer", capacityKg: 8, durationMinutes: 30, program: "Rapide 30" },
+    { id: "washer-1", label: "Machine à laver 1", kind: "washer", capacityKg: 18, durationMinutes: 44, program: "Rapide 40" },
+    { id: "washer-2", label: "Machine à laver 2", kind: "washer", capacityKg: 8, durationMinutes: 38, program: "Rapide 30" },
+    { id: "washer-3", label: "Machine à laver 3", kind: "washer", capacityKg: 8, durationMinutes: 38, program: "Rapide 30" },
     { id: "dryer-1", label: "Machine à sécher 1", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
     { id: "dryer-2", label: "Machine à sécher 2", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
     { id: "dryer-3", label: "Machine à sécher 3", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
@@ -582,16 +587,37 @@ exports.laundryMachines = [
 function getLaundryMachine(id) {
     return exports.laundryMachines.find(machine => machine.id === id);
 }
+// Persisted planned ends are authoritative. Older events did not store one, so
+// keep their original 40/30/80-minute timing even when new machine defaults change.
+function getLaundryEndsAt(record) {
+    const machine = getLaundryMachine(record.targetId), started = Date.parse(record.laundryStartedAt || "");
+    if (!machine || !Number.isFinite(started))
+        return undefined;
+    if (record.laundryEndsAt !== undefined) {
+        const end = Date.parse(record.laundryEndsAt);
+        return Number.isFinite(end) && end > started ? new Date(end).toISOString() : undefined;
+    }
+    const originalMinutes = machine.id === "washer-1" ? 40 : machine.kind === "washer" ? 30 : 80;
+    return new Date(started + originalMinutes * 60000).toISOString();
+}
 // This validator is bundled unchanged into Apps Script, inside its write lock.
 // Reaching the scheduled end does not release a machine: the clothes stay there
 // until an operator explicitly records their removal or cancels the cycle.
 function validateLaundryEntry(entry, events, current) {
-    if (!getLaundryMachine(entry.targetId) || !entry.room || !entry.laundryCycleId || !entry.laundryStartedAt ||
+    const machine = getLaundryMachine(entry.targetId);
+    if (!machine || !entry.room || !entry.laundryCycleId || !entry.laundryStartedAt ||
         !entry.laundryStatus || !["en_cours", "recupere", "annule"].includes(entry.laundryStatus))
         return "Renseignez la machine, la chambre et le cycle de linge.";
     const started = Date.parse(entry.laundryStartedAt), occurred = Date.parse(entry.occurredAt);
     if (!Number.isFinite(started) || !Number.isFinite(occurred) || occurred < started)
         return "La mise à jour du linge doit suivre le démarrage du cycle.";
+    const added = entry.laundryAddedMinutes;
+    if (added !== undefined && (!Number.isInteger(added) || added < 1 || added > 120))
+        return "Ajoutez entre 1 et 120 minutes entières.";
+    if (!getLaundryEndsAt(entry))
+        return "L’heure de fin prévue doit suivre le démarrage du cycle.";
+    if (added !== undefined && (entry.laundryStatus !== "en_cours" || !entry.laundryEndsAt))
+        return "Seul un cycle en cours peut être prolongé avec une nouvelle heure de fin.";
     if (entry.laundryStatus === "recupere") {
         if (!entry.laundryCollectedAt || entry.laundryCollectedAt !== entry.occurredAt || entry.laundryCollectedBy !== entry.actor)
             return "La récupération doit indiquer sa date, son heure et la personne qui l’enregistre.";
@@ -599,7 +625,7 @@ function validateLaundryEntry(entry, events, current) {
     else if (entry.laundryCollectedAt !== null || entry.laundryCollectedBy !== "") {
         return "Un cycle non récupéré ne peut pas avoir de date ou de responsable de récupération.";
     }
-    if (entry.laundryStatus === "en_cours") {
+    if (entry.laundryStatus === "en_cours" && added === undefined) {
         if ((current === null || current === void 0 ? void 0 : current.laundryStatus) === "en_cours")
             return "Cette machine contient déjà du linge. Confirmez sa récupération avant de démarrer un autre cycle.";
         if (events.some(event => event.kind === "laundryCycle" && event.laundryCycleId === entry.laundryCycleId))
@@ -608,6 +634,8 @@ function validateLaundryEntry(entry, events, current) {
             return "Le démarrage du cycle doit correspondre à l’heure de cette action.";
         if (current && occurred < Date.parse(current.occurredAt))
             return "Le nouveau cycle ne peut pas commencer avant la libération de la machine.";
+        if (entry.laundryEndsAt !== undefined && Date.parse(entry.laundryEndsAt) !== started + machine.durationMinutes * 60000)
+            return "Le nouveau cycle doit utiliser la durée prévue pour cette machine.";
         return undefined;
     }
     if (!current || current.laundryStatus !== "en_cours" || current.laundryCycleId !== entry.laundryCycleId)
@@ -616,7 +644,17 @@ function validateLaundryEntry(entry, events, current) {
         (entry.laundryOwner || "") !== (current.laundryOwner || ""))
         return "Le cycle doit conserver sa chambre, son propriétaire et son heure de démarrage.";
     if (occurred < Date.parse(current.occurredAt))
-        return "La récupération ou l’annulation doit suivre le démarrage du cycle.";
+        return "Cette action doit suivre la dernière mise à jour du cycle.";
+    const currentEnd = getLaundryEndsAt(current);
+    if (!currentEnd)
+        return "L’heure de fin de ce cycle est invalide. Actualisez la lingerie.";
+    if (added !== undefined) {
+        if (Date.parse(entry.laundryEndsAt) !== Math.max(Date.parse(currentEnd), occurred) + added * 60000)
+            return "La nouvelle fin doit ajouter les minutes demandées au temps restant, ou à l’heure actuelle si le délai est dépassé.";
+    }
+    else if (entry.laundryEndsAt !== undefined && Date.parse(entry.laundryEndsAt) !== Date.parse(currentEnd)) {
+        return "La récupération ou l’annulation doit conserver l’heure de fin prévue.";
+    }
     return undefined;
 }
 function latestWork(events, kind) {

@@ -112,7 +112,7 @@ export async function google<T>(payload: Record<string, unknown>, timeoutMs = 55
       );
     }
     
-    if (!result.ok && ["commitRoomInspection", "commitWorkEvent", "commitLaundryCycle"].includes(String(payload.action)) && result.error === "Action invalide.")
+    if (!result.ok && ["commitRoomInspection", "commitWorkEvent", "commitLaundryCycle", "commitLaundryCycleV2"].includes(String(payload.action)) && result.error === "Action invalide.")
       throw new DomainError("Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser ces modifications. Elles restent conservées sur cet appareil.", 503);
     if (!result.ok)
       // A Google token failure is a server configuration error, not an expired hotel session.
@@ -276,7 +276,7 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   if (storageMode() === "sheets") {
     try {
       const action = change.collection === "roomInspections" ? "commitRoomInspection"
-        : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? "commitLaundryCycle" : "commitWorkEvent" : "commitEntry";
+        : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? "commitLaundryCycleV2" : "commitWorkEvent" : "commitEntry";
       const receipt = await google<EntryChange>({ action, ...change, expectedVersion: 0, photosData });
       if (receipt?.collection !== collection || receipt.record?.id !== entry.id || receipt.record?.submissionHash !== submissionHash)
         throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
