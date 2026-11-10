@@ -7,6 +7,7 @@ import { entrySchema, type Entry, type EntryChange } from "@/lib/rooms";
 import { comparePendingEntries, type PendingEntry as Pending } from "@/lib/entryQueue";
 import { displayDate } from "@/lib/domain";
 import { collectedItemRoomLabel } from "@/lib/collectedItems";
+import { getLaundryMachine } from "@/lib/laundry";
 
 type Context = { pending: Pending[]; ready: boolean; online: boolean; working: boolean; storageError: string; enqueue: (entry: Entry) => Promise<void>; retry: () => void; removeAbsence: (id: string) => Promise<void>; status: React.ReactNode };
 const EntriesContext = createContext<Context | null>(null);
@@ -132,6 +133,7 @@ export function EntriesProvider({ children, onSaved, onDelete }: { children: Rea
           <Typography variant="body2">{p.entry.room ? `Ch. ${p.entry.room}` : p.entry.type === "createWorkEvent" && p.entry.kind === "collectedItem" ? collectedItemRoomLabel("") : "Tâche"} : {p.error || "Envoi refusé. Actualisez les données puis réessayez."}</Typography>
           {p.blocked && p.entry.type === "createWorkEvent" && <><Typography variant="caption" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{p.entry.kind === "roomAvailability" ? `Disponibilité demandée : ${p.entry.free ? "libre" : "occupée"}` : p.entry.kind === "collectedItem"
             ? `${p.entry.itemName} · Récupéré le ${displayDate(p.entry.collectedOn!)} par ${p.entry.collectedBy}\n${p.entry.returnedOn ? `Restitution demandée : ${displayDate(p.entry.returnedOn)} · ${p.entry.returnedBy}` : "État demandé : en armoire"}${p.entry.notes ? `\nMotif : ${p.entry.notes}` : ""}`
+            : p.entry.kind === "laundryCycle" ? `${getLaundryMachine(p.entry.targetId)?.label || p.entry.targetId} · ${p.entry.laundryStatus === "en_cours" ? "Démarrage demandé" : p.entry.laundryStatus === "recupere" ? "Retrait demandé" : "Annulation demandée"}\n${p.entry.actor}${p.entry.laundryOwner ? ` · ${p.entry.laundryOwner}` : ""}\n${p.entry.notes}`
             : p.entry.notes}</Typography><Button onClick={() => void discardBlocked(p.entry.id)}>Annuler cette modification en attente</Button></>}
         </Stack>)}
       </Alert>}

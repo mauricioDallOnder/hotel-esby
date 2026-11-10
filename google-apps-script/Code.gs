@@ -57,6 +57,7 @@ function doPost(e) {
     const input = JSON.parse(e.postData.contents);
     const token = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
     if (!token || input.token !== token) return json_({ ok: false, code: 401, error: 'Accès refusé.' });
+    if (String(input.action || '').indexOf('laundryPush') === 0) return laundryPushAction_(input);
     if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), workEvents: records_('workEvents'), maxIssuePhotos: 3, entryVersion: 3, deletedFamilyEventIds: deletedAbsences_() } });
     if (input.action === 'photo') {
       const collection = input.collection === 'roomInspections' ? 'roomInspections' : 'issues';
@@ -88,11 +89,13 @@ function doPost(e) {
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection' && input.action !== 'commitWorkEvent') throw new Error('Action invalide.');
+    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection' && input.action !== 'commitWorkEvent' && input.action !== 'commitLaundryCycle') throw new Error('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
-    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection' || input.action === 'commitWorkEvent';
+    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection' || input.action === 'commitWorkEvent' || input.action === 'commitLaundryCycle';
     if (input.action === 'commitWorkEvent' && input.collection !== 'workEvents') throw new Error('Collection invalide.');
+    if (input.action === 'commitLaundryCycle' && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'laundryCycle')) throw new Error('Cycle de lingerie invalide.');
+    if (input.collection === 'workEvents' && input.record && input.record.kind === 'laundryCycle' && input.action !== 'commitLaundryCycle') throw new Error('Utilisez commitLaundryCycle.');
     if (input.action === 'commitRoomInspection' && input.collection !== 'roomInspections') throw new Error('Collection invalide.');
     if (isEntry && !['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Collection invalide.');
     if (!isEntry && ['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Utilisez commitEntry.');
@@ -191,6 +194,211 @@ function writeRecord_(collection, record, isEntry, current) {
 }
 function photoIds_(record) {
   return record.photoIds && record.photoIds.length ? record.photoIds : record.photoId ? [record.photoId] : [];
+}
+
+// Device capabilities and delivery leases are private server data. This sheet
+// is deliberately absent from TABLES and from the ordinary list response.
+const LAUNDRY_PUSH_SHEET = 'Notifications lingerie';
+const LAUNDRY_PUSH_HEADERS = ['Type', 'ID', 'Données', 'Mis à jour'];
+function laundryPushTable_() {
+  const book = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = book.getSheetByName(LAUNDRY_PUSH_SHEET);
+  if (!sheet) {
+    sheet = book.insertSheet(LAUNDRY_PUSH_SHEET);
+    sheet.getRange(1, 1, 1, 4).setValues([LAUNDRY_PUSH_HEADERS]);
+    sheet.setFrozenRows(1);
+  }
+  if (sheet.getRange(1, 1, 1, 4).getValues()[0].join('|') !== LAUNDRY_PUSH_HEADERS.join('|'))
+    throw new Error('En-têtes incompatibles dans Notifications lingerie.');
+  return sheet;
+}
+function laundryPushState_(sheet, now) {
+  const state = { subscriptions: [], deliveries: [] };
+  const seen = new Set();
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+  rows.filter(row => row[0] || row[1] || row[2]).forEach(row => {
+    const type = row[0], id = String(row[1]), serialized = String(row[2]);
+    if (!['subscription', 'delivery'].includes(type) || !/^[a-f0-9]{64}$/.test(id) || serialized[0] !== 'j' || seen.has(type + ':' + id))
+      throw new Error('Données de notification incompatibles.');
+    seen.add(type + ':' + id);
+    const value = JSON.parse(serialized.slice(1));
+    if (!value || value.id !== id) throw new Error('Données de notification incompatibles.');
+    if (type === 'subscription') {
+      if (!value.subscription || !Number.isFinite(Date.parse(value.createdAt)) || !Number.isFinite(Date.parse(value.updatedAt)))
+        throw new Error('Abonnement de notification incompatible.');
+      const expiration = value.subscription.expirationTime;
+      if (expiration == null || expiration > now) state.subscriptions.push(value);
+    } else {
+      const expires = Date.parse(value.expiresAt);
+      if (!Number.isFinite(expires)) throw new Error('Suivi de notification incompatible.');
+      // Keep sent IDs long enough to cover overlapping dispatches and retries.
+      if (now < expires + 60 * 60000) state.deliveries.push(value);
+    }
+  });
+  return state;
+}
+function writeLaundryPushState_(sheet, state) {
+  const rows = [LAUNDRY_PUSH_HEADERS].concat(
+    state.subscriptions.map(item => ['subscription', item.id, 'j' + JSON.stringify(item), item.updatedAt]),
+    state.deliveries.map(item => ['delivery', item.id, 'j' + JSON.stringify(item), item.updatedAt])
+  );
+  // One padded write replaces this private table without clearing it first.
+  const size = Math.max(rows.length, sheet.getLastRow());
+  while (rows.length < size) rows.push(['', '', '', '']);
+  if (size > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), size - sheet.getMaxRows());
+  sheet.getRange(1, 1, size, 4).setNumberFormat('@').setValues(rows);
+  SpreadsheetApp.flush();
+}
+function laundryPushHash_(value) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, value, Utilities.Charset.UTF_8)
+    .map(byte => ('0' + (byte & 255).toString(16)).slice(-2)).join('');
+}
+function laundryPushEndpoint_(value) {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  const match = /^https:\/\/([^/?#]+)(\/[^#]+)$/.exec(value);
+  if (!match) return false;
+  const host = match[1].replace(/:443$/, '').toLowerCase();
+  return host === 'fcm.googleapis.com' || host === 'updates.push.services.mozilla.com' || host === 'web.push.apple.com'
+    || /^[a-z0-9-]+\.push\.apple\.com$/.test(host) || /^[a-z0-9-]+\.notify\.windows\.com$/.test(host);
+}
+function laundryPushSubscription_(input, id, now) {
+  if (!input || !laundryPushEndpoint_(input.endpoint) || !/^[a-f0-9]{64}$/.test(id || '') || laundryPushHash_(input.endpoint) !== id
+    || !input.keys || !/^[A-Za-z0-9_-]{87}$/.test(input.keys.p256dh || '') || !/^[A-Za-z0-9_-]{22}$/.test(input.keys.auth || '')
+    || (input.expirationTime != null && (!Number.isFinite(input.expirationTime) || input.expirationTime <= now)))
+    throw new Error('Abonnement de notification invalide ou expiré.');
+  return { endpoint: input.endpoint, expirationTime: input.expirationTime == null ? null : input.expirationTime,
+    keys: { p256dh: input.keys.p256dh, auth: input.keys.auth } };
+}
+function laundryPushTime_(value) {
+  const time = typeof value === 'string' ? Date.parse(value) : NaN;
+  if (!Number.isFinite(time) || new Date(time).toISOString() !== value) throw new Error('Date de notification invalide.');
+  return time;
+}
+function laundryPushRequest_(request) {
+  if (!request || !/^[a-f0-9]{64}$/.test(request.id || '')
+    || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(request.cycleId || '')
+    || !['soon', 'finished'].includes(request.stage)) throw new Error('Notification invalide.');
+  laundryPushTime_(request.expiresAt);
+}
+function laundryPushAction_(input) {
+  if (input.action === 'laundryPushStatus') {
+    const props = PropertiesService.getScriptProperties();
+    const last = props.getProperty('LAUNDRY_PUSH_LAST_RUN_AT');
+    return json_({ ok: true, data: {
+      configured: props.getProperty('LAUNDRY_PUSH_ENABLED') === '1' && !!laundryAppOrigin_(props.getProperty('LAUNDRY_APP_URL')) && !!props.getProperty('API_TOKEN'),
+      ...(last && Number.isFinite(Date.parse(last)) ? { lastRunAt: last } : {})
+    } });
+  }
+  if (!['laundryPushSave', 'laundryPushDelete', 'laundryPushList', 'laundryPushClaim', 'laundryPushComplete'].includes(input.action))
+    throw new Error('Action invalide.');
+  const now = ['laundryPushClaim', 'laundryPushComplete'].includes(input.action) ? laundryPushTime_(input.now) : Date.now();
+  const nowISO = new Date(now).toISOString();
+  if (input.action === 'laundryPushClaim') {
+    if (!Array.isArray(input.requests) || input.requests.length > 300) throw new Error('Trop de notifications à traiter.');
+    input.requests.forEach(laundryPushRequest_);
+  }
+  if (input.action === 'laundryPushComplete') {
+    if (!Array.isArray(input.results) || input.results.length > 50 || input.results.some(result => !result || !/^[a-f0-9]{64}$/.test(result.id || '')
+      || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(result.leaseToken || '') || !['sent', 'retry'].includes(result.outcome)))
+      throw new Error('Résultat de notification invalide.');
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = laundryPushTable_(), state = laundryPushState_(sheet, now);
+    let data;
+    if (input.action === 'laundryPushSave') {
+      const subscription = laundryPushSubscription_(input.subscription, input.id, now);
+      const index = state.subscriptions.findIndex(item => item.id === input.id);
+      if (index < 0 && state.subscriptions.length >= 50) return json_({ ok: false, code: 409, error: 'Limite de 50 appareils atteinte. Désactivez les notifications sur un ancien appareil.' });
+      const stored = { id: input.id, subscription: subscription, createdAt: index < 0 ? nowISO : state.subscriptions[index].createdAt, updatedAt: nowISO };
+      if (index < 0) state.subscriptions.push(stored); else state.subscriptions[index] = stored;
+      data = { id: input.id };
+    } else if (input.action === 'laundryPushDelete') {
+      if (!laundryPushEndpoint_(input.endpoint)) throw new Error('Abonnement de notification invalide.');
+      const id = laundryPushHash_(input.endpoint);
+      state.subscriptions = state.subscriptions.filter(item => item.id !== id);
+      data = { removed: true };
+    } else if (input.action === 'laundryPushList') {
+      data = state.subscriptions;
+    } else if (input.action === 'laundryPushClaim') {
+      const current = [...WorkLogic.latestWork(records_('workEvents'), 'laundryCycle').values()];
+      const deliveries = new Map(state.deliveries.map(item => [item.id, item]));
+      const granted = [];
+      for (const request of input.requests) {
+        if (granted.length >= 50) break;
+        const previous = deliveries.get(request.id);
+        if (previous && (previous.sentAt || Date.parse(previous.leaseUntil) > now || previous.cycleId !== request.cycleId || previous.stage !== request.stage)) continue;
+        const cycle = current.find(item => item.laundryCycleId === request.cycleId && item.laundryStatus === 'en_cours');
+        const machine = cycle && WorkLogic.getLaundryMachine(cycle.targetId);
+        const end = machine ? Date.parse(cycle.laundryStartedAt) + machine.durationMinutes * 60000 : NaN;
+        const begins = request.stage === 'soon' ? end - 10 * 60000 : end;
+        const expires = request.stage === 'soon' ? end : end + 15 * 60000;
+        const requestedExpiry = Date.parse(request.expiresAt);
+        if (!Number.isFinite(end) || now < begins || now >= expires || requestedExpiry <= now || requestedExpiry > expires) continue;
+        const leaseToken = Utilities.getUuid();
+        const delivery = { id: request.id, cycleId: request.cycleId, stage: request.stage, expiresAt: request.expiresAt,
+          leaseToken: leaseToken, leaseUntil: new Date(now + 2 * 60000).toISOString(), sentAt: null, updatedAt: nowISO };
+        deliveries.set(request.id, delivery);
+        granted.push({ id: request.id, leaseToken: leaseToken });
+      }
+      state.deliveries = [...deliveries.values()];
+      data = granted;
+    } else {
+      for (const result of input.results) {
+        const delivery = state.deliveries.find(item => item.id === result.id);
+        if (!delivery || delivery.sentAt || delivery.leaseToken !== result.leaseToken) continue;
+        delivery.sentAt = result.outcome === 'sent' ? nowISO : null;
+        delivery.leaseToken = null;
+        delivery.leaseUntil = null;
+        delivery.updatedAt = nowISO;
+      }
+      data = { completed: true };
+    }
+    writeLaundryPushState_(sheet, state);
+    return json_({ ok: true, data: data });
+  } finally { lock.releaseLock(); }
+}
+function laundryAppOrigin_(value) {
+  // An administrator supplies the trusted deployment origin in script settings.
+  // Accept an origin only: no credentials, paths, queries, fragments or redirects.
+  if (typeof value !== 'string' || !/^https:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9]\d{0,4})?\/?$/i.test(value)) return null;
+  const port = /:(\d+)\/?$/.exec(value);
+  if (port && Number(port[1]) > 65535) return null;
+  return value.replace(/\/$/, '');
+}
+// Run manually after setting LAUNDRY_APP_URL and deploying the updated app.
+// setup() intentionally does not enable outbound notification callbacks.
+function setupLaundryNotifications() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const origin = laundryAppOrigin_(props.getProperty('LAUNDRY_APP_URL'));
+    if (!origin || !props.getProperty('API_TOKEN')) throw new Error('Renseignez LAUNDRY_APP_URL (origine HTTPS de l’application) et API_TOKEN dans les propriétés du script.');
+    const previous = ScriptApp.getProjectTriggers().filter(trigger => trigger.getHandlerFunction() === 'dispatchLaundryNotifications');
+    ScriptApp.newTrigger('dispatchLaundryNotifications').timeBased().everyMinutes(1).create();
+    previous.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+    laundryPushTable_();
+    props.setProperty('LAUNDRY_APP_URL', origin);
+    props.deleteProperty('LAUNDRY_PUSH_LAST_RUN_AT');
+    props.setProperty('LAUNDRY_PUSH_ENABLED', '1');
+  } finally { lock.releaseLock(); }
+}
+function dispatchLaundryNotifications() {
+  const props = PropertiesService.getScriptProperties();
+  const origin = laundryAppOrigin_(props.getProperty('LAUNDRY_APP_URL'));
+  const token = props.getProperty('API_TOKEN');
+  if (props.getProperty('LAUNDRY_PUSH_ENABLED') !== '1' || !origin || !token) return;
+  // Never hold the script lock during this callback: the Next.js dispatcher
+  // calls back into laundryPushClaim/Complete, which acquire that same lock.
+  const response = UrlFetchApp.fetch(origin + '/api/laundry/notifications/dispatch', {
+    method: 'post', contentType: 'application/json', payload: '{}', headers: { Authorization: 'Bearer ' + token },
+    followRedirects: false, muteHttpExceptions: true
+  });
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) throw new Error('Notifications lingerie indisponibles (HTTP ' + status + ').');
+  props.setProperty('LAUNDRY_PUSH_LAST_RUN_AT', new Date().toISOString());
 }
 
 const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear', 'door_closer', 'radiator_clear'];
@@ -353,11 +561,64 @@ var WorkLogic = (function () {
 var exports = {};
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.laundryMachines = void 0;
+exports.getLaundryMachine = getLaundryMachine;
+exports.validateLaundryEntry = validateLaundryEntry;
 exports.latestWork = latestWork;
 exports.validateWorkEntry = validateWorkEntry;
 exports.roomAvailability = roomAvailability;
 exports.dailyTasks = dailyTasks;
 exports.familyComments = familyComments;
+// The visible numbers match the physical labels. Washers and dryers have
+// distinct IDs so a cycle can never reserve the wrong kind of appliance.
+exports.laundryMachines = [
+    { id: "washer-1", label: "Machine à laver 1", kind: "washer", capacityKg: 18, durationMinutes: 40, program: "Rapide 40" },
+    { id: "washer-2", label: "Machine à laver 2", kind: "washer", capacityKg: 8, durationMinutes: 30, program: "Rapide 30" },
+    { id: "washer-3", label: "Machine à laver 3", kind: "washer", capacityKg: 8, durationMinutes: 30, program: "Rapide 30" },
+    { id: "dryer-1", label: "Machine à sécher 1", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
+    { id: "dryer-2", label: "Machine à sécher 2", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
+    { id: "dryer-3", label: "Machine à sécher 3", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
+];
+function getLaundryMachine(id) {
+    return exports.laundryMachines.find(machine => machine.id === id);
+}
+// This validator is bundled unchanged into Apps Script, inside its write lock.
+// Reaching the scheduled end does not release a machine: the clothes stay there
+// until an operator explicitly records their removal or cancels the cycle.
+function validateLaundryEntry(entry, events, current) {
+    if (!getLaundryMachine(entry.targetId) || !entry.room || !entry.laundryCycleId || !entry.laundryStartedAt ||
+        !entry.laundryStatus || !["en_cours", "recupere", "annule"].includes(entry.laundryStatus))
+        return "Renseignez la machine, la chambre et le cycle de linge.";
+    const started = Date.parse(entry.laundryStartedAt), occurred = Date.parse(entry.occurredAt);
+    if (!Number.isFinite(started) || !Number.isFinite(occurred) || occurred < started)
+        return "La mise à jour du linge doit suivre le démarrage du cycle.";
+    if (entry.laundryStatus === "recupere") {
+        if (!entry.laundryCollectedAt || entry.laundryCollectedAt !== entry.occurredAt || entry.laundryCollectedBy !== entry.actor)
+            return "La récupération doit indiquer sa date, son heure et la personne qui l’enregistre.";
+    }
+    else if (entry.laundryCollectedAt !== null || entry.laundryCollectedBy !== "") {
+        return "Un cycle non récupéré ne peut pas avoir de date ou de responsable de récupération.";
+    }
+    if (entry.laundryStatus === "en_cours") {
+        if ((current === null || current === void 0 ? void 0 : current.laundryStatus) === "en_cours")
+            return "Cette machine contient déjà du linge. Confirmez sa récupération avant de démarrer un autre cycle.";
+        if (events.some(event => event.kind === "laundryCycle" && event.laundryCycleId === entry.laundryCycleId))
+            return "Ce cycle de linge existe déjà. Utilisez un nouveau cycle.";
+        if (entry.laundryStartedAt !== entry.occurredAt)
+            return "Le démarrage du cycle doit correspondre à l’heure de cette action.";
+        if (current && occurred < Date.parse(current.occurredAt))
+            return "Le nouveau cycle ne peut pas commencer avant la libération de la machine.";
+        return undefined;
+    }
+    if (!current || current.laundryStatus !== "en_cours" || current.laundryCycleId !== entry.laundryCycleId)
+        return "Ce cycle n’est plus en cours sur cette machine. Actualisez la lingerie.";
+    if (entry.room !== current.room || entry.laundryStartedAt !== current.laundryStartedAt ||
+        (entry.laundryOwner || "") !== (current.laundryOwner || ""))
+        return "Le cycle doit conserver sa chambre, son propriétaire et son heure de démarrage.";
+    if (occurred < Date.parse(current.occurredAt))
+        return "La récupération ou l’annulation doit suivre le démarrage du cycle.";
+    return undefined;
+}
 function latestWork(events, kind) {
     const latest = new Map();
     for (const event of events.filter(e => e.kind === kind)) {
@@ -373,6 +634,8 @@ function validateWorkEntry(entry, events, families, deletedFamilies = []) {
         return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
     if (current === null || current === void 0 ? void 0 : current.deleted)
         return "Cette tâche a déjà été supprimée.";
+    if (entry.kind === "laundryCycle")
+        return validateLaundryEntry(entry, events, current);
     if (entry.kind === "familyComment") {
         const family = families.find(f => f.id === entry.familyEventId);
         if (!family || deletedFamilies.includes(family.id))

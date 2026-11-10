@@ -22,6 +22,7 @@ import type { Command, State } from "@/lib/domain";
 import { mergeHotel } from "@/lib/mergeHotel";
 import { deviceStore } from "@/lib/deviceStore";
 import { EntriesProvider } from "./EntriesContext";
+import { LaundryNotificationsProvider } from "./LaundryNotificationsContext";
 import type { EntryChange } from "@/lib/rooms";
 import { roles, type Role } from "@/lib/roles";
 
@@ -344,7 +345,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         logout,
       }}
     >
-      <EntriesProvider onSaved={mergeEntry} onDelete={deleteAbsence}>{children}</EntriesProvider>
+      <EntriesProvider onSaved={mergeEntry} onDelete={deleteAbsence}>
+        <LaundryNotificationsProvider>{children}</LaundryNotificationsProvider>
+      </EntriesProvider>
     </AppContext.Provider>
   );
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Issue } from "./domain";
+import { getLaundryMachine } from "./work";
 
 export const roomGroups = [
   { label: "1er étage", rooms: ["101", "102", "103", "104", "105", "106", "107", "108", "109", "110", "114", "115", "116", "117", "118", "119", "120", "121", "122", "123", "124", "125", "126"] },
@@ -145,7 +146,7 @@ export const roomEntrySchema = quickChoiceRoomSchema(5, roomChecks);
 
 export const workEntrySchema = z.object({
   type: z.literal("createWorkEvent"), id: z.string().uuid(),
-  kind: z.enum(["roomAvailability", "familyComment", "dailyTask", "cafardFollowup", "collectedItem"]),
+  kind: z.enum(["roomAvailability", "familyComment", "dailyTask", "cafardFollowup", "collectedItem", "laundryCycle"]),
   targetId: z.string().min(1).max(80), expectedRevision: z.number().int().min(0),
   room: z.union([roomSchema, z.literal("")]), date: z.iso.date(), actor: required,
   notes: note, occurredAt: z.iso.datetime(),
@@ -157,6 +158,12 @@ export const workEntrySchema = z.object({
   itemName: required.optional(), collectedOn: z.iso.date().optional(), collectedBy: required.optional(),
   returnedOn: z.iso.date().nullable().optional(), returnedBy: z.string().trim().max(200).optional(),
   roomUnidentified: z.literal(true).optional(),
+  laundryCycleId: z.string().uuid().optional(),
+  laundryStatus: z.enum(["en_cours", "recupere", "annule"]).optional(),
+  laundryStartedAt: z.iso.datetime().optional(),
+  laundryCollectedAt: z.iso.datetime().nullable().optional(),
+  laundryCollectedBy: z.string().trim().max(200).optional(),
+  laundryOwner: z.string().trim().max(200).optional(),
 }).superRefine((v, ctx) => {
   const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
   if (v.kind === "roomAvailability") {
@@ -188,6 +195,26 @@ export const workEntrySchema = z.object({
     if (v.returnedOn && !v.returnedBy) invalid("returnedBy", "Indiquez qui a restitué l’objet.");
     if (!v.returnedOn && v.returnedBy) invalid("returnedBy", "Un objet en armoire ne peut pas avoir de responsable de restitution.");
     if (v.returnedBy === undefined) invalid("returnedBy", "Renseignez la restitution ou laissez ce champ vide.");
+  } else if (v.kind === "laundryCycle") {
+    if (!getLaundryMachine(v.targetId)) invalid("targetId", "Choisissez une machine de la lingerie.");
+    if (!v.room) invalid("room", "Indiquez la chambre à laquelle appartient le linge.");
+    if (!v.laundryCycleId) invalid("laundryCycleId", "Identifiant du cycle requis.");
+    if (!v.laundryStatus) invalid("laundryStatus", "Choisissez l’état du cycle.");
+    if (!v.laundryStartedAt) invalid("laundryStartedAt", "Date et heure de démarrage requises.");
+    if (v.laundryStartedAt && Date.parse(v.occurredAt) < Date.parse(v.laundryStartedAt))
+      invalid("occurredAt", "Cette action ne peut pas précéder le démarrage du cycle.");
+    if (v.laundryStatus === "en_cours" && v.laundryStartedAt !== v.occurredAt)
+      invalid("laundryStartedAt", "Le démarrage doit correspondre à l’heure de cette action.");
+    if (v.laundryCollectedAt === undefined) invalid("laundryCollectedAt", "Indiquez la récupération ou laissez la date explicitement inconnue.");
+    if (v.laundryCollectedBy === undefined) invalid("laundryCollectedBy", "Renseignez la récupération ou laissez ce champ vide.");
+    if (v.laundryStatus === "recupere") {
+      if (!v.laundryCollectedAt || v.laundryCollectedAt !== v.occurredAt)
+        invalid("laundryCollectedAt", "La date et l’heure de récupération doivent correspondre à cette action.");
+      if (!v.laundryCollectedBy || v.laundryCollectedBy !== v.actor)
+        invalid("laundryCollectedBy", "Indiquez la personne qui confirme la récupération.");
+    } else if (v.laundryCollectedAt !== null || v.laundryCollectedBy !== "") {
+      invalid("laundryCollectedAt", "Le linge non récupéré ne peut pas avoir de récupération enregistrée.");
+    }
   } else {
     if (!z.string().uuid().safeParse(v.targetId).success) invalid("targetId", "Identifiant invalide.");
     if (!v.notes.trim()) invalid("notes", "Saisissez un texte.");
@@ -201,6 +228,8 @@ export const workEntrySchema = z.object({
     invalid("kind", "Données de suivi des cafards inattendues.");
   if (v.kind !== "collectedItem" && [v.itemName, v.collectedOn, v.collectedBy, v.returnedOn, v.returnedBy, v.roomUnidentified].some(value => value !== undefined))
     invalid("kind", "Données d’objet récupéré inattendues.");
+  if (v.kind !== "laundryCycle" && [v.laundryCycleId, v.laundryStatus, v.laundryStartedAt, v.laundryCollectedAt, v.laundryCollectedBy, v.laundryOwner].some(value => value !== undefined))
+    invalid("kind", "Données de lingerie inattendues.");
   if (v.kind === "dailyTask" && v.room) invalid("room", "Une tâche n’est pas un contrôle de chambre.");
 });
 export type WorkEntry = z.infer<typeof workEntrySchema>;

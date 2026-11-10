@@ -21,6 +21,7 @@ const menuItems = [
     path: "/checklist",
   },
   { label: "Occupation des chambres", path: "/occupation" },
+  { label: "Lingerie", path: "/lingerie" },
   { label: "Objets récupérés", path: "/objets-recuperes" },
   { label: "Absences et départs", path: "/familles" },
   /* Menu masqué temporairement : décommenter pour réactiver.

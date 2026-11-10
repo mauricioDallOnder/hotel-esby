@@ -2,6 +2,58 @@
 import type { FamilyEntry, FamilyEvent, RoomEntry, RoomInspection, WorkEntry, WorkEvent } from "./rooms";
 
 type Work = WorkEntry | WorkEvent;
+
+// The visible numbers match the physical labels. Washers and dryers have
+// distinct IDs so a cycle can never reserve the wrong kind of appliance.
+export const laundryMachines = [
+  { id: "washer-1", label: "Machine à laver 1", kind: "washer", capacityKg: 18, durationMinutes: 40, program: "Rapide 40" },
+  { id: "washer-2", label: "Machine à laver 2", kind: "washer", capacityKg: 8, durationMinutes: 30, program: "Rapide 30" },
+  { id: "washer-3", label: "Machine à laver 3", kind: "washer", capacityKg: 8, durationMinutes: 30, program: "Rapide 30" },
+  { id: "dryer-1", label: "Machine à sécher 1", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
+  { id: "dryer-2", label: "Machine à sécher 2", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
+  { id: "dryer-3", label: "Machine à sécher 3", kind: "dryer", capacityKg: null, durationMinutes: 80, program: "Séchage · 1 h 20" },
+] as const;
+export type LaundryMachine = typeof laundryMachines[number];
+export type LaundryMachineId = LaundryMachine["id"];
+export type LaundryStatus = "en_cours" | "recupere" | "annule";
+
+export function getLaundryMachine(id: string) {
+  return laundryMachines.find(machine => machine.id === id);
+}
+
+// This validator is bundled unchanged into Apps Script, inside its write lock.
+// Reaching the scheduled end does not release a machine: the clothes stay there
+// until an operator explicitly records their removal or cancels the cycle.
+export function validateLaundryEntry(entry: WorkEntry, events: Work[], current?: Work): string | undefined {
+  if (!getLaundryMachine(entry.targetId) || !entry.room || !entry.laundryCycleId || !entry.laundryStartedAt ||
+    !entry.laundryStatus || !["en_cours", "recupere", "annule"].includes(entry.laundryStatus))
+    return "Renseignez la machine, la chambre et le cycle de linge.";
+  const started = Date.parse(entry.laundryStartedAt), occurred = Date.parse(entry.occurredAt);
+  if (!Number.isFinite(started) || !Number.isFinite(occurred) || occurred < started)
+    return "La mise à jour du linge doit suivre le démarrage du cycle.";
+  if (entry.laundryStatus === "recupere") {
+    if (!entry.laundryCollectedAt || entry.laundryCollectedAt !== entry.occurredAt || entry.laundryCollectedBy !== entry.actor)
+      return "La récupération doit indiquer sa date, son heure et la personne qui l’enregistre.";
+  } else if (entry.laundryCollectedAt !== null || entry.laundryCollectedBy !== "") {
+    return "Un cycle non récupéré ne peut pas avoir de date ou de responsable de récupération.";
+  }
+  if (entry.laundryStatus === "en_cours") {
+    if (current?.laundryStatus === "en_cours") return "Cette machine contient déjà du linge. Confirmez sa récupération avant de démarrer un autre cycle.";
+    if (events.some(event => event.kind === "laundryCycle" && event.laundryCycleId === entry.laundryCycleId))
+      return "Ce cycle de linge existe déjà. Utilisez un nouveau cycle.";
+    if (entry.laundryStartedAt !== entry.occurredAt) return "Le démarrage du cycle doit correspondre à l’heure de cette action.";
+    if (current && occurred < Date.parse(current.occurredAt)) return "Le nouveau cycle ne peut pas commencer avant la libération de la machine.";
+    return undefined;
+  }
+  if (!current || current.laundryStatus !== "en_cours" || current.laundryCycleId !== entry.laundryCycleId)
+    return "Ce cycle n’est plus en cours sur cette machine. Actualisez la lingerie.";
+  if (entry.room !== current.room || entry.laundryStartedAt !== current.laundryStartedAt ||
+    (entry.laundryOwner || "") !== (current.laundryOwner || ""))
+    return "Le cycle doit conserver sa chambre, son propriétaire et son heure de démarrage.";
+  if (occurred < Date.parse(current.occurredAt)) return "La récupération ou l’annulation doit suivre le démarrage du cycle.";
+  return undefined;
+}
+
 export function latestWork(events: Work[], kind: Work["kind"]) {
   const latest = new Map<string, Work>();
   for (const event of events.filter(e => e.kind === kind)) {
@@ -16,6 +68,7 @@ export function validateWorkEntry(entry: WorkEntry, events: Work[], families: (F
   if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
     return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
   if (current?.deleted) return "Cette tâche a déjà été supprimée.";
+  if (entry.kind === "laundryCycle") return validateLaundryEntry(entry, events, current);
   if (entry.kind === "familyComment") {
     const family = families.find(f => f.id === entry.familyEventId);
     if (!family || deletedFamilies.includes(family.id)) return "Cet événement familial n’existe plus.";
