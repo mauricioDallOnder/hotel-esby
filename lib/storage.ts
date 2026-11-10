@@ -43,7 +43,7 @@ function localState(): State {
   }
 }
 
-async function google<T>(payload: Record<string, unknown>): Promise<T> {
+export async function google<T>(payload: Record<string, unknown>, timeoutMs = 55_000): Promise<T> {
   const url = process.env.GOOGLE_SCRIPT_URL;
   const token = process.env.GOOGLE_API_TOKEN;
   
@@ -56,7 +56,7 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url))
     throw new DomainError("URL Google Apps Script invalide.", 503);
     
-  const readOnly = payload.action === "list" || payload.action === "photo";
+  const readOnly = ["list", "photo", "laundryPushList", "laundryPushStatus"].includes(String(payload.action));
   const started = Date.now();
   
   for (let attempt = 0; ; attempt++) {
@@ -70,13 +70,13 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
         cache: "no-store",
         redirect: "follow",
         // No modo leitura (fotos), aborta em 8s para evitar o timeout 503 da Vercel
-        signal: AbortSignal.timeout(Math.max(1, Math.min(readOnly ? 8_000 : 55_000, 55_000 - (Date.now() - started)))),
+        signal: AbortSignal.timeout(Math.max(1, Math.min(readOnly ? 8_000 : 55_000, timeoutMs - (Date.now() - started)))),
       });
       
       if (!response.ok) {
         await response.body?.cancel();
         // OTIMIZAÇÃO: Exponential backoff até 4 tentativas (attempt < 3) em caso de Rate Limit / Erros temporários
-        if (readOnly && attempt < 3 && [429, 500, 502, 503, 504].includes(response.status) && Date.now() - started < 54_000) {
+        if (readOnly && attempt < 3 && [429, 500, 502, 503, 504].includes(response.status) && Date.now() - started < timeoutMs - 1_000) {
           await new Promise((resolve) => setTimeout(resolve, 500 * Math.pow(2, attempt)));
           continue;
         }
@@ -98,7 +98,7 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
       const elapsed = Date.now() - started;
       
       // OTIMIZAÇÃO: Exponential backoff também para falhas de rede do fetch
-      if (readOnly && attempt < 3 && elapsed < 54_000) {
+      if (readOnly && attempt < 3 && elapsed < timeoutMs - 1_000) {
         await new Promise((resolve) => setTimeout(resolve, 500 * Math.pow(2, attempt)));
         continue;
       }
@@ -112,7 +112,7 @@ async function google<T>(payload: Record<string, unknown>): Promise<T> {
       );
     }
     
-    if (!result.ok && ["commitRoomInspection", "commitWorkEvent"].includes(String(payload.action)) && result.error === "Action invalide.")
+    if (!result.ok && ["commitRoomInspection", "commitWorkEvent", "commitLaundryCycle"].includes(String(payload.action)) && result.error === "Action invalide.")
       throw new DomainError("Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser ces modifications. Elles restent conservées sur cet appareil.", 503);
     if (!result.ok)
       // A Google token failure is a server configuration error, not an expired hotel session.
@@ -258,6 +258,9 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   if (entry.type === "createWorkEvent" && entry.kind === "collectedItem" &&
     [entry.date, entry.collectedOn, entry.returnedOn].some(date => date && date > today()))
     throw new DomainError("Les dates des objets récupérés ne peuvent pas être dans le futur.");
+  if (entry.type === "createWorkEvent" && entry.kind === "laundryCycle" &&
+    [entry.occurredAt, entry.laundryStartedAt, entry.laundryCollectedAt].some(value => value && Date.parse(value) > Date.now() + 5 * 60_000))
+    throw new DomainError("L’heure de cet appareil est dans le futur. Vérifiez son réglage avant de démarrer le suivi.");
     
   const submissionHash = createHash("sha256").update(JSON.stringify(entry)).digest("hex");
   const { photosData, ...fields } = entry.type === "createRoomInspection" ? entry : { ...entry, photosData: [] };
@@ -272,7 +275,9 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   
   if (storageMode() === "sheets") {
     try {
-      const receipt = await google<EntryChange>({ action: change.collection === "roomInspections" ? "commitRoomInspection" : change.collection === "workEvents" ? "commitWorkEvent" : "commitEntry", ...change, expectedVersion: 0, photosData });
+      const action = change.collection === "roomInspections" ? "commitRoomInspection"
+        : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? "commitLaundryCycle" : "commitWorkEvent" : "commitEntry";
+      const receipt = await google<EntryChange>({ action, ...change, expectedVersion: 0, photosData });
       if (receipt?.collection !== collection || receipt.record?.id !== entry.id || receipt.record?.submissionHash !== submissionHash)
         throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
       if (change.collection === "roomInspections" && (receipt.collection !== "roomInspections" || receipt.record.issueSyncVersion !== 2))

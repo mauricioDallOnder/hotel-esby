@@ -1,5 +1,116 @@
 # Hôtel Contrôle
 
+## Lingerie: máquinas, roupas e avisos
+
+O menu **Lingerie** (`/lingerie`) permite que Employé e Direction acompanhem as
+seis máquinas, separadas em dois grupos. A numeração corresponde às etiquetas
+físicas: **1, 2 e 3 para lavar; 1, 2 e 3 para secar**.
+
+| Equipamento | Capacidade | Programa | Tempo previsto |
+| --- | --- | --- | --- |
+| Machine à laver 1 | 18 kg | Rapide 40 | 40 min |
+| Machines à laver 2 e 3 | 8 kg cada | Rapide 30 | 30 min |
+| Machines à sécher 1, 2 e 3 | — | Séchage | 1 h 20 |
+
+Depois de iniciar o programa na máquina física, toque em **Démarrer** no cartão
+correspondente. Escolha o quarto e informe **Votre nom**; o nome é lembrado no
+aparelho para os próximos registros. **Nom ou repère du linge** e a nota são
+facultativos e ajudam a distinguir as roupas de pessoas do mesmo quarto. O app
+registra a data e a hora, calcula o fim previsto e mostra a contagem regressiva.
+Sair da página ou recarregá-la não reinicia o tempo.
+
+Quando o tempo termina, o cartão passa a **À récupérer** e continua ocupado.
+Depois de retirar todas as roupas, use **Linge récupéré**: a confirmação registra
+a data, a hora e quem fez a retirada, e libera a máquina. **Annuler le cycle**
+exige confirmação de que a máquina está parada e vazia, deixa um registro de
+cancelamento no histórico e não inventa uma retirada. O cronômetro acompanha
+o programa previsto; o aplicativo não está conectado eletronicamente às máquinas.
+
+**Historique** mostra os ciclos mais recentes primeiro, com pesquisa por quarto,
+nome, máquina ou nota e filtros por período e estado. O mesmo quarto pode usar
+várias máquinas, mas cada máquina só admite um ciclo ativo. Revisões por máquina
+recusam reservas concorrentes e protegem um ciclo já iniciado em outro aparelho.
+Os cartões são atualizados periodicamente enquanto o app está visível e ao voltar
+à janela. **Actualiser** também permite conferir o estado compartilhado.
+
+Rascunhos e ações ficam na fila persistente do aparelho quando falta conexão.
+O cartão identifica o envio pendente. Outros aparelhos e o serviço de avisos só
+recebem o registro após a sincronização; conflitos ficam visíveis para conferência.
+O histórico é salvo como eventos `laundryCycle` em **Suivi quotidien**, usando
+os identificadores distintos `washer-1` a `washer-3` e `dryer-1` a `dryer-3`.
+
+### Ativar os lembretes em cada aparelho
+
+Em **Les rappels de la lingerie**, toque em **Activer sur cet appareil** e aceite
+a autorização do navegador. **Envoyer un test** verifica a exibição local de uma
+notificação. **Désactiver sur cet appareil** revoga a inscrição daquele navegador.
+Os avisos indicam o quarto e a máquina; não incluem nomes de moradores.
+
+Há um aviso a partir dos **10 minutos restantes** e outro quando o tempo previsto
+termina. Com a configuração abaixo, Web Push permite recebê-los mesmo com a página
+fechada. O agendador verifica os ciclos aproximadamente a cada minuto; a chegada
+também depende da Internet e dos ajustes do aparelho. No iPhone/iPad (iOS 16.4+),
+adicione o site à tela inicial pelo Safari e abra-o por esse ícone antes de ativar.
+
+Sem o agendador configurado ou sem autorização, o app informa a situação e conserva
+os avisos visuais enquanto aberto. O fallback do navegador exige a página aberta
+e o aparelho acordado. Os avisos antigos expiram: o de dez minutos deixa de valer
+no fim do ciclo, e o de término expira quinze minutos depois. O cartão **À récupérer**
+continua visível até a retirada, mesmo após esse prazo.
+
+Com o serviço automático ativo, o app aguarda até 90 segundos pelo push e então
+usa o aviso local se não houver confirmação de exibição; um push válido recebido
+depois atualiza silenciosamente a mesma notificação.
+
+### Publicação da Lingerie com Google Sheets
+
+1. Atualize **`google-apps-script/Code.gs` e `google-apps-script/appsscript.json`**
+   no projeto existente. Para exibir o manifesto no editor do Google, habilite
+   **Mostrar o arquivo de manifesto appsscript.json** nas configurações do projeto.
+   Execute `setup()` e publique uma nova versão da implantação Web App existente,
+   preservando a URL e o `API_TOKEN`. A ação protegida `commitLaundryCycle` exige
+   esse código atualizado: a implantação antiga rejeita os novos ciclos antes de
+   gravar, e eles permanecem na fila do aparelho para reenvio.
+2. Gere uma única vez as chaves VAPID em um terminal com as dependências instaladas:
+
+   ```sh
+   npx web-push generate-vapid-keys
+   ```
+
+   Configure no ambiente do servidor/Vercel e publique o aplicativo:
+
+   ```dotenv
+   VAPID_PUBLIC_KEY=CHAVE_PUBLICA_GERADA
+   VAPID_PRIVATE_KEY=CHAVE_PRIVADA_GERADA
+   VAPID_SUBJECT=mailto:SEU_EMAIL_DE_CONTATO
+   ```
+
+   Mantenha `STORAGE_DRIVER=sheets`, `GOOGLE_SCRIPT_URL` e `GOOGLE_API_TOKEN`
+   existentes. As chaves devem permanecer estáveis entre publicações; não as
+   coloque no GitHub. A chave pública é entregue pela API autenticada, sem variável
+   `NEXT_PUBLIC_*`. A privada fica exclusivamente no servidor.
+3. Nas **Propriedades do script** do Apps Script, adicione `LAUNDRY_APP_URL` com
+   a origem HTTPS de produção do app, sem caminho nem barra final, por exemplo
+   `https://seu-app.vercel.app`. Execute **`setupLaundryNotifications()`** e aceite
+   as autorizações do Google para chamadas externas e gerenciamento de gatilhos.
+   A função instala um único gatilho de minuto, preservando os demais gatilhos.
+   Ela não é executada automaticamente pelo `setup()` geral.
+4. Espere o primeiro disparo bem-sucedido do gatilho e ative os avisos em cada
+   computador/celular. O app confirma quando o serviço está respondendo; até lá,
+   orienta manter a página aberta. Teste um ciclo real para conferir os dois avisos
+   no aparelho e os ajustes do sistema operacional.
+
+O gatilho chama `POST /api/laundry/notifications/dispatch` usando o `API_TOKEN`
+existente como credencial de servidor. As inscrições e o controle de envios ficam
+na aba técnica **Notifications lingerie**, criada ao configurar/usar os avisos,
+e nunca aparecem na resposta pública de dados do hotel. Há limite de 50 aparelhos,
+reservas temporárias de envio e deduplicação por ciclo, aviso e aparelho. Para
+evitar alertas obsoletos, o agendador confere novamente o ciclo ativo antes de enviar.
+
+O GitHub/Vercel não atualiza o Apps Script automaticamente. No modo local, os
+registros usam `data/hotel.json` e as inscrições usam o arquivo privado separado
+`data/laundry-notifications.json`; não há agendador automático nesse modo.
+
 ## Checklist conforme a ocupação dos quartos
 
 Os quartos marcados como **Libre** em **Occupation des chambres** ficam fora
@@ -477,8 +588,8 @@ colunas. A aba **Chambres** é uma referência dos quartos fixos do aplicativo.
 - Após validar a sessão, o app pode restaurar a última cópia dos dados enquanto
   atualiza. Uma faixa informa quando a cópia exibida pode estar desatualizada.
 - É preciso conexão para abrir/autenticar o app inicialmente e carregar páginas
-  ainda não abertas. Esta versão não instala um service worker e não promete
-  abertura completa offline. Com a tela carregada, os formulários novos podem
+  ainda não abertas. O service worker de Lingerie exibe notificações; ele não
+  guarda páginas nem promete abertura completa offline. Com a tela carregada, os formulários novos podem
   ser preenchidos e colocados na fila sem rede. Fechar o navegador pausa o envio;
   reabrir o app autenticado retoma a fila. Não há envio em segundo plano fechado.
 - Os rascunhos e a fila ficam neste navegador/aparelho. Não limpe os dados do
