@@ -8,7 +8,10 @@ import webpush from "web-push";
 import { POST } from "../app/api/laundry/notifications/dispatch/route";
 import { createId } from "../lib/domain";
 import { laundryMachines } from "../lib/laundry";
-import { listLaundryPushSubscriptions, saveLaundryPushSubscription } from "../lib/laundryPushStorage";
+import { laundryNotices } from "../lib/laundryNotifications";
+import { laundryDeliveryId } from "../lib/laundryPush";
+import { claimLaundryPushDeliveries, listLaundryPushSubscriptions, saveLaundryPushSubscription } from "../lib/laundryPushStorage";
+import type { WorkEntry } from "../lib/rooms";
 import { executeEntry } from "../lib/storage";
 
 function fixture(t: TestContext) {
@@ -33,9 +36,12 @@ async function device(number: number) {
 
 async function start(index: number) {
   const machine = laundryMachines[index], startedAt = new Date(Date.now() - (machine.durationMinutes - 9) * 60_000).toISOString();
-  await executeEntry({ type: "createWorkEvent", kind: "laundryCycle", id: createId(), targetId: machine.id, expectedRevision: 0,
+  const input: WorkEntry = { type: "createWorkEvent", kind: "laundryCycle", id: createId(), targetId: machine.id, expectedRevision: 0,
     room: "101", date: startedAt.slice(0, 10), actor: "Agent fictif", notes: "", occurredAt: startedAt,
-    laundryCycleId: createId(), laundryStartedAt: startedAt, laundryStatus: "en_cours", laundryCollectedAt: null, laundryCollectedBy: "", laundryOwner: "" });
+    laundryCycleId: createId(), laundryStartedAt: startedAt, laundryStatus: "en_cours", laundryCollectedAt: null, laundryCollectedBy: "", laundryOwner: "",
+    laundryEndsAt: new Date(Date.parse(startedAt) + machine.durationMinutes * 60_000).toISOString() };
+  await executeEntry(input);
+  return input;
 }
 
 test("dispatch authenticates, batches more than fifty deliveries without starving later devices, and skips sent notices", async t => {
@@ -70,4 +76,55 @@ test("dispatch releases failed deliveries for retry and removes expired device s
   assert.equal(sent.length, 4);
   assert.equal(sent.filter(url => url.endsWith("-1")).length, 1);
   assert.equal(sent.filter(url => url.endsWith("-0")).length, 1);
+});
+
+test("extension dispatch uses new notice IDs after an already delivered completion, and a five-minute extension does not warn immediately", async t => {
+  const dispatch = fixture(t), topics: string[] = [];
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(globalThis, "fetch", async (_url: string | URL | Request, options?: RequestInit) => {
+    topics.push(new Headers(options?.headers).get("Topic")!); return new Response(null, { status: 201 });
+  });
+  const original = await start(0);
+  await device(0);
+  now = Date.parse(original.laundryEndsAt!);
+  assert.equal((await (await dispatch()).json()).processed, 1);
+  now += 60_000;
+  const extended: WorkEntry = { ...original, id: createId(), expectedRevision: 1, occurredAt: new Date(now).toISOString(),
+    laundryAddedMinutes: 20, laundryEndsAt: new Date(now + 20 * 60_000).toISOString() };
+  await executeEntry(extended);
+  assert.equal((await (await dispatch()).json()).processed, 0);
+  now = Date.parse(extended.laundryEndsAt!) - 10 * 60_000;
+  assert.equal((await (await dispatch()).json()).processed, 1);
+  now = Date.parse(extended.laundryEndsAt!);
+  assert.equal((await (await dispatch()).json()).processed, 1);
+  now += 60_000;
+  const short: WorkEntry = { ...extended, id: createId(), expectedRevision: 2, occurredAt: new Date(now).toISOString(),
+    laundryAddedMinutes: 5, laundryEndsAt: new Date(now + 5 * 60_000).toISOString() };
+  await executeEntry(short);
+  assert.equal((await (await dispatch()).json()).processed, 0);
+  now = Date.parse(short.laundryEndsAt!) - 1;
+  assert.equal((await (await dispatch()).json()).processed, 0);
+  now++;
+  assert.equal((await (await dispatch()).json()).processed, 1);
+  assert.equal(topics.length, 4);
+  assert.equal(new Set(topics).size, 4, "Sent markers for prior plans must not suppress the new plan");
+});
+
+test("claim rejects an unsent old-plan warning even while its original expiry remains in the future", async t => {
+  fixture(t);
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const original = await start(0), subscriber = await device(0);
+  const oldNotice = laundryNotices([original], now)[0];
+  const extended: WorkEntry = { ...original, id: createId(), expectedRevision: 1, occurredAt: new Date(now).toISOString(),
+    laundryAddedMinutes: 5, laundryEndsAt: new Date(Date.parse(original.laundryEndsAt!) + 5 * 60_000).toISOString() };
+  await executeEntry(extended);
+  now += 5 * 60_000;
+  assert.ok(Date.parse(oldNotice.expiresAt) > now);
+  const stale = { id: laundryDeliveryId(subscriber.id, oldNotice.id), cycleId: oldNotice.cycleId, stage: oldNotice.stage, expiresAt: oldNotice.expiresAt };
+  assert.deepEqual(await claimLaundryPushDeliveries([stale], new Date(now).toISOString()), []);
+  const current = laundryNotices([original, extended], now)[0];
+  const valid = { id: laundryDeliveryId(subscriber.id, current.id), cycleId: current.cycleId, stage: current.stage, expiresAt: current.expiresAt };
+  assert.equal((await claimLaundryPushDeliveries([valid], new Date(now).toISOString())).length, 1);
 });

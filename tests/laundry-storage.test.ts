@@ -105,7 +105,7 @@ test("Google laundry uses the protected transaction and applies the same machine
   assert.deepEqual(await executeEntry(first), receipt);
   assert.equal(google.records().length, 3);
   assert.equal(laundryMachineStates(google.records())[0].cycle?.room, "102");
-  assert.ok(actions.every(action => action === "commitLaundryCycle"));
+  assert.ok(actions.every(action => action === "commitLaundryCycleV2"));
 });
 
 test("an old Apps Script deployment rejects laundry safely instead of accepting an unprotected booking", async t => {
@@ -116,7 +116,7 @@ test("an old Apps Script deployment rejects laundry safely instead of accepting 
     return Response.json({ ok: false, code: 400, error: "Action invalide." });
   });
   await assert.rejects(executeEntry(start()), { code: 503 });
-  assert.deepEqual(actions, ["commitLaundryCycle"]);
+  assert.deepEqual(actions, ["commitLaundryCycleV2"]);
 });
 
 test("future laundry actions are rejected before a local write or Google request", async t => {
@@ -132,4 +132,54 @@ test("future laundry actions are rejected before a local write or Google request
   await assert.rejects(executeEntry(input), { code: 400 });
   await assert.rejects(executeEntry({ ...collect(start()), occurredAt: future, laundryCollectedAt: future }), { code: 400 });
   assert.equal(request.mock.callCount(), 0);
+});
+
+test("new plans and overdue extensions persist once, preserve history and reject concurrent changes locally and in Google", async t => {
+  for (const mode of ["local", "sheets"] as const) await t.test(mode, async t => {
+    if (mode === "local") local(t); else sheets(t);
+    const google = googleFixture();
+    if (mode === "sheets") t.mock.method(globalThis, "fetch", async (_url: unknown, options?: RequestInit) =>
+      Response.json(google.call(JSON.parse(String(options?.body)))));
+    const first = start({ laundryEndsAt: "2026-10-01T09:44:00.000Z" });
+    await executeEntry(first);
+    const extended: WorkEntry = { ...first, id: createId(), expectedRevision: 1,
+      occurredAt: "2026-10-01T09:50:00.000Z", laundryAddedMinutes: 5, laundryEndsAt: "2026-10-01T09:55:00.000Z" };
+    const receipt = await executeEntry(extended);
+    assert.deepEqual(await executeEntry(extended), receipt);
+    await assert.rejects(executeEntry({ ...extended, id: createId() }), { code: 409 });
+    await assert.rejects(executeEntry({ ...extended, id: createId(), expectedRevision: 2,
+      occurredAt: "2026-10-01T09:51:00.000Z", laundryEndsAt: "2026-10-01T10:10:00.000Z" }), { code: 409 });
+    const removed: WorkEntry = { ...collect(first), expectedRevision: 2,
+      occurredAt: "2026-10-01T09:56:00.000Z", laundryCollectedAt: "2026-10-01T09:56:00.000Z",
+      laundryEndsAt: extended.laundryEndsAt };
+    await executeEntry(removed);
+    await assert.rejects(executeEntry({ ...extended, id: createId(), expectedRevision: 3,
+      occurredAt: "2026-10-01T10:00:00.000Z", laundryEndsAt: "2026-10-01T10:05:00.000Z" }), { code: 409 });
+    assert.deepEqual(await executeEntry(extended), receipt, "A delayed receipt cannot extend the cycle again after collection");
+    const records = mode === "local" ? (await readState()).workEvents! : google.records();
+    assert.equal(records.length, 3);
+    const [saved] = laundryCycles(records);
+    assert.equal(saved.initialDurationMinutes, 44);
+    assert.equal(saved.addedMinutes, 5);
+    assert.equal(saved.endsAt, extended.laundryEndsAt);
+    assert.equal(saved.status, "recupere");
+    assert.equal(saved.collectedAt, removed.laundryCollectedAt);
+  });
+});
+
+test("the upgraded Apps Script accepts legacy clients but rejects new plans through the old action", async t => {
+  sheets(t);
+  const google = googleFixture(), posted: Record<string, unknown>[] = [];
+  t.mock.method(globalThis, "fetch", async (_url: unknown, options?: RequestInit) => {
+    const input = JSON.parse(String(options?.body)); posted.push(input);
+    return Response.json(google.call(input));
+  });
+  await executeEntry(start({ laundryEndsAt: "2026-10-01T09:44:00.000Z" }));
+  assert.equal(google.call({ ...posted[0], action: "commitLaundryCycle" }).ok, false);
+  const legacy = start({ targetId: "washer-2" });
+  await executeEntry(legacy);
+  const replay = google.call({ ...posted[1], action: "commitLaundryCycle" });
+  assert.equal(replay.ok, true);
+  assert.equal(replay.data.record.id, legacy.id);
+  assert.equal(google.records().length, 2);
 });

@@ -6,8 +6,10 @@ self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
 
 function validNotice(value) {
+  const extension = value?.extensionId;
+  if (extension !== undefined && (typeof extension !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(extension))) return null;
   if (!value || typeof value !== "object" || typeof value.cycleId !== "string" || value.cycleId.length > 80
-    || !["soon", "finished"].includes(value.stage) || value.id !== value.cycleId + ":" + value.stage
+    || !["soon", "finished"].includes(value.stage) || value.id !== value.cycleId + (extension ? ":" + extension : "") + ":" + value.stage
     || !machineIds.has(value.machineId) || typeof value.body !== "string" || value.body.length > 240
     || typeof value.expiresAt !== "string" || !(Date.parse(value.expiresAt) > Date.now())) return null;
   return {

@@ -3,7 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Alert, Button, Snackbar } from "@mui/material";
-import { laundryForegroundReady, laundryNotices, type LaundryNotice } from "@/lib/laundryNotifications";
+import { laundryForegroundReady, laundryNoticeIsObsolete, laundryNotices, type LaundryNotice } from "@/lib/laundryNotifications";
+import { laundryCycles } from "@/lib/laundry";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 import { useAppContext } from "./AppContext";
 
@@ -90,6 +91,19 @@ function showSystemNotice(worker: ServiceWorkerRegistration, notice: LaundryNoti
   });
 }
 
+function waitForActivation(worker: ServiceWorker) {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => { clearTimeout(timeout); worker.removeEventListener("statechange", inspect); };
+    const inspect = () => {
+      if (worker.state === "activated") { cleanup(); resolve(); }
+      else if (worker.state === "redundant") { cleanup(); reject(new Error("La mise à jour des notifications a échoué. Réessayez.")); }
+    };
+    const timeout = setTimeout(() => { cleanup(); reject(new Error("Les notifications sont en cours de mise à jour. Réessayez.")); }, 12_000);
+    worker.addEventListener("statechange", inspect);
+    inspect();
+  });
+}
+
 export function useLaundryNotifications() {
   const context = useContext(Context);
   if (!context) throw new Error("LaundryNotificationsProvider manquant");
@@ -115,11 +129,32 @@ export function LaundryNotificationsProvider({ children }: { children: React.Rea
   const registeredSubscription = useRef("");
   const noticesInFlight = useRef(new Set<string>());
   const nextNoticeAttempt = useRef(new Map<string, number>());
+  const latestEvents = useRef(events);
+
+  const closeObsoleteNotifications = useCallback(async () => {
+    if (!("serviceWorker" in navigator)) return;
+    try {
+      const worker = await navigator.serviceWorker.getRegistration("/");
+      if (!worker) return;
+      const displayed = await worker.getNotifications();
+      const cycles = new Map(laundryCycles(latestEvents.current).map(cycle => [cycle.cycleId, cycle]));
+      for (const notification of displayed) {
+        const id = notification.data?.id;
+        if (typeof id !== "string") continue;
+        const cycle = cycles.get(id.split(":")[0]);
+        if (cycle && laundryNoticeIsObsolete(cycle, id)) notification.close();
+      }
+    } catch { /* Cleanup failure must not block a new reminder. */ }
+  }, []);
 
   const registration = useCallback(async () => {
     if (!registrationPromise.current) {
       registrationPromise.current = (async () => {
         const result = await navigator.serviceWorker.register("/laundry-sw.js", { scope: "/", updateViaCache: "none" });
+        // The previous worker does not understand extension IDs. Wait for a
+        // freshly installed script before sending it a new-format reminder.
+        const updating = result.installing || result.waiting;
+        if (updating) await waitForActivation(updating);
         if (result.active) return result;
         let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
@@ -200,23 +235,39 @@ export function LaundryNotificationsProvider({ children }: { children: React.Rea
   }, [enabled, permission, registration, status]);
 
   useEffect(() => {
+    latestEvents.current = events;
+    void closeObsoleteNotifications();
+    const isCurrent = (notice: LaundryNotice) => laundryNotices(latestEvents.current).some(current => current.id === notice.id && current.expiresAt === notice.expiresAt);
     const showToast = (notice: LaundryNotice) => {
       if (rememberNotice(notice, "toast")) setAlerts(current => [...current.filter(item => Date.parse(item.expiresAt) > Date.now()), notice].slice(-6));
     };
     const tick = () => {
+      const notices = laundryNotices(latestEvents.current), currentIds = new Set(notices.map(notice => notice.id));
+      setAlerts(current => {
+        const remaining = current.filter(notice => currentIds.has(notice.id));
+        return remaining.length === current.length ? current : remaining;
+      });
+      for (const id of nextNoticeAttempt.current.keys()) if (!currentIds.has(id)) nextNoticeAttempt.current.delete(id);
       const pendingCycles = new Set(queued.filter(item => !item.blocked && item.entry.type === "createWorkEvent")
         .map(item => item.entry.type === "createWorkEvent" ? item.entry.laundryCycleId : undefined));
-      for (const notice of laundryNotices(events)) {
+      for (const notice of notices) {
         showToast(notice);
         const backgroundActive = navigator.onLine && subscribed && status?.backgroundConfigured && status.schedulerRecent && !pendingCycles.has(notice.cycleId);
         if (enabled && permission === "granted" && laundryForegroundReady(notice, !!backgroundActive) && !alreadySeen(notice, "system")
           && !noticesInFlight.current.has(notice.id) && (nextNoticeAttempt.current.get(notice.id) || 0) <= Date.now()) {
           noticesInFlight.current.add(notice.id);
-          void registration().then(worker => showSystemNotice(worker, notice)).then(() => {
+          void registration().then(async worker => {
+            if (!isCurrent(notice)) return false;
+            await showSystemNotice(worker, notice);
+            return true;
+          }).then(shown => {
+            if (!shown) return;
+            if (!isCurrent(notice)) { void closeObsoleteNotifications(); return; }
             rememberNotice(notice, "system");
             nextNoticeAttempt.current.delete(notice.id);
             setError(current => current === foregroundError ? "" : current);
           }).catch(() => {
+            if (!isCurrent(notice)) return;
             nextNoticeAttempt.current.set(notice.id, Date.now() + 30_000);
             setError(foregroundError);
           }).finally(() => noticesInFlight.current.delete(notice.id));
@@ -225,15 +276,20 @@ export function LaundryNotificationsProvider({ children }: { children: React.Rea
     };
     const received = (event: MessageEvent) => {
       if (event.data?.type === "LAUNDRY_NOTICE_SHOWN") {
-        const current = laundryNotices(events).find(notice => notice.id === event.data.notice?.id);
+        const current = laundryNotices(latestEvents.current).find(notice => notice.id === event.data.notice?.id);
         if (current) { rememberNotice(current, "system"); showToast(current); }
+        else {
+          const cycle = laundryCycles(latestEvents.current).find(item => item.cycleId === event.data.notice?.cycleId);
+          if (typeof event.data.notice?.id === "string" && (!cycle || !laundryNoticeIsObsolete(cycle, event.data.notice.id))) void refresh();
+          void closeObsoleteNotifications();
+        }
       }
     };
     tick();
     const timer = setInterval(tick, 1_000);
     navigator.serviceWorker?.addEventListener("message", received);
     return () => { clearInterval(timer); navigator.serviceWorker?.removeEventListener("message", received); };
-  }, [events, queued, enabled, permission, registration, status, subscribed]);
+  }, [events, queued, enabled, permission, registration, status, subscribed, closeObsoleteNotifications, refresh]);
 
   async function enable() {
     if (!supported || busy) return;

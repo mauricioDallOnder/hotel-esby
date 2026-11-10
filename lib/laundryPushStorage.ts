@@ -141,7 +141,8 @@ export async function claimLaundryPushDeliveries(requests: DeliveryRequest[], no
     const end = Date.parse(cycle.endsAt), expires = timestamp(request.expiresAt);
     const windowStart = request.stage === "soon" ? end - 10 * MINUTE : end;
     const windowEnd = request.stage === "soon" ? end : end + 15 * MINUTE;
-    if (now < windowStart || now >= windowEnd || expires <= now || expires > windowEnd) continue;
+    if (now < windowStart || now >= windowEnd || expires <= now || expires !== windowEnd) continue;
+    if (request.stage === "soon" && cycle.extensionId && Date.parse(cycle.updatedAt) > windowStart) continue;
     const previous = deliveries.get(request.id);
     if (previous?.sentAt || (previous && timestamp(previous.leaseUntil) > now)) continue;
     const leaseToken = randomUUID();

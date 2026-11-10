@@ -8,8 +8,8 @@ físicas: **1, 2 e 3 para lavar; 1, 2 e 3 para secar**.
 
 | Equipamento | Capacidade | Programa | Tempo previsto |
 | --- | --- | --- | --- |
-| Machine à laver 1 | 18 kg | Rapide 40 | 40 min |
-| Machines à laver 2 e 3 | 8 kg cada | Rapide 30 | 30 min |
+| Machine à laver 1 | 18 kg | Rapide 40 | 44 min |
+| Machines à laver 2 e 3 | 8 kg cada | Rapide 30 | 38 min |
 | Machines à sécher 1, 2 e 3 | — | Séchage | 1 h 20 |
 
 Depois de iniciar o programa na máquina física, toque em **Démarrer** no cartão
@@ -19,12 +19,40 @@ facultativos e ajudam a distinguir as roupas de pessoas do mesmo quarto. O app
 registra a data e a hora, calcula o fim previsto e mostra a contagem regressiva.
 Sair da página ou recarregá-la não reinicia o tempo.
 
-Quando o tempo termina, o cartão passa a **À récupérer** e continua ocupado.
-Depois de retirar todas as roupas, use **Linge récupéré**: a confirmação registra
-a data, a hora e quem fez a retirada, e libera a máquina. **Annuler le cycle**
+Quando o tempo termina, a máquina continua ocupada. Nas lavadoras, use
+**Terminé · prêt à sécher** depois de verificar o término e retirar as roupas para
+secar. Nas secadoras, use **Linge récupéré** depois de retirar todas as roupas.
+A confirmação registra a data, a hora e quem fez a retirada, e libera a máquina. **Annuler le cycle**
 exige confirmação de que a máquina está parada e vazia, deixa um registro de
 cancelamento no histórico e não inventa uma retirada. O cronômetro acompanha
 o programa previsto; o aplicativo não está conectado eletronicamente às máquinas.
+
+### Ajustar o tempo quando o programa ainda não terminou
+
+Os novos ciclos usam **44 minutos na lavadora de 18 kg** (acréscimo de 4 minutos)
+e **38 minutos nas duas de 8 kg** (acréscimo de 8 minutos). Os nomes dos programas
+continuam Rapide 40 e Rapide 30. O horário previsto fica salvo com o ciclo;
+registros e envios anteriores mantêm sua duração original de 40/30 minutos.
+
+**Ajouter du temps** está disponível nas lavadoras e nas secadoras enquanto o
+ciclo não for encerrado. Escolha os minutos adicionais e confirme. Durante o
+programa, o tempo é somado ao fim previsto; se o cronômetro já zerou, os minutos
+passam a contar a partir da confirmação. A mesma ficha mantém quarto, identificação
+das roupas, início original, acréscimos e responsáveis. Recarregar a página ou
+reenviar uma confirmação pendente não soma o tempo novamente.
+
+Os avisos acompanham o novo horário. Um novo aviso de dez minutos só é previsto
+quando restarem pelo menos dez minutos após o acréscimo; um acréscimo de cinco
+minutos depois do zero gera o novo aviso de término. O histórico conserva os
+acréscimos e o horário final previsto.
+
+**Atualização a partir da primeira versão de Lingerie:** substitua o conteúdo
+de `google-apps-script/Code.gs` e publique uma nova versão da implantação existente.
+Reutilize as chaves e o gatilho já configurados. A ação `commitLaundryCycleV2`
+exige o script atualizado para salvar os horários e os acréscimos com as mesmas
+regras do aplicativo; enquanto isso, os envios ficam preservados na fila. Reabra
+ou recarregue o aplicativo nos aparelhos usados para receber avisos, para carregar
+a atualização do serviço de notificações.
 
 **Historique** mostra os ciclos mais recentes primeiro, com pesquisa por quarto,
 nome, máquina ou nota e filtros por período e estado. O mesmo quarto pode usar
@@ -68,7 +96,7 @@ depois atualiza silenciosamente a mesma notificação.
    no projeto existente. Para exibir o manifesto no editor do Google, habilite
    **Mostrar o arquivo de manifesto appsscript.json** nas configurações do projeto.
    Execute `setup()` e publique uma nova versão da implantação Web App existente,
-   preservando a URL e o `API_TOKEN`. A ação protegida `commitLaundryCycle` exige
+   preservando a URL e o `API_TOKEN`. A ação protegida `commitLaundryCycleV2` exige
    esse código atualizado: a implantação antiga rejeita os novos ciclos antes de
    gravar, e eles permanecem na fila do aparelho para reenvio.
 2. Gere uma única vez as chaves VAPID em um terminal com as dependências instaladas:

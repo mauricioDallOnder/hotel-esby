@@ -12,10 +12,14 @@ async function prepare(page: Page, now: number) {
     laundryCycleId: crypto.randomUUID(), laundryOwner: "Repère privé", laundryStartedAt: startedAt, laundryStatus: "en_cours", laundryCollectedAt: null, laundryCollectedBy: "",
   });
   const workEvents = [{ ...start, version: 1, updatedAt: start.occurredAt, submissionHash: createHash("sha256").update(JSON.stringify(start)).digest("hex") }];
-  await page.route("**/api/hotel*", route => route.fulfill({ json: { mode: "local", issues: [], inspections: [], roomInspections: [], familyEvents: [], workEvents } }));
+  let hotelReads = 0;
+  await page.route("**/api/hotel*", route => {
+    hotelReads++;
+    return route.fulfill({ json: { mode: "local", issues: [], inspections: [], roomInspections: [], familyEvents: [], workEvents } });
+  });
   await page.route("**/api/laundry/notifications/status", route => route.fulfill({ json: { publicKey: null, backgroundConfigured: false, schedulerRecent: false } }));
   expect((await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } })).ok()).toBeTruthy();
-  return { start, workEvents };
+  return { start, workEvents, getHotelReads: () => hotelReads };
 }
 
 test("native browser notification test when the browser supports permission overrides", async ({ page, context }) => {
@@ -87,7 +91,7 @@ test("real worker and IndexedDB deduplicate reminders across navigation and relo
   expect(await shown()).toHaveLength(1);
   await page.clock.setFixedTime(new Date(now + 11 * 60_000));
   await expect.poll(shown).toHaveLength(2);
-  expect((await shown())[1]).toEqual({ tag: `laundry:${start.laundryCycleId}:finished`, body: "Machine à laver 2 · chambre 201 : le linge est prêt à récupérer." });
+  expect((await shown())[1]).toEqual({ tag: `laundry:${start.laundryCycleId}:finished`, body: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." });
   expect(JSON.stringify(await shown())).not.toContain("Repère privé");
   const finished = laundryNotices(workEvents, now + 11 * 60_000)[0];
   await worker.evaluate(async notice => {
@@ -96,7 +100,7 @@ test("real worker and IndexedDB deduplicate reminders across navigation and relo
     Object.defineProperties(event, { data: { value: { json: () => notice } }, waitUntil: { value: (promise: Promise<unknown>) => { pending = promise; } } });
     self.dispatchEvent(event); await pending;
   }, finished);
-  expect((await shown())[2]).toEqual({ tag: `laundry:${start.laundryCycleId}:finished`, body: "Machine à laver 2 · chambre 201 : le linge est prêt à récupérer.", silent: true });
+  expect((await shown())[2]).toEqual({ tag: `laundry:${start.laundryCycleId}:finished`, body: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher.", silent: true });
   await worker.evaluate(async notice => {
     let pending: Promise<unknown> = Promise.resolve();
     const event = new Event("push");
@@ -124,4 +128,82 @@ test("denied notifications keep visible in-app reminders and explain the fallbac
   await page.clock.setFixedTime(new Date(now + 1_000));
   await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : il reste moins de 10 minutes." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Envoyer un test", exact: true })).toHaveCount(0);
+});
+
+test("an extension push before state refresh stays visible, rearms completion and retires the old plan", async ({ page, context }) => {
+  test.setTimeout(60_000);
+  await page.addInitScript(() => {
+    Object.defineProperty(Notification, "permission", { configurable: true, get: () => "granted" });
+    Notification.requestPermission = async () => "granted";
+    const displayed = new Map<string, boolean>();
+    const tracked = window as unknown as { laundryClosedIds: string[] };
+    tracked.laundryClosedIds = [];
+    navigator.serviceWorker.addEventListener("message", event => {
+      if (event.data?.type === "LAUNDRY_NOTICE_SHOWN") displayed.set(event.data.notice.id, true);
+    });
+    // Native OS display is mocked in this headless runtime; keep real browser
+    // registration, message dispatch, worker code and IndexedDB deduplication.
+    ServiceWorkerRegistration.prototype.getNotifications = async () => [...displayed]
+      .filter(([, visible]) => visible)
+      .map(([id]) => ({ data: { id }, tag: "laundry:" + id, close: () => { displayed.set(id, false); tracked.laundryClosedIds.push(id); } }) as unknown as Notification);
+  });
+  const now = Date.now(), { start, workEvents, getHotelReads } = await prepare(page, now);
+  await page.goto("/lingerie");
+  const createdWorker = context.waitForEvent("serviceworker");
+  await page.getByRole("button", { name: "Activer sur cet appareil", exact: true }).click();
+  const worker = await createdWorker;
+  await captureNativeDisplay(worker);
+  const shown = () => worker.evaluate(() => (self as unknown as WorkerTestState).laundryTestNotifications);
+  const closedIds = () => page.evaluate(() => (window as unknown as { laundryClosedIds: string[] }).laundryClosedIds);
+  await page.clock.setFixedTime(new Date(now + 1_000));
+  await expect.poll(shown).toHaveLength(1);
+  const originalEnd = now + 10 * 60_000 + 1_000;
+  await page.clock.setFixedTime(new Date(originalEnd));
+  await expect.poll(shown).toHaveLength(2);
+  await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." })).toBeVisible();
+  const extended = workEntrySchema.parse({ ...start, id: crypto.randomUUID(), expectedRevision: 1,
+    occurredAt: new Date(originalEnd).toISOString(), date: new Date(originalEnd).toISOString().slice(0, 10),
+    laundryAddedMinutes: 20, laundryEndsAt: new Date(originalEnd + 20 * 60_000).toISOString() });
+  const extensionReceipt = { ...extended, version: 1, updatedAt: extended.occurredAt, submissionHash: createHash("sha256").update(JSON.stringify(extended)).digest("hex") };
+  await page.clock.setFixedTime(new Date(originalEnd + 10 * 60_000));
+  const remoteNotice = laundryNotices([...workEvents, extensionReceipt], originalEnd + 10 * 60_000)[0];
+  const beforePushReads = getHotelReads();
+  await worker.evaluate(async notice => {
+    let pending: Promise<unknown> = Promise.resolve();
+    const event = new Event("push");
+    Object.defineProperties(event, { data: { value: { json: () => notice } }, waitUntil: { value: (promise: Promise<unknown>) => { pending = promise; } } });
+    self.dispatchEvent(event); await pending;
+  }, remoteNotice);
+  await expect.poll(shown).toHaveLength(3);
+  await expect.poll(getHotelReads).toBeGreaterThan(beforePushReads);
+  expect(await closedIds()).not.toContain(remoteNotice.id);
+
+  workEvents.push(extensionReceipt);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  const machine = page.getByRole("article", { name: "Machine à laver 2", exact: true });
+  await expect(machine.getByLabel("Temps restant", { exact: true })).toHaveText("10:00");
+  await expect.poll(closedIds).toContain(`${start.laundryCycleId}:finished`);
+  expect(await closedIds()).not.toContain(remoteNotice.id);
+  await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." })).toHaveCount(0);
+  const extendedEnd = Date.parse(extended.laundryEndsAt!);
+  await page.clock.setFixedTime(new Date(extendedEnd));
+  await expect.poll(shown).toHaveLength(4);
+  expect((await shown())[3].tag).toBe(`laundry:${start.laundryCycleId}:${extended.id}:finished`);
+
+  const short = workEntrySchema.parse({ ...extended, id: crypto.randomUUID(), expectedRevision: 2,
+    occurredAt: new Date(extendedEnd).toISOString(), date: new Date(extendedEnd).toISOString().slice(0, 10),
+    laundryAddedMinutes: 5, laundryEndsAt: new Date(extendedEnd + 5 * 60_000).toISOString() });
+  workEvents.push({ ...short, version: 1, updatedAt: short.occurredAt, submissionHash: createHash("sha256").update(JSON.stringify(short)).digest("hex") });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(machine.getByLabel("Temps restant", { exact: true })).toHaveText("05:00");
+  await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." })).toHaveCount(0);
+  await page.clock.setFixedTime(new Date(Date.parse(short.laundryEndsAt!) - 1_000));
+  await expect(machine.getByLabel("Temps restant", { exact: true })).toHaveText("00:01");
+  expect(await shown()).toHaveLength(4);
+  await page.clock.setFixedTime(new Date(short.laundryEndsAt!));
+  await expect.poll(shown).toHaveLength(5);
+  expect((await shown())[4].tag).toBe(`laundry:${start.laundryCycleId}:${short.id}:finished`);
+  await page.reload();
+  await expect(machine.getByLabel("Temps écoulé", { exact: true })).toHaveText("Terminé");
+  expect(await shown()).toHaveLength(5);
 });
