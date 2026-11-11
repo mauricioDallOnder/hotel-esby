@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { today, type Issue } from "../../lib/domain";
 
 test("employee reports three photos; only direction changes the status", async ({ page, request }) => {
   const unauthorized = await request.get("/api/hotel");
@@ -54,8 +55,11 @@ test("employee reports three photos; only direction changes the status", async (
   const etag = firstPhoto.headers().etag;
   expect(etag).toBeTruthy();
   expect(firstPhoto.headers()["cache-control"]).toBe("private, no-cache");
+  expect(firstPhoto.headers()["vary"]).toContain("Cookie");
+  expect(firstPhoto.headers()["cdn-cache-control"]).toBe("no-store");
   const cachedPhoto = await page.request.get(photoUrl, { headers: { "If-None-Match": etag } });
   expect(cachedPhoto.status()).toBe(304);
+  expect(cachedPhoto.headers()["cache-control"]).toBe("private, no-cache");
   const update = { type: "updateIssue", id: issue.id, version: 1, actor: "Test", note: "Réparé", fields: issue, status: "resolu" };
   for (const method of ["POST", "PATCH"]) {
     const denied = await page.request.fetch("/api/hotel", { method, data: update });
@@ -91,4 +95,55 @@ test("employee reports three photos; only direction changes the status", async (
   expect(saved.issues[0].photoIds).toHaveLength(3);
   await page.reload();
   await expect(page.getByRole("button", { name: "Déconnexion" })).toBeVisible();
+});
+
+test("photo galleries load on demand, reserve their space and recover a failed attachment", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
+  const now = new Date().toISOString();
+  const issue: Issue = {
+    id: crypto.randomUUID(), version: 1, title: "Galerie photo test", location: "Chambre 203", description: "Éclairage du lavabo à vérifier.",
+    category: "Électricité", priority: "normale", status: "ouvert", date: today(), createdAt: now, updatedAt: now,
+    reportedBy: "Test", assignee: "Test", history: [], photoId: "photo-1", photoIds: ["photo-1", "photo-2", "photo-3"],
+  };
+  await page.route("**/api/hotel*", route => route.fulfill({ json: { issues: [issue], inspections: [], mode: "local" } }));
+  const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP4z8DAAMIM/4EAAB/uBfsL2WiLAAAAAElFTkSuQmCC", "base64");
+  const requests: number[] = [];
+  let releaseFirst!: () => void;
+  const firstReady = new Promise<void>(resolve => { releaseFirst = resolve; });
+  let failLast = true;
+  await page.route("**/api/photos/**", async route => {
+    const url = new URL(route.request().url()), index = Number(url.searchParams.get("index"));
+    expect(url.searchParams.get("v")).toBe("2");
+    requests.push(index);
+    if (index === 0) await firstReady;
+    await route.fulfill(index === 2 && failLast ? { status: 503, body: "Temporary failure" } : { contentType: "image/png", body: image });
+  });
+  await page.goto("/anomalies");
+  const card = page.getByRole("article", { name: "Chambre 203 · Galerie photo test", exact: true });
+  await expect(card).toBeVisible();
+  expect(requests).toHaveLength(0);
+  await card.getByRole("button", { name: "Voir les photos (3)", exact: true }).click();
+  const frames = card.locator("[aria-busy]");
+  await frames.first().scrollIntoViewIfNeeded();
+  let reservedHeight = 0;
+  try {
+    await expect(card.getByText("Chargement de la photo 1…", { exact: true })).toBeVisible();
+    reservedHeight = (await frames.first().boundingBox())!.height;
+    expect(reservedHeight).toBe(220);
+  } finally { releaseFirst(); }
+  await expect(card.getByRole("img", { name: "Galerie photo test · photo 1", exact: true })).toHaveJSProperty("naturalWidth", 2);
+  await expect(frames.first()).toHaveAttribute("aria-busy", "false");
+  expect((await frames.first().boundingBox())!.height).toBe(reservedHeight);
+  await frames.nth(2).scrollIntoViewIfNeeded();
+  const retry = card.getByRole("button", { name: "Réessayer la photo 3", exact: true });
+  await expect.poll(() => requests.filter(index => index === 2).length).toBe(3);
+  await expect(retry).toBeVisible();
+  expect((await frames.nth(2).boundingBox())!.height).toBe(reservedHeight);
+  failLast = false;
+  await retry.click();
+  await expect(card.getByRole("img", { name: "Galerie photo test · photo 3", exact: true })).toHaveJSProperty("naturalWidth", 2);
+  await expect(retry).toHaveCount(0);
+  expect(requests.filter(index => index === 0)).toHaveLength(1);
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
 });

@@ -1,7 +1,8 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { displayDate, today } from "./domain";
+import { displayDate, issuePhotoIds, today } from "./domain";
 import { applianceCleaningLabels, cleaningText, conditionLabels, latestRoomRecords, rooms, roomProblems, type WorkEntry, type RoomEntry, type RoomInspection } from "./rooms";
+import { loadPhotoData, photoSource } from "./photos";
 
 import { roomAvailability } from "./work";
 
@@ -37,30 +38,12 @@ export function freeRoomRows(history: Options["history"], workEvents: WorkEntry[
   });
 }
 
-// Fonction pour télécharger la 1ère photo avec le système de retry (anti-crash)
 async function loadFirstPhoto(record: RoomEntry | RoomInspection): Promise<string | null> {
   if ("photosData" in record && record.photosData && record.photosData.length > 0) {
      return record.photosData[0];
   }
-  if ("photoIds" in record && record.photoIds && record.photoIds.length > 0) {
-     for (let attempt = 0; attempt < 3; attempt++) {
-         try {
-            const res = await fetch(`/api/photos/${record.id}?collection=roomInspections&index=0`, { cache: "no-store" });
-            if (res.ok) {
-               const blob = await res.blob();
-               return await new Promise<string>((resolve, reject) => {
-                 const reader = new FileReader();
-                 reader.onload = () => resolve(String(reader.result));
-                 reader.onerror = () => reject(new Error("Erreur de lecture"));
-                 reader.readAsDataURL(blob);
-               });
-            }
-            if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
-         } catch (e) {
-            if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
-         }
-     }
-  }
+  if ("photoIds" in record && issuePhotoIds(record).length)
+    return loadPhotoData(photoSource(record.id, 0, "roomInspections"));
   return null;
 }
 
@@ -68,15 +51,16 @@ export async function buildFreeRoomsReport({ hotelName, history, workEvents = []
   const records = freeRoomRecords(history, workEvents);
   const rows = freeRoomRows(history, workEvents);
   const photoMap = new Map<string, string>();
+  const missingPhotos = new Set<string>();
 
-  // Étape 1 : Télécharger les photos des chambres libres qui ont des problèmes
-  for (const record of records) {
-     if (roomProblems(record).length > 0 || ("photoIds" in record && record.photoIds?.length > 0) || ("photosData" in record && record.photosData?.length > 0)) {
-         const photo = await loadFirstPhoto(record);
-         if (photo) {
-             photoMap.set(record.room, photo);
-         }
-     }
+  const withPhotos = records.filter(record => "photosData" in record ? record.photosData.length > 0 : issuePhotoIds(record).length > 0);
+  // Match the API's bounded photo concurrency, instead of waiting room by room.
+  for (let start = 0; start < withPhotos.length; start += 3) {
+    await Promise.all(withPhotos.slice(start, start + 3).map(async record => {
+      const photo = await loadFirstPhoto(record);
+      if (photo) photoMap.set(record.room, photo);
+      else missingPhotos.add(record.room);
+    }));
   }
 
   const doc = new jsPDF({ orientation: "landscape", compress: true });
@@ -108,7 +92,7 @@ export async function buildFreeRoomsReport({ hotelName, history, workEvents = []
     didParseCell: (data) => {
         if (data.section === "body" && data.column.index === 7) {
             const roomNumber = (data.row.raw as string[])[0];
-            if (photoMap.has(roomNumber)) {
+            if (photoMap.has(roomNumber) || missingPhotos.has(roomNumber)) {
                 data.cell.styles.minCellHeight = 30; // Espace de 3 cm de hauteur pour la photo
             }
         }
@@ -119,7 +103,9 @@ export async function buildFreeRoomsReport({ hotelName, history, workEvents = []
             const roomNumber = (data.row.raw as string[])[0];
             const photoData = photoMap.get(roomNumber);
             if (photoData) {
+              try {
                 const props = doc.getImageProperties(photoData);
+                if (!Number.isFinite(props.width) || !Number.isFinite(props.height) || props.width <= 0 || props.height <= 0) throw new Error("Photo invalide.");
                 const padding = 2;
                 const cellW = data.cell.width - (padding * 2);
                 const cellH = data.cell.height - (padding * 2);
@@ -136,6 +122,13 @@ export async function buildFreeRoomsReport({ hotelName, history, workEvents = []
                 const y = data.cell.y + padding + (cellH - imgH) / 2;
                 
                 doc.addImage(photoData, x, y, imgW, imgH);
+              } catch { missingPhotos.add(roomNumber); }
+            }
+            if (missingPhotos.has(roomNumber)) {
+              doc.setFont("helvetica", "italic");
+              doc.setFontSize(8);
+              doc.setTextColor(100);
+              doc.text("Photo indisponible", data.cell.x + 2, data.cell.y + 6);
             }
         }
     }

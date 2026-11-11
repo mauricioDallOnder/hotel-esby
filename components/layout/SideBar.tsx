@@ -141,13 +141,11 @@ export function Sidebar({
                     : "text.primary",
 
                   "&.Mui-selected": {
-                    bgcolor:
-                      "rgba(31,111,74,0.10)",
+                    bgcolor: "action.selected",
                   },
 
                   "&.Mui-selected:hover": {
-                    bgcolor:
-                      "rgba(31,111,74,0.14)",
+                    bgcolor: "action.focus",
                   },
                 }}
               >

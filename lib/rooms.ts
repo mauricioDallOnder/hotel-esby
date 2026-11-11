@@ -166,6 +166,7 @@ export const workEntrySchema = z.object({
   laundryOwner: z.string().trim().max(200).optional(),
   laundryEndsAt: z.iso.datetime().optional(),
   laundryAddedMinutes: z.number().int().min(1).max(120).optional(),
+  cafardObservationId: z.string().uuid().nullable().optional(),
 }).superRefine((v, ctx) => {
   const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
   if (v.kind === "roomAvailability") {
@@ -237,7 +238,7 @@ export const workEntrySchema = z.object({
   if (v.kind !== "dailyTask" && (v.done !== undefined || v.deleted !== undefined)) invalid("kind", "État de tâche inattendu.");
   if (v.kind !== "familyComment" && v.familyEventId !== undefined) invalid("familyEventId", "Lien familial inattendu.");
   if (v.kind !== "roomAvailability" && v.free !== undefined) invalid("free", "Disponibilité inattendue.");
-  if (v.kind !== "cafardFollowup" && [v.cafardStatus, v.detectedOn, v.treatedOn, v.resolvedOn, v.product].some(value => value !== undefined))
+  if (v.kind !== "cafardFollowup" && [v.cafardStatus, v.detectedOn, v.treatedOn, v.resolvedOn, v.product, v.cafardObservationId].some(value => value !== undefined))
     invalid("kind", "Données de suivi des cafards inattendues.");
   if (v.kind !== "collectedItem" && [v.itemName, v.collectedOn, v.collectedBy, v.returnedOn, v.returnedBy, v.roomUnidentified].some(value => value !== undefined))
     invalid("kind", "Données d’objet récupéré inattendues.");

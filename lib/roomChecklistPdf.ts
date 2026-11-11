@@ -23,6 +23,7 @@ const conditionChoices = [
   ["Moquette", ["OK", "Tachée", "Sale"]],
   ["Micro-ondes", ["Présent", "Absent"]],
   ["Propreté du micro-ondes", ["Propre", "Sale", "Non applicable"]],
+  ["Minibar / réfrigérateur", ["Présent", "Absent"]],
   ["Propreté du minibar", ["Propre", "Sale", "Non applicable"]],
 ] as const;
 
@@ -37,6 +38,7 @@ function conditionAnswers(record: Record) {
     carpetLabels[record.carpet] || "Non renseignée",
     record.microwave === "oui" ? "Présent" : record.microwave === "non" ? "Absent" : "Non vérifié",
     record.microwave === "non" ? "Non applicable - absent" : record.microwave === "oui" ? clean(record.microwaveCleaning) : "Non vérifié",
+    fridge === "absent" ? "Absent" : fridge === "ok" || fridge === "probleme" ? "Présent" : "Non vérifié",
     fridge === "absent" ? "Non applicable - absent" : fridge === "ok" || fridge === "probleme" ? clean(record.fridgeCleaning) : "Non vérifié",
   ];
 }

@@ -1,5 +1,69 @@
 # Hôtel Contrôle
 
+## Modo escuro, checklist e acompanhamentos consistentes
+
+O botão de lua/sol no topo alterna **Mode sombre / Mode clair**, inclusive na
+tela de login. A primeira abertura acompanha a preferência do aparelho; uma
+escolha manual fica salva neste navegador e é aplicada antes da exibição da página.
+Os PDFs continuam com fundo claro para impressão.
+
+- **Equipamentos OK:** o atalho agora inclui **Détecteur de fumée fonctionnel**.
+  Respostas já preenchidas são preservadas. Um equipamento com um problema
+  aberto correspondente continua exigindo verificação individual.
+- **Minibar:** em **État et ménage**, a pergunta **Minibar / réfrigérateur présent ?**
+  permite indicar **Oui / Non**. A ausência fica registrada nos equipamentos e
+  dispensa a limpeza do minibar. A presença sozinha não confirma o funcionamento.
+- **Celular:** os quartos da tournée usam uma grade de cartões de tamanho uniforme,
+  com número, tempo desde o controle e indicação de prioridade.
+- **Cafards:** o controle mostra o acompanhamento existente, seu estado e a última
+  aplicação. Novas detecções acrescentam observações ao mesmo histórico por quarto.
+  Se outro controle ou colega atualizar o caso, um formulário antigo não pode
+  sobrescrever as informações recentes. O rascunho permanece acessível, inclusive
+  após atualizar o app; **Recharger le suivi en conservant mes observations**
+  recupera o estado e as datas atuais mantendo as notas digitadas.
+- **Problemas técnicos:** um mesmo problema ainda aberto no mesmo quarto não pode
+  ser criado novamente, pelo checklist ou pelo formulário manual. A tela oferece
+  acesso ao signalement existente e confirma antes de abandonar uma nova saisie.
+  A regra é conferida novamente na gravação, sob lock no Sheets. Problemas diferentes
+  continuam permitidos; uma falha pode ser sinalizada novamente após resolução.
+  Duplicatas históricas não são apagadas: continuam disponíveis para acompanhamento
+  e resolução.
+
+As fotos são preparadas uma por vez, com progresso e redução gradual para cumprir
+o limite de envio. As galerias carregam as imagens próximas da área visível, reservam
+espaço durante o carregamento e oferecem nova tentativa quando há falha. O cache é
+privado e revalida o acesso autenticado, inclusive em respostas HTTP 304. Os PDFs
+reutilizam esse carregamento e identificam anexos indisponíveis sem abandonar as
+demais fotos. Atualizações periódicas sem mudanças reaproveitam os dados em memória;
+uma leitura ou recibo antigo não faz um problema resolvido reaparecer como aberto.
+
+### Atualização do Google Apps Script
+
+**Antes de publicar esta versão do app**, substitua `google-apps-script/Code.gs`
+no projeto existente e publique uma nova versão da implantação. Preserve a URL,
+o token, a planilha, as chaves e os gatilhos atuais. As ações protegidas
+`commitIssueV2`, `commitRoomInspectionV2` e `commitCafardFollowupV2` exigem o código
+atualizado. A implantação antiga recusa a gravação com uma instrução de atualização;
+controles e acompanhamentos enviados pela fila permanecem no aparelho.
+
+Não há nova aba nem migração ou exclusão de registros para estes ajustes. As
+anomalias permanecem em **Anomalies**, os controles em **Contrôles chambres** e as
+atualizações de cafards em **Suivi quotidien**. O GitHub/Vercel não publica o Apps
+Script automaticamente. Recarregue o aplicativo depois da atualização.
+
+### Roteiro de conferência
+
+| Área | Resultado esperado |
+| --- | --- |
+| Login e navegação | Alternância claro/escuro persistente; textos e controles legíveis. |
+| Checklist | Atalho inclui fumaça; minibar ausente não exige limpeza; quartos uniformes. |
+| Ocupação e rotação | Quarto livre fica fora da tournée; histórico permanece disponível. |
+| Cafards | Uma ficha por quarto; nova detecção preserva tratamentos; rascunho antigo pode ser recuperado. |
+| Problemas técnicos | Mesmo problema aberto é bloqueado; outro defeito ou recorrência após resolução é permitido. |
+| Fotos e PDFs | Até três fotos, progresso, tentativa de recuperação e indicação de foto indisponível. |
+| Sincronização | Envio sem conexão e repetição não duplicam registros; atualização antiga não desfaz intervenção. |
+| Lingerie, objetos e famílias | Validações, revisões concorrentes e históricos existentes preservados. |
+
 ## Lingerie: máquinas, roupas e avisos
 
 O menu **Lingerie** (`/lingerie`) permite que Employé e Direction acompanhem as
@@ -182,7 +246,7 @@ são preservados, inclusive os controles que aguardam sincronização no aparelh
 A rotação continua reconhecendo os controles completos antigos sem exigir uma
 resposta que ainda não existia.
 
-O Apps Script que já oferece `commitRoomInspection` grava o novo campo no JSON
+O Apps Script atualizado com `commitRoomInspectionV2` grava o novo campo no JSON
 da aba **Contrôles chambres** e aceita o problema automático sem migração.
 O arquivo `google-apps-script/Code.gs` também adiciona uma coluna visível ao final
 e reconhece descrições manuais de radiador coberto para evitar duplicatas.
@@ -278,8 +342,9 @@ Os novos acompanhamentos explícitos prevalecem sobre essa referência inicial.
 As atualizações usam a fila existente, inclusive sem conexão, e são salvas como
 eventos imutáveis de `cafardFollowup` em **Suivi quotidien**. Há controle de
 revisão e reenvio idempotente. A interface mostra os envios pendentes ou recusados.
-O Apps Script atual já oferece `commitWorkEvent` com essas garantias; esta
-alteração não exige nova aba, migração nem atualização adicional do script.
+O Apps Script atualizado oferece `commitCafardFollowupV2`, que também confere
+se houve nova detecção desde a abertura do formulário. Não há nova aba ou migração;
+a implantação do script deve acompanhar esta versão do aplicativo.
 
 ## Responsável pela anomalia
 
@@ -464,7 +529,7 @@ e o download disponível falhou. A integração com o Google real depende da imp
 
 - **Inspeção por toque:** três etapas (équipements, état/ménage, résumé), botões
   grandes OK / Problème / Absent, sem dropdowns. O atalho de validação só marca
-  equipamentos ainda sem resposta, incluindo o ferme-porte; detector e itens já sinalizados
+  equipamentos ainda sem resposta, incluindo detector e ferme-porte; itens já sinalizados
   exigem resposta individual. Nenhuma resposta é preenchida ao abrir o quarto.
 - **Ferme-porte:** verificar presença e fechamento automático. Defeito ou ausência
   ficam registrados no controle, sem gerar anomalia automática. Quartos antigos mostram
@@ -484,9 +549,9 @@ e o download disponível falhou. A integração com o Google real depende da imp
 - **Anomalias sem duplicação:** no salvamento, compara o quarto exato e cada
   constat com anomalias abertas/em andamento, inclusive as criadas pelo menu
   Anomalies. Novos registros usam chaves de equipamento; registros manuais antigos
-  usam termos reconhecidos em francês. Textos ambíguos podem ser associados
-  explicitamente no resumo. **Signaler un problème distinct** permite distinguir
-  outro defeito no mesmo equipamento. Só constats elegíveis novos criam uma anomalia; vínculos,
+  usam termos reconhecidos em francês. Quando há mais de um signalement correspondente,
+  o resumo permite escolher o vínculo entre eles. O antigo atalho para criar outro
+  signalement do mesmo item foi retirado. Só constats elegíveis novos criam uma anomalia; vínculos,
   observações e fotos ficam no histórico. Um controle OK não encerra uma anomalia.
   Uma falha que reaparece depois da resolução pode gerar um novo signalement.
 - **Compatibilidade:** controles imutáveis e filas anteriores (v1/v2/v3) mantêm
@@ -502,7 +567,7 @@ planilha e pasta de fotos. A nova coluna Ferme-porte é adicionada ao final, sem
 mover ou apagar colunas/dados antigos.
 
 O GitHub não publica o Apps Script automaticamente. O aplicativo usa a ação
-`commitRoomInspection`, que o script antigo rejeita antes de gravar: nesse caso
+`commitRoomInspectionV2`, que o script antigo rejeita antes de gravar: nesse caso
 os controles permanecem na fila do aparelho, com instrução de atualização.
 Depois de atualizar a implantação, use **Réessayer**. Não limpe os dados do
 navegador enquanto houver registros pendentes. No modo `local`, não há esta etapa.
@@ -640,9 +705,9 @@ Os testes unitários incluem os intervalos de quartos, validações, fotos priva
 persistência, repetição de envio, conflito de conteúdo e o Apps Script com
 simulação de Sheets/Drive, incluindo preservação das abas antigas. Os testes de
 navegador incluem celular, rascunho recuperado, fila offline e resposta perdida.
-Nesta execução, o ambiente bloqueou a abertura da porta 3127 (`listen EPERM`),
-portanto os testes de navegador não puderam executar. A conexão direta ao Google
-também não pôde ser validada neste ambiente por bloqueio de rede/DNS.
+Os testes de navegador exigem um ambiente que permita iniciar o Chromium e acessar
+o servidor local. O resultado das verificações executadas e eventuais limitações
+de ambiente são registrados na descrição de cada pull request.
 
 ## Getting Started
 
@@ -670,8 +735,8 @@ button bypasses the data cache; saves invalidate it. Read requests retry once on
 transient network errors or temporary Google failures. Legacy anomaly and round writes are never retried
 automatically. New room inspections and family events use the durable, idempotent
 queue described below. Photos remain authenticated, and failed images offer a retry button.
-These application changes work with the existing three-photo Apps Script deployment;
-publish a new application build to make them available on phones using the hosted site.
+The duplicate-protected writes require the updated Apps Script deployment described
+at the top of this README; publish a new application build after that update.
 Process caches reset when a server restarts and are not shared between hosting instances.
 
 First, run the development server:

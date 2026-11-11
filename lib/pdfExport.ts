@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import { displayDate, eventAt, issuePhotoIds, monthlySummary, today, type Issue, type State } from "./domain";
+import { loadPhotoData, photoSource } from "./photos";
 
 export function dailyIssues(state: State, date: string): Issue[] {
   const linked = new Set(
@@ -185,26 +186,8 @@ export async function buildReport(
   return doc;
 }
 
-// Mantido o Retry Anti-Crash
-async function loadPhoto(issue: Issue, index: number): Promise<string | null> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const response = await fetch(`/api/photos/${issue.id}?index=${index}&collection=issues`, { cache: "no-store" });
-      if (response.ok) {
-        const blob = await response.blob();
-        return await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(new Error("Lecture de la photo impossible."));
-          reader.readAsDataURL(blob);
-        });
-      }
-      if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
-    } catch {
-      if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
-    }
-  }
-  return null;
+function loadPhoto(issue: Issue, index: number): Promise<string | null> {
+  return loadPhotoData(photoSource(issue.id, index));
 }
 
 export async function downloadReport(options: ReportOptions) {

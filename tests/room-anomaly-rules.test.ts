@@ -192,7 +192,7 @@ test("Google storage preserves full controls and photos without an anomaly or du
   });
   const input = observationsOnly();
   const receipt = await executeEntry(input);
-  assert.deepEqual(actions, ["commitRoomInspection"]);
+  assert.deepEqual(actions, ["commitRoomInspectionV2"]);
   assertSavedWithoutAnomaly(receipt, input);
   assert.deepEqual(await executeEntry(input), receipt);
   assert.equal(google.files.size, 2);
@@ -209,7 +209,7 @@ function assertReplay(record: RoomInspection, candidate: Issue | undefined, issu
   assert.deepEqual(record, original);
   assert.deepEqual(issues, originalIssues);
   const google = googleFixture([original], originalIssues);
-  const input = { action: "commitRoomInspection", collection: "roomInspections", expectedVersion: 0, record, issue: candidate };
+  const input = { action: "commitRoomInspectionV2", collection: "roomInspections", expectedVersion: 0, record, issue: candidate };
   const receipt = google.call(input);
   assert.equal(receipt.ok, true, receipt.error);
   assert.deepEqual(receipt.data.record, original);

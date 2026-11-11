@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Role } from "./roles";
+import { duplicateRoomIssueMessage, findDuplicateOpenIssue, issueRoom, shouldCheckIssueDuplicate } from "./roomIssueMatching";
 
 export const MAX_ISSUE_PHOTOS = 3;
 
@@ -379,6 +380,9 @@ export function applyCommand(
       ],
     };
 
+    const duplicate = findDuplicateOpenIssue(record, state.issues);
+    if (duplicate) throw new DomainError(duplicateRoomIssueMessage(duplicate), 409);
+
     return {
       collection: "issues",
       record,
@@ -414,12 +418,19 @@ export function applyCommand(
 
     const responsible = issueResponsible(current);
 
+    const candidate = { ...current, ...command.fields, room: issueRoom(command.fields), status: command.status };
+    if (shouldCheckIssueDuplicate(candidate, current)) {
+      const duplicate = findDuplicateOpenIssue(candidate, state.issues);
+      if (duplicate) throw new DomainError(duplicateRoomIssueMessage(duplicate), 409);
+    }
+
     return {
       collection: "issues",
       expectedVersion: command.version,
       record: {
         ...current,
         ...command.fields,
+        room: candidate.room,
         assignee: responsible,
         status: command.status,
         version: current.version + 1,

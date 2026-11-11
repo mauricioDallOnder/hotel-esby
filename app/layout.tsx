@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AppRouterCacheProvider } from "@mui/material-nextjs/v15-appRouter";
 import CssBaseline from "@mui/material/CssBaseline";
+import InitColorSchemeScript from "@mui/material/InitColorSchemeScript";
 import { ThemeRegistry } from "@/theme/ThemeRegistry";
 import { AppProvider } from "@/context/AppContext";
 import { VersionNotice } from "@/components/VersionNotice";
@@ -20,8 +21,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fr-FR">
+    <html lang="fr-FR" suppressHydrationWarning>
       <body>
+        <InitColorSchemeScript attribute="class" defaultMode="system" modeStorageKey="hotel-color-mode" />
         <AppRouterCacheProvider>
           <ThemeRegistry>
             <CssBaseline />

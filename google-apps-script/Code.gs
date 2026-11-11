@@ -89,18 +89,23 @@ function doPost(e) {
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (input.action !== 'commit' && input.action !== 'commitEntry' && input.action !== 'commitRoomInspection' && input.action !== 'commitWorkEvent' && input.action !== 'commitLaundryCycle' && input.action !== 'commitLaundryCycleV2') throw new Error('Action invalide.');
+    if (!['commit', 'commitIssueV2', 'commitEntry', 'commitRoomInspection', 'commitRoomInspectionV2', 'commitWorkEvent', 'commitCafardFollowupV2', 'commitLaundryCycle', 'commitLaundryCycleV2'].includes(input.action)) throw new Error('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
     const isLaundry = input.action === 'commitLaundryCycle' || input.action === 'commitLaundryCycleV2';
-    const isEntry = input.action === 'commitEntry' || input.action === 'commitRoomInspection' || input.action === 'commitWorkEvent' || isLaundry;
+    const isRoom = input.action === 'commitRoomInspection' || input.action === 'commitRoomInspectionV2';
+    const isCafard = input.action === 'commitCafardFollowupV2';
+    const isEntry = input.action === 'commitEntry' || isRoom || input.action === 'commitWorkEvent' || isCafard || isLaundry;
+    if (input.action === 'commitIssueV2' && input.collection !== 'issues') throw new Error('Collection invalide.');
+    if (isCafard && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'cafardFollowup')) throw new Error('Suivi des cafards invalide.');
+    if (input.collection === 'workEvents' && input.record && input.record.cafardObservationId !== undefined && !isCafard) throw new Error('Utilisez commitCafardFollowupV2.');
     if (input.action === 'commitWorkEvent' && input.collection !== 'workEvents') throw new Error('Collection invalide.');
     if (isLaundry && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'laundryCycle')) throw new Error('Cycle de lingerie invalide.');
     if (input.collection === 'workEvents' && input.record && input.record.kind === 'laundryCycle' && !isLaundry) throw new Error('Utilisez commitLaundryCycleV2.');
     // Old clients keep their original payloads, while plans and extensions must
     // use a versioned action that an old deployment rejects before writing.
     if (input.action === 'commitLaundryCycle' && (input.record.laundryEndsAt !== undefined || input.record.laundryAddedMinutes !== undefined)) throw new Error('Utilisez commitLaundryCycleV2.');
-    if (input.action === 'commitRoomInspection' && input.collection !== 'roomInspections') throw new Error('Collection invalide.');
+    if (isRoom && input.collection !== 'roomInspections') throw new Error('Collection invalide.');
     if (isEntry && !['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Collection invalide.');
     if (!isEntry && ['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Utilisez commitEntry.');
     if (isEntry && (input.expectedVersion !== 0 || !/^[a-f0-9]{64}$/.test(input.record && input.record.submissionHash))) throw new Error('Enregistrement invalide.');
@@ -126,8 +131,13 @@ function doPost(e) {
     }
     if ((current ? current.version : 0) !== input.expectedVersion) return json_({ ok: false, code: 409, error: 'Modifié par un autre utilisateur. Actualisez avant de réessayer.' });
     if (input.collection === 'inspections' && current && current.completed) throw new Error('Ronde déjà terminée.');
+    if (input.collection === 'issues' && RoomIssueMatching.shouldCheckIssueDuplicate(record, current)) {
+      const duplicate = RoomIssueMatching.findDuplicateOpenIssue(record, records);
+      if (duplicate) return json_({ ok: false, code: 409, error: RoomIssueMatching.duplicateRoomIssueMessage(duplicate) });
+    }
     if (input.collection === 'workEvents') {
-      const conflict = WorkLogic.validateWorkEntry(record, records, records_('familyEvents'), deletedAbsences_());
+      const observations = record.kind === 'cafardFollowup' && record.cafardObservationId !== undefined ? records_('roomInspections') : [];
+      const conflict = WorkLogic.validateWorkEntry(record, records, records_('familyEvents'), deletedAbsences_(), observations);
       if (conflict) return json_({ ok: false, code: 409, error: conflict });
     }
     // The trusted Next.js server validates the full business schema before commit.
@@ -451,6 +461,9 @@ exports.normalizeIssueText = normalizeIssueText;
 exports.issueRoom = issueRoom;
 exports.openRoomIssues = openRoomIssues;
 exports.matchesRoomFinding = matchesRoomFinding;
+exports.findDuplicateOpenIssue = findDuplicateOpenIssue;
+exports.duplicateRoomIssueMessage = duplicateRoomIssueMessage;
+exports.shouldCheckIssueDuplicate = shouldCheckIssueDuplicate;
 exports.planRoomIssue = planRoomIssue;
 exports.prepareRoomIssue = prepareRoomIssue;
 function normalizeIssueText(text) {
@@ -462,8 +475,8 @@ function issueRoom(issue) {
     const location = normalizeIssueText(issue.location || "");
     if (/^\d{3}$/.test(location))
         return location;
-    const matches = [...location.matchAll(/\b(?:chambre|ch)\s+(\d{3})\b/g)];
-    return matches.length === 1 && (location.match(/\b\d{3}\b/g) || []).length === 1 ? matches[0][1] : undefined;
+    const matches = [...location.matchAll(/\b(?:chambre|ch)\s*(?:n(?:o|umero)?\s*)?(\d{3})\b/g)];
+    return matches.length === 1 && (location.match(/\d{3,}/g) || []).length === 1 ? matches[0][1] : undefined;
 }
 function openRoomIssues(issues, room) {
     return issues.filter(issue => issue.status !== "resolu" && issueRoom(issue) === room);
@@ -506,6 +519,66 @@ function matchesRoomFinding(issue, finding) {
         return normalizeIssueText(issue.description || "") === normalizeIssueText(finding.label);
     return ((_b = keywords[finding.key]) === null || _b === void 0 ? void 0 : _b.test(text)) || false;
 }
+const genericText = /^(?:chambre\s+\d{3}\s*)?(?:probleme(?: constate| technique)?|anomalie|a verifier|a reparer|voir (?:la )?photo|voir sur place|test)$/;
+const failureKinds = [
+    ["missing", /\b(absent\w*|manquant\w*|manque)\b/],
+    ["obstructed", /\b(cache[es]*|recouvert[es]*|obstrue[es]*|encombre[es]*)\b/],
+    ["leak", /\b(fuite\w*|fuit|infiltr\w*)\b/],
+    ["failure", /\b(panne|hs|defectueu\w*|grille[es]*|ne (?:\w+ ){0,2}fonctionne (?:pas|plus))\b/],
+    ["broken", /\b(casse[es]*|abime[es]*|endommage[es]*)\b/],
+    ["blocked", /\b(bloque[es]*|coince[es]*|ne (?:\w+ ){0,2}ferme (?:pas|plus))\b/],
+];
+function meaningful(value) {
+    const text = normalizeIssueText(value || "").replace(/^chambre\s+\d{3}\s+/, "");
+    return text.length >= 8 && !genericText.test(text) ? text : "";
+}
+function sameManualProblem(candidate, existing) {
+    const left = normalizeIssueText(`${candidate.title || ""} ${candidate.description || ""}`);
+    const right = normalizeIssueText(`${existing.title || ""} ${existing.description || ""}`);
+    // Two explicitly different fittings in one room remain independent repairs.
+    const positions = (text) => text.match(/\b(douche|lavabo|wc|entree|plafond|chevet)\b/g) || [];
+    const a = positions(left), b = positions(right);
+    if (a.length && b.length && !a.some(position => b.includes(position)))
+        return false;
+    const leftFailures = failureKinds.filter(([, pattern]) => pattern.test(left)).map(([kind]) => kind);
+    const rightFailures = failureKinds.filter(([, pattern]) => pattern.test(right)).map(([kind]) => kind);
+    if (leftFailures.length && rightFailures.length && !leftFailures.some(kind => rightFailures.includes(kind)))
+        return false;
+    const description = meaningful(candidate.description), title = meaningful(candidate.title);
+    if ((description && description === meaningful(existing.description)) || (title && title === meaningful(existing.title)))
+        return true;
+    if (!leftFailures.some(kind => rightFailures.includes(kind)))
+        return false;
+    // Paraphrases are matched only with both a named fitting and the same fault;
+    // generic titles or a shared category alone must never hide another repair.
+    const fittings = Object.entries(keywords).filter(([key]) => !["leaks", "bugs", "cleaning", "carpet"].includes(key));
+    return fittings.some(([, pattern]) => pattern.test(left) && pattern.test(right));
+}
+/** A new or reopened report must not create another copy of an open room fault. */
+function findDuplicateOpenIssue(candidate, issues) {
+    const room = issueRoom(candidate);
+    if (!room)
+        return undefined;
+    return openRoomIssues(issues, room).find(existing => {
+        var _a, _b;
+        if (candidate.id === existing.id)
+            return false;
+        if ((_a = candidate.roomFindings) === null || _a === void 0 ? void 0 : _a.some(finding => matchesRoomFinding(existing, finding)))
+            return true;
+        if ((_b = existing.roomFindings) === null || _b === void 0 ? void 0 : _b.some(finding => matchesRoomFinding(candidate, finding)))
+            return true;
+        return sameManualProblem(candidate, existing);
+    });
+}
+function duplicateRoomIssueMessage(issue) {
+    return `Un problème identique est déjà ouvert dans la chambre ${issueRoom(issue)} : ${issue.title}. Ouvrez ce signalement pour le mettre à jour.`;
+}
+/** Existing duplicate history can still be progressed or resolved, never erased. */
+function shouldCheckIssueDuplicate(candidate, current) {
+    return candidate.status !== "resolu" && (!current || current.status === "resolu" ||
+        issueRoom(candidate) !== issueRoom(current) || normalizeIssueText(candidate.title || "") !== normalizeIssueText(current.title || "") ||
+        normalizeIssueText(candidate.description || "") !== normalizeIssueText(current.description || ""));
+}
 function planRoomIssue(candidate, record, issues) {
     var _a;
     if (!candidate)
@@ -513,11 +586,11 @@ function planRoomIssue(candidate, record, issues) {
     const open = openRoomIssues(issues, record.room);
     const related = new Set();
     const remaining = (candidate.roomFindings || []).filter(finding => {
-        var _a, _b;
-        if ((_a = record.distinctProblemKeys) === null || _a === void 0 ? void 0 : _a.includes(finding.key))
-            return true;
-        const explicit = (_b = record.issueLinks) === null || _b === void 0 ? void 0 : _b.find(link => link.key === finding.key);
-        const existing = open.find(issue => (explicit === null || explicit === void 0 ? void 0 : explicit.issueId) === issue.id) || open.find(issue => matchesRoomFinding(issue, finding));
+        var _a;
+        // Older queued drafts may still carry distinctProblemKeys. They cannot
+        // bypass the single open follow-up for the same room checklist finding.
+        const explicit = (_a = record.issueLinks) === null || _a === void 0 ? void 0 : _a.find(link => link.key === finding.key);
+        const existing = open.find(issue => (explicit === null || explicit === void 0 ? void 0 : explicit.issueId) === issue.id && matchesRoomFinding(issue, finding)) || open.find(issue => matchesRoomFinding(issue, finding));
         if (existing) {
             related.add(existing.id);
             return false;
@@ -570,6 +643,7 @@ exports.getLaundryMachine = getLaundryMachine;
 exports.getLaundryEndsAt = getLaundryEndsAt;
 exports.validateLaundryEntry = validateLaundryEntry;
 exports.latestWork = latestWork;
+exports.latestCafardObservationId = latestCafardObservationId;
 exports.validateWorkEntry = validateWorkEntry;
 exports.roomAvailability = roomAvailability;
 exports.dailyTasks = dailyTasks;
@@ -666,12 +740,30 @@ function latestWork(events, kind) {
     }
     return latest;
 }
-function validateWorkEntry(entry, events, families, deletedFamilies = []) {
+/** Include the observation identity, not only its day, in cafard form concurrency. */
+function latestCafardObservationId(inspections, room) {
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" });
+    let latest;
+    for (const record of inspections) {
+        if (record.room !== room || record.bugs !== "oui")
+            continue;
+        const at = record.inspectedAt ? new Date(record.inspectedAt) : null;
+        const instant = at && Number.isFinite(at.getTime()) && day.format(at) === record.date ? at.toISOString() : "";
+        const order = record.date + "|" + instant + "|" + record.id;
+        if (!latest || order > latest.order)
+            latest = { id: record.id, order };
+    }
+    return (latest === null || latest === void 0 ? void 0 : latest.id) || null;
+}
+function validateWorkEntry(entry, events, families, deletedFamilies = [], inspections = []) {
     const current = latestWork(events, entry.kind).get(entry.targetId);
     if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
         return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
     if (current === null || current === void 0 ? void 0 : current.deleted)
         return "Cette tâche a déjà été supprimée.";
+    if (entry.kind === "cafardFollowup" && entry.cafardObservationId !== undefined &&
+        entry.cafardObservationId !== latestCafardObservationId(inspections, entry.room))
+        return "Une nouvelle détection de cafards a été enregistrée dans cette chambre. Actualisez puis ouvrez son suivi existant avant de le mettre à jour.";
     if (entry.kind === "laundryCycle")
         return validateLaundryEntry(entry, events, current);
     if (entry.kind === "familyComment") {

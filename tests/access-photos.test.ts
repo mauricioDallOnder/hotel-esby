@@ -76,7 +76,7 @@ test("existing single-photo records and requests stay compatible", async () => {
   const state: State = { issues: [legacy], inspections: [] };
   writeFileSync(path.join(directory, "hotel.json"), JSON.stringify(state));
   assert.equal((await readPhoto(legacy.id)).toString(), "legacy-photo");
-  const result = await execute({ ...create(), photoData: photo("legacy-request") } as Command);
+  const result = await execute({ ...create(), fields: { ...fields, location: "Chambre 205" }, photoData: photo("legacy-request") } as Command);
   assert.equal(issuePhotoIds(result.issues[1]).length, 1);
   assert.equal(JSON.parse(readFileSync(path.join(directory, "hotel.json"), "utf8")).issues.length, 2);
 });

@@ -243,7 +243,7 @@ export default function RoundsPage() {
                 sx={{
                   p: { xs: 2, md: 3 },
                   borderColor:
-                    check.result === "anomalie" ? "#e4bdb3" : undefined,
+                    check.result === "anomalie" ? "error.main" : undefined,
                 }}
               >
                 <Stack spacing={2}>
@@ -282,7 +282,7 @@ export default function RoundsPage() {
                     </TextField>
                   </Stack>
                   {check.result === "anomalie" && (
-                    <Box sx={{ bgcolor: "#fff8f5", p: 2, borderRadius: 2 }}>
+                    <Box sx={{ bgcolor: "action.hover", p: 2, borderRadius: 2 }}>
                       <Stack spacing={2}>
                         <Typography variant="body2">
                           Associez le problème à un signalement pour suivre sa

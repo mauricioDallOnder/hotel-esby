@@ -23,7 +23,7 @@ export function EntriesProvider({ children, onSaved, onDelete }: { children: Rea
   const reload = useCallback(async () => {
     const values = (await deviceStore<Pending[]>("all")).sort(comparePendingEntries);
     if (mounted.current) {
-      setPending(values);
+      setPending(current => !current.length && !values.length ? current : values);
       setReady(true);
       setStorageError("");
     }
@@ -32,13 +32,13 @@ export function EntriesProvider({ children, onSaved, onDelete }: { children: Rea
   const sync = useCallback(async () => {
     if (running.current || !navigator.onLine) return;
     running.current = true;
-    setWorking(true);
     try {
       await withEntryLock(async () => {
         const attempted = new Set<string>();
         send: while (mounted.current && navigator.onLine) {
           const items = (await reload()).filter(item => !attempted.has(item.entry.id) && !item.blocked);
           if (!items.length) break;
+          setWorking(true);
           for (const item of items) {
             if (!mounted.current) break send;
             attempted.add(item.entry.id);

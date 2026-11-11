@@ -93,11 +93,28 @@ export function latestWork(events: Work[], kind: Work["kind"]) {
   return latest;
 }
 
-export function validateWorkEntry(entry: WorkEntry, events: Work[], families: (FamilyEntry | FamilyEvent)[], deletedFamilies: string[] = []) {
+/** Include the observation identity, not only its day, in cafard form concurrency. */
+export function latestCafardObservationId(inspections: readonly (RoomEntry | RoomInspection)[], room: string): string | null {
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" });
+  let latest: { id: string; order: string } | undefined;
+  for (const record of inspections) {
+    if (record.room !== room || record.bugs !== "oui") continue;
+    const at = record.inspectedAt ? new Date(record.inspectedAt) : null;
+    const instant = at && Number.isFinite(at.getTime()) && day.format(at) === record.date ? at.toISOString() : "";
+    const order = record.date + "|" + instant + "|" + record.id;
+    if (!latest || order > latest.order) latest = { id: record.id, order };
+  }
+  return latest?.id || null;
+}
+
+export function validateWorkEntry(entry: WorkEntry, events: Work[], families: (FamilyEntry | FamilyEvent)[], deletedFamilies: string[] = [], inspections: readonly (RoomEntry | RoomInspection)[] = []) {
   const current = latestWork(events, entry.kind).get(entry.targetId);
   if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
     return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
   if (current?.deleted) return "Cette tâche a déjà été supprimée.";
+  if (entry.kind === "cafardFollowup" && entry.cafardObservationId !== undefined &&
+    entry.cafardObservationId !== latestCafardObservationId(inspections, entry.room))
+    return "Une nouvelle détection de cafards a été enregistrée dans cette chambre. Actualisez puis ouvrez son suivi existant avant de le mettre à jour.";
   if (entry.kind === "laundryCycle") return validateLaundryEntry(entry, events, current);
   if (entry.kind === "familyComment") {
     const family = families.find(f => f.id === entry.familyEventId);

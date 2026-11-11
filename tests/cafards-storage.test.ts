@@ -183,7 +183,7 @@ test("the existing protected Apps Script work transaction accepts cafard fields 
   await assert.rejects(executeEntry(next(reported, { notes: "Modification concurrente." })), { code: 409 });
   await assert.rejects(executeEntry({ ...reported, notes: "Même ID, autre contenu." }), { code: 409 });
   await executeEntry(availability());
-  assert.ok(requests.every(request => request.action === "commitWorkEvent" && request.expectedVersion === 0 && request.token === "test-token"));
+  assert.ok(requests.every(request => request.action === (request.record.kind === "cafardFollowup" ? "commitCafardFollowupV2" : "commitWorkEvent") && request.expectedVersion === 0 && request.token === "test-token"));
   const events = google.records();
   assert.equal(events.length, 3);
   assert.deepEqual(events.slice(0, 2), [first.record, second.record]);

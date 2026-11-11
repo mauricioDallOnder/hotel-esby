@@ -11,6 +11,7 @@ import Typography from "@mui/material/Typography";
 
 import MenuIcon from "@mui/icons-material/Menu";
 import ChecklistRounded from "@mui/icons-material/ChecklistRounded";
+import { ThemeModeToggle } from "@/components/ThemeModeToggle";
 
 type TopbarProps = {
   drawerWidth: number;
@@ -25,7 +26,7 @@ export function Topbar({
     <AppBar
       position="fixed"
       elevation={0}
-      sx={{
+      sx={[(theme) => ({
         width: {
           xs: "100%",
           md: `calc(100% - ${drawerWidth}px)`,
@@ -43,9 +44,13 @@ export function Topbar({
         borderColor:
           "rgba(255,255,255,0.12)",
 
-        zIndex: (theme) =>
-          theme.zIndex.drawer + 1,
-      }}
+        zIndex: theme.zIndex.drawer + 1,
+        ...theme.applyStyles("dark", {
+          bgcolor: "background.paper",
+          color: "text.primary",
+          borderColor: "divider",
+        }),
+      })]}
     >
       <Toolbar
         sx={{
@@ -114,6 +119,8 @@ export function Topbar({
           </Box>
         </Box>
 
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
+        <ThemeModeToggle />
         <Button
           component={Link}
           href="/checklist"
@@ -124,8 +131,7 @@ export function Topbar({
             <ChecklistRounded />
           }
           sx={{
-            borderColor:
-              "rgba(255,255,255,0.8)",
+            borderColor: "currentColor",
 
             color: "inherit",
             borderRadius: 999,
@@ -137,14 +143,14 @@ export function Topbar({
             },
 
             "&:hover": {
-              borderColor: "#fff",
-              bgcolor:
-                "rgba(255,255,255,0.08)",
+              borderColor: "currentColor",
+              bgcolor: "action.hover",
             },
           }}
         >
           Checklist des chambres
         </Button>
+        </Box>
       </Toolbar>
     </AppBar>
   );

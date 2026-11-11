@@ -36,7 +36,7 @@ export function PageTitle({
         alignItems: { xs: "stretch", sm: "center" },
       }}
     >
-      <Box>
+      <Box sx={{ minWidth: 0 }}>
         {eyebrow && (
           <Typography
             variant="overline"
@@ -146,7 +146,7 @@ export function StatCards({
         <Paper
           key={item.label}
           elevation={0}
-          sx={{ p: { xs: 2, md: 3 }, border: "1px solid #e1e6de" }}
+          sx={{ p: { xs: 2, md: 3 }, border: "1px solid", borderColor: "divider", minWidth: 0 }}
         >
           <Typography color="text.secondary" variant="body2">
             {item.label}

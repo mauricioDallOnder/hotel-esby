@@ -108,7 +108,7 @@ test("partial and future inspections do not make a room covered; pending complet
   assert.ok(boundary.due.includes("101")); assert.ok(!boundary.due.includes("102"));
 });
 
-test("deduplication uses the exact room and finding, supports manual links, and ignores resolved issues", () => {
+test("deduplication uses the exact room and finding, rejects unrelated manual links, and ignores resolved issues", () => {
   const record = saved(problem(["taps", "lights"])), issue = manual();
   const plan = planRoomIssue(roomIssue(record), record, [issue]);
   assert.deepEqual(plan.relatedIssueIds, [issue.id]);
@@ -121,7 +121,8 @@ test("deduplication uses the exact room and finding, supports manual links, and 
   assert.equal(planRoomIssue(roomIssue(record), record, [manual({ status: "resolu" })]).relatedIssueIds.length, 0);
   const unclear = manual({ title: "À réparer", description: "Voir photo" });
   const linked = { ...record, issueLinks: [{ key: "taps", issueId: unclear.id }] };
-  assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).relatedIssueIds, [unclear.id]);
+  assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).relatedIssueIds, []);
+  assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).issue?.roomFindings?.map(finding => finding.key), ["taps", "lights"]);
   assert.equal(planRoomIssue(roomIssue(linked), linked, [{ ...unclear, location: "115" }]).relatedIssueIds.length, 0);
 });
 
@@ -141,7 +142,7 @@ test("a hidden radiator links only to the same obstruction, not an unrelated hea
   }
   const known = { ...candidate, id: createId(), title: "À vérifier", description: "Voir photo" };
   assert.equal(planRoomIssue(candidate, record, [known]).issue, undefined);
-  assert.deepEqual(planRoomIssue(candidate, { ...record, distinctProblemKeys: ["radiator_clear"] }, [known]).issue?.roomFindings, candidate.roomFindings);
+  assert.equal(planRoomIssue(candidate, { ...record, distinctProblemKeys: ["radiator_clear"] }, [known]).issue, undefined);
   assert.deepEqual(planRoomIssue(candidate, record, [{ ...known, status: "resolu" }]).issue?.roomFindings, candidate.roomFindings);
 });
 
@@ -188,11 +189,11 @@ test("the deployable Google matcher makes the same decision and repairs a partia
   assert.equal(context.RoomIssueMatching.prepareRoomIssue(roomIssue(duplicate), duplicate, [{ ...known, status: "resolu" }]), undefined);
 });
 
-test("a distinct defect on the same equipment can be explicitly reported without hiding it", () => {
+test("an old distinct override cannot bypass an unresolved matching checklist problem", () => {
   const record = saved(problem(["taps"], { distinctProblemKeys: ["taps"] }));
   const plan = planRoomIssue(roomIssue(record), record, [manual()]);
-  assert.equal(plan.relatedIssueIds.length, 0);
-  assert.deepEqual(plan.issue?.roomFindings?.map(f => f.key), ["taps"]);
+  assert.equal(plan.relatedIssueIds.length, 1);
+  assert.equal(plan.issue, undefined);
 });
 
 test("old Google scripts reject the new room action before writes and keep a retryable deployment error", async () => {
@@ -200,7 +201,7 @@ test("old Google scripts reject the new room action before writes and keep a ret
   const original = globalThis.fetch; let requests = 0;
   globalThis.fetch = async (_url, options) => {
     requests++;
-    assert.equal(JSON.parse(String(options?.body)).action, "commitRoomInspection");
+    assert.equal(JSON.parse(String(options?.body)).action, "commitRoomInspectionV2");
     return Response.json({ ok: false, code: 400, error: "Action invalide." });
   };
   try { await assert.rejects(executeEntry(entry()), error => (error as { code: number }).code === 503 && /redéployez/.test((error as Error).message)); assert.equal(requests, 1); }

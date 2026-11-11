@@ -8,5 +8,5 @@ type ThemeRegistryProps = {
 };
 
 export function ThemeRegistry({ children }: ThemeRegistryProps) {
-  return <ThemeProvider theme={theme}>{children}</ThemeProvider>;
+  return <ThemeProvider theme={theme} defaultMode="system" modeStorageKey="hotel-color-mode" disableTransitionOnChange>{children}</ThemeProvider>;
 }
