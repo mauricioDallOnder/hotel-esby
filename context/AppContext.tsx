@@ -23,7 +23,7 @@ import { mergeHotel } from "@/lib/mergeHotel";
 import { deviceStore } from "@/lib/deviceStore";
 import { EntriesProvider } from "./EntriesContext";
 import { LaundryNotificationsProvider } from "./LaundryNotificationsContext";
-import type { EntryChange } from "@/lib/rooms";
+import type { EntryChange, WorkEvent } from "@/lib/rooms";
 import { roles, type Role } from "@/lib/roles";
 import { ThemeModeToggle } from "@/components/ThemeModeToggle";
 
@@ -224,6 +224,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       : { ...current, roomInspections: [change.record], issues: change.issue ? [change.issue] : current.issues }));
   }, []);
 
+  // Recovery needs a successful live read, never the last cached snapshot or a
+  // refresh that swallowed its error. Merge it for the machine cards as well.
+  const readLaundryRecoveryState = useCallback(async (): Promise<WorkEvent[]> => {
+    const result: Data = await request("/api/hotel?fresh=1");
+    if (!Array.isArray(result.issues) || !Array.isArray(result.inspections) ||
+      result.workEvents !== undefined && !Array.isArray(result.workEvents))
+      throw new Error("L’état de la lingerie n’a pas pu être vérifié. La demande est conservée.");
+    setData(current => mergeHotel(current, result));
+    setCachedAt("");
+    setError("");
+    return result.workEvents || [];
+  }, [request]);
+
   const deleteAbsence = useCallback(async (id: string) => {
     const receipt = await request("/api/entries", {
       method: "DELETE", headers: { "Content-Type": "application/json" },
@@ -345,7 +358,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         logout,
       }}
     >
-      <EntriesProvider onSaved={mergeEntry} onDelete={deleteAbsence}>
+      <EntriesProvider onSaved={mergeEntry} onDelete={deleteAbsence} readLaundryRecoveryState={readLaundryRecoveryState}>
         <LaundryNotificationsProvider>{children}</LaundryNotificationsProvider>
       </EntriesProvider>
     </AppContext.Provider>
