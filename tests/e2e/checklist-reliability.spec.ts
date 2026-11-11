@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { today, type Issue, type State } from "../../lib/domain";
 import { cafardCases } from "../../lib/cafards";
-import { roomChecks, type RoomInspection, type WorkEntry, type WorkEvent } from "../../lib/rooms";
+import { roomChecks, rooms, type RoomInspection, type WorkEntry, type WorkEvent } from "../../lib/rooms";
 
 async function login(page: Page) {
   expect((await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } })).ok()).toBeTruthy();
@@ -106,7 +106,14 @@ test("room rotation cards keep equal dimensions on mobile and desktop and known 
     cafardStatus: "traite", detectedOn: date, treatedOn: date, resolvedOn: null, product: "Gel test",
     updatedAt: `${date}T08:00:00.000Z`, version: 1, submissionHash: "b".repeat(64),
   };
-  const records = [prior("101"), prior("102"), prior("103")];
+  const recent = today(new Date(Date.now() - 86_400_000));
+  // Twelve incomplete rooms and three mature poor-condition follow-ups produce
+  // mixed card labels under the new fair ordering, instead of fifteen identical
+  // never-completed cards masking a layout regression.
+  const records = [prior("101"), prior("102"), prior("103"), ...rooms.slice(15).map(room => ({
+    ...prior(room), date: recent, condition: "bon" as const,
+    inspectedAt: `${recent}T08:00:00.000Z`, updatedAt: `${recent}T08:00:00.000Z`,
+  }))];
   await page.route("**/api/hotel*", async route => {
     if (route.request().method() !== "GET") return route.continue();
     await route.fulfill({ json: { mode: "local", issues: [known], inspections: [], roomInspections: records, workEvents: [treatment] } });

@@ -236,6 +236,40 @@ O GitHub/Vercel não atualiza o Apps Script automaticamente. No modo local, os
 registros usam `data/hotel.json` e as inscrições usam o arquivo privado separado
 `data/laundry-notifications.json`; não há agendador automático nesse modo.
 
+## Rotação de quartos com cobertura e retorno em quatro dias
+
+Em **Contrôle des chambres**, a tournée acompanha o último **controle completo**
+de cada quarto. Quartos sem um controle completo vêm primeiro; os demais seguem
+a data de controle pendente mais antiga. Um acompanhamento por **Mauvais état**
+recebe data de retorno quatro dias corridos após a última observação. Assim, os
+retornos frequentes não deixam os outros quartos permanentemente no fim da fila.
+
+A tela mostra a cobertura no intervalo escolhido, o total a controlar, os
+quartos sem controle completo e os controles atrasados. Os cartões distinguem
+um controle completo de uma visita parcial mais recente. **Suivis de mauvais état
+à venir** mostra os quartos que aguardam o prazo e a data de retorno de cada um.
+Uma visita parcial não renova a cobertura nem impede completar um checklist
+faltante ou vencido durante essa espera.
+
+**Voir toutes les chambres à contrôler** abre a fila inteira e limpa a pesquisa
+e o andar selecionados, para que nenhum quarto fique escondido por filtros.
+**Reporter à demain** conserva o rascunho e preenche a vaga do dia com o próximo
+quarto pendente. O quarto adiado continua visível e retorna à fila no dia seguinte.
+
+Ao atingir a meta, **Ajouter 5 chambres à la tournée** permite continuar com até
+cinco quartos adicionais; o botão ajusta essa quantidade se restarem menos quartos.
+A extensão vale somente para o dia atual, fica salva no aparelho e preserva a meta
+habitual. Em **Régler**, uma meta baixa recebe uma sugestão de ritmo que considera
+o intervalo normal e os retornos de quatro dias. É uma média por dia corrido;
+folgas, adiamentos e uma fila inicialmente atrasada podem exigir mais controles
+nos dias trabalhados.
+
+Quartos livres ficam fora da rotação; quartos com ocupação desconhecida continuam
+incluídos. Controles completos aguardando envio contam provisoriamente e são
+identificados; envios bloqueados não contam como concluídos. Esta melhoria usa o
+histórico existente e não exige nova aba, migração da planilha ou atualização
+adicional do Google Apps Script.
+
 ## Checklist conforme a ocupação dos quartos
 
 Os quartos marcados como **Libre** em **Occupation des chambres** ficam fora
@@ -446,13 +480,22 @@ poignée de porte, estado geral, ménage, moquette, limpeza dos equipamentos,
 observações e fotos ficam no controle; isoladamente não geram anomalias.
 As observações e fotos podem complementar um dos problemas elegíveis.
 
-Um quarto cujo último controle indique **Mauvais état** tem prioridade na tournée,
-mesmo antes do intervalo habitual. A ordem seguinte continua sendo quartos nunca
-controlados e depois controles completos mais antigos. Um controle posterior em
-**Bon** ou **À revoir** retira a prioridade por mau estado. Controles incompletos
-podem indicar mau estado, mas não contam como concluídos. A meta diária, os quartos
-já concluídos hoje, os adiamentos e a exclusão de envios bloqueados são respeitados.
-O indicador de cobertura continua medindo controles completos dentro do intervalo.
+Um quarto cuja última observação indique **Mauvais état** recebe um retorno de
+acompanhamento **quatro dias corridos depois dessa observação**. Um controle em
+11/11, por exemplo, volta a ter prioridade por mau estado em 15/11. A fila começa
+pelos quartos sem controle completo e segue a data de vencimento mais antiga,
+considerando tanto o intervalo habitual quanto os retornos de quatro dias. Assim,
+um retorno recente não passa continuamente à frente de quartos há mais tempo
+atrasados. Em um empate de vencimento, o retorno por mau estado passa primeiro.
+
+Uma observação posterior em **Bon** ou **À revoir** retira o retorno por mau estado;
+uma nova observação em mau estado reinicia sua espera de quatro dias. Uma visita
+parcial não conclui o checklist nem apaga a necessidade de completar um controle
+já vencido. O intervalo habitual continua valendo, inclusive se configurado abaixo
+de quatro dias. A meta diária, os quartos já concluídos hoje, os adiamentos e a
+exclusão de envios bloqueados são respeitados. A cobertura mede controles completos
+dentro do intervalo, e os cartões distinguem o último controle completo de uma
+visita parcial mais recente.
 
 **Implantação com Google Sheets:** além de publicar o aplicativo, copie o arquivo
 completo `google-apps-script/Code.gs` no projeto existente e publique uma nova
@@ -568,14 +611,17 @@ e o download disponível falhou. A integração com o Google real depende da imp
   ficam registrados no controle, sem gerar anomalia automática. Quartos antigos mostram
   este campo como não informado; rascunhos antigos o recebem como não verificado.
 - **Rotação contínua:** meta inicial de 15 quartos/dia, intervalo alvo de 7 dias,
-  ambos ajustáveis em **Régler**. Mau estado tem prioridade, mesmo em controle recente;
-  depois vêm os nunca inspecionados e os controles completos mais antigos, com empate
-  por número do quarto para reduzir deslocamentos.
+  ambos ajustáveis em **Régler**. Primeiro vêm os quartos sem controle completo;
+  os demais seguem a data de vencimento mais antiga. Mau estado gera retorno após
+  quatro dias, sem monopolizar a fila à frente de controles mais atrasados. Os
+  empates respeitam o retorno por mau estado, a data do controle completo e o número
+  do quarto.
   Quartos com anomalias continuam na rotação. Controles completos aguardando envio
   contam provisoriamente; envios bloqueados e datas futuras não entram na rotação.
   Controles parciais não contam como concluídos, mas podem indicar mau estado.
   A meta diária conta quartos únicos. **Reporter à demain** mantém o rascunho sem
-  registrar uma inspeção. Preferências e reports pertencem ao navegador/aparelho.
+  registrar uma inspeção e oferece o próximo quarto da fila. Preferências e reports
+  pertencem ao navegador/aparelho.
 - **Histórico:** consulta individual ou global, busca por quarto/inspector/texto,
   período, filtros, resumo dos constats, diferenças entre equipamentos, fotos sob
   demanda e estado real de sincronização. Horário da visita é preservado na fila.

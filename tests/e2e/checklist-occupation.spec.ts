@@ -24,7 +24,9 @@ test("a room marked free in Occupation leaves every checklist view and returns w
   const original = (await state(page)).roomInspections!.find(record => record.id === inspection.id);
   await page.goto("/checklist");
   await expect(page.getByRole("article", { name: "Chambre 106", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Ouvrir la chambre 106 dans la tournée", exact: true })).toBeVisible();
+  // Fair rotation may place never-completed rooms before this overdue room.
+  await page.getByRole("group", { name: "Filtrer les contrôles", exact: true }).getByRole("button", { name: "À contrôler", exact: true }).click();
+  await expect(page.getByRole("article", { name: "Chambre 106", exact: true })).toBeVisible();
   await page.goto("/occupation");
   const occupied = page.getByRole("checkbox", { name: "Chambre 106 occupée", exact: true });
   await expect(occupied).toBeChecked();
@@ -66,7 +68,8 @@ test("a room marked free in Occupation leaves every checklist view and returns w
   await page.goto("/checklist");
   await expect(hidden).toBeVisible();
   await expect(page.getByRole("button", { name: "Toutes : 85", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Ouvrir la chambre 106 dans la tournée", exact: true })).toBeVisible();
+  await page.getByRole("group", { name: "Filtrer les contrôles", exact: true }).getByRole("button", { name: "À contrôler", exact: true }).click();
+  await expect(hidden).toBeVisible();
   await page.getByRole("button", { name: "Historique de la chambre 106", exact: true }).click();
   await expect(page.getByRole("button", { name: /Test historique occupation/ })).toBeVisible();
   expect((await state(page)).roomInspections!.find(record => record.id === inspection.id)).toEqual(original);
