@@ -101,5 +101,5 @@ test("Google radiator controls preserve Libre, create Caché, repair a partial w
   assert.deepEqual(await executeEntry(repeatedInput), repeated);
   assert.equal(google.records("roomInspections").length, 3);
   assert.equal(google.records("issues").length, 1);
-  assert.ok(actions.every(action => action === "commitRoomInspection"));
+  assert.ok(actions.every(action => action === "commitRoomInspectionV2"));
 });

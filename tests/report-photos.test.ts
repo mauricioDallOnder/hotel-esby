@@ -228,7 +228,7 @@ test("the default photo loader requests each index from the issue photo endpoint
     Object.defineProperty(globalThis, "FileReader", { value: Reader, configurable: true, writable: true });
     globalThis.fetch = async (input, init) => {
       requests.push(new URL(String(input), "https://hotel.test"));
-      assert.equal(init?.cache, "no-store");
+      assert.equal(init?.cache, "no-cache");
       return new Response(new Uint8Array(Buffer.from(image.split(",")[1], "base64")), { headers: { "Content-Type": "image/png" } });
     };
     const doc = await buildReport(options([record]));
@@ -237,6 +237,7 @@ test("the default photo loader requests each index from the issue photo endpoint
     requests.forEach(url => {
       assert.equal(url.pathname, `/api/photos/${record.id}`);
       assert.equal(url.searchParams.get("collection"), "issues");
+      assert.equal(url.searchParams.get("v"), "2");
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -25,6 +25,7 @@ import { EntriesProvider } from "./EntriesContext";
 import { LaundryNotificationsProvider } from "./LaundryNotificationsContext";
 import type { EntryChange } from "@/lib/rooms";
 import { roles, type Role } from "@/lib/roles";
+import { ThemeModeToggle } from "@/components/ThemeModeToggle";
 
 type Data = State & { mode: "local" | "sheets" };
 type Context = Data & {
@@ -71,11 +72,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [password, setPassword] = useState("");
   const [loginRole, setLoginRole] = useState<Role>("employe");
   const inFlight = useRef(false);
+  const saving = useRef(false);
 
   const request = useCallback(async (url: string, options?: RequestInit) => {
     let response: Response;
     try {
-      response = await fetch(url, { ...options, cache: "no-store" });
+      response = await fetch(url, { ...options, cache: "no-store", signal: options?.signal || AbortSignal.timeout(65_000) });
     } catch {
       throw new Error("Connexion interrompue. Vérifiez votre réseau puis réessayez.");
     }
@@ -95,7 +97,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (inFlight.current) return;
     inFlight.current = true;
     
-    // O SEGREDO: Só bloqueia a app se a tela estiver totalmente vazia (primeiro carregamento).
+    // Background refreshes keep the current screen interactive.
     if (!hasLoaded.current) {
       setBusy(true);
     }
@@ -109,7 +111,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             setCachedAt(snapshot.at); 
             setLoaded(true); 
             hasLoaded.current = true;
-            setBusy(false); // Desbloqueia o ecrã imediatamente ao ler o cache!
+            if (!saving.current) setBusy(false);
           }
         } catch { /* A cache failure must not prevent a live read. */ }
       }
@@ -118,24 +120,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setData(current => mergeHotel(current, result));
       setLoaded(true);
       hasLoaded.current = true;
-      setCachedAt(""); // Sucesso na rede! Remove a mensagem amarela.
+      setCachedAt("");
       setError("");
     } catch (e) {
       // Keep the current records visible, but never present a failed refresh as up to date.
       setError(e instanceof Error ? e.message : "Connexion impossible.");
     } finally {
       inFlight.current = false;
-      setBusy(false);
+      if (!saving.current) setBusy(false);
     }
   }, [request]);
 
-  // NOVIDADE: Tentativa de atualização em segundo plano.
-  // Se estivermos presos no cache, a app tenta atualizar sozinha a cada 20 segundos de forma invisível.
+  // Retry a cached snapshot without blocking the room being inspected.
   useEffect(() => {
     if (!loaded || !cachedAt || !session?.authenticated) return;
     
     const interval = window.setInterval(() => {
-      // Só tenta se tiver rede e se não houver outro pedido a acontecer
       if (navigator.onLine && !inFlight.current) {
         void refresh(false); 
       }
@@ -194,9 +194,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function mutate(command: Command): Promise<Data> {
-    if (inFlight.current)
+    if (saving.current)
       throw new Error("Un enregistrement est déjà en cours.");
-    inFlight.current = true;
+    saving.current = true;
     setBusy(true);
     setSaveError("");
     try {
@@ -211,18 +211,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSaveError(e instanceof Error ? e.message : "Enregistrement non confirmé.");
       throw e;
     } finally {
-      inFlight.current = false;
+      saving.current = false;
       setBusy(false);
     }
   }
 
   const mergeEntry = useCallback((change: EntryChange) => {
-    setData(current => change.collection === "workEvents"
-      ? { ...current, workEvents: [...(current.workEvents || []).filter(e => e.id !== change.record.id), change.record] }
+    setData(current => mergeHotel(current, change.collection === "workEvents"
+      ? { ...current, workEvents: [change.record] }
       : change.collection === "familyEvents"
-      ? { ...current, familyEvents: [...(current.familyEvents || []).filter(r => r.id !== change.record.id), ...(current.deletedFamilyEventIds?.includes(change.record.id) ? [] : [change.record])] }
-      : { ...current, roomInspections: [...(current.roomInspections || []).filter(r => r.id !== change.record.id), change.record],
-          issues: change.issue ? [...current.issues.filter(i => i.id !== change.issue!.id), change.issue] : current.issues });
+      ? { ...current, familyEvents: [change.record] }
+      : { ...current, roomInspections: [change.record], issues: change.issue ? [change.issue] : current.issues }));
   }, []);
 
   const deleteAbsence = useCallback(async (id: string) => {
@@ -278,6 +277,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       >
         <Paper sx={{ p: 4, width: "100%", maxWidth: 420 }}>
           <Stack component="form" onSubmit={login} spacing={3}>
+            <Box sx={{ display: "flex", justifyContent: "flex-end" }}><ThemeModeToggle /></Box>
             <Typography variant="overline" color="primary">
               Hôtel Contrôle
             </Typography>

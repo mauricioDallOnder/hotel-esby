@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Nota: A Vercel ignora isto no plano Hobby e corta aos 10s-15s
+export const maxDuration = 60;
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -21,9 +21,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     
     const headers = {
       "Content-Type": "image/jpeg",
-      // CACHE AGRESSIVO: Guarda a imagem no CDN da Vercel e no navegador por 1 ano.
-      // Isto evita que o servidor perca tempo a ir ao Google Drive sempre que faz scroll na página.
-      "Cache-Control": "public, max-age=31536000, immutable",
+      // Photo access must be checked before both a full response and an ETag 304.
+      "Cache-Control": "private, no-cache",
+      "CDN-Cache-Control": "no-store",
+      "Vercel-CDN-Cache-Control": "no-store",
+      "Vary": "Cookie",
       "ETag": etag,
       "X-Content-Type-Options": "nosniff",
     };

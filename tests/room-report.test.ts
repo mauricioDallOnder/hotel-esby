@@ -48,6 +48,16 @@ test("PDF paginates a full hotel and long observations", async () => {
   assert.ok(doc.getNumberOfPages() > 1);
 });
 
+test("a corrupt room photo is labelled without preventing the other rooms from printing", async () => {
+  const broken = { ...entry(), room: "114", photosData: ["data:image/jpeg;base64,YnJva2Vu"] };
+  const healthy = { ...entry(), room: "115", notes: "CHAMBRE_SUIVANTE" };
+  const doc = await buildFreeRoomsReport({ hotelName: "Test", history: [broken, healthy] });
+  const streams = [...doc.output().matchAll(/stream\n([\s\S]*?)\nendstream/g)];
+  const text = streams.map(match => inflateSync(Buffer.from(match[1], "binary")).toString("latin1")).join(" ");
+  assert.match(text, /Photo indisponible/);
+  assert.match(text, /CHAMBRE_SUIVANTE/);
+});
+
 test("v2 pending payloads keep their original hash and cleaning answers", () => {
   const v2 = { type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", cleaning: "faite", checks: entry().checks.filter(c => c.key !== "door_closer" && c.key !== "radiator_clear"), carpet: "ok", carpetNotes: "", microwave: "oui", photosData: [], occupied: true, schemaVersion: 2 };
   assert.deepEqual(parseEntry(v2), v2);

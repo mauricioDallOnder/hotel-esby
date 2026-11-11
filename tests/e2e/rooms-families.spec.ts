@@ -165,7 +165,7 @@ test("a lost save receipt can be retried without duplicating a family departure"
   expect(state.familyEvents.filter((r: { family: string }) => r.family === "Famille reçu perdu")).toHaveLength(1);
 });
 
-test("quick controls protect known faults and safety checks, then reuse an existing anomaly", async ({ page }) => {
+test("quick controls include the smoke detector, preserve known faults and reuse an existing anomaly", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 }); await login(page);
   const id = crypto.randomUUID();
   expect((await page.request.post("/api/hotel", { data: { type: "createIssue", id, date: new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(new Date()), actor: "Test dédoublonnage",
@@ -174,11 +174,9 @@ test("quick controls protect known faults and safety checks, then reuse an exist
   await page.getByRole("button", { name: "Contrôler la chambre 120", exact: true }).click();
   await page.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK" }).click();
   const choose = async (label: string, answer: string) => page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click();
-  for (const key of ["smoke", "taps"]) {
-    await expect(page.getByRole("radiogroup", { name: roomChecks.find(c => c.key === key)!.label }).getByRole("radio", { checked: true })).toHaveCount(0);
-  }
+  await expect(page.getByRole("radiogroup", { name: "Robinets fonctionnels", exact: true }).getByRole("radio", { checked: true })).toHaveCount(0);
+  await expect(page.getByRole("radiogroup", { name: "Détecteur de fumée fonctionnel", exact: true }).getByRole("radio", { name: "OK", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("dialog").getByRole("combobox")).toHaveCount(0);
-  await choose(roomChecks.find(c => c.key === "smoke")!.label, "OK");
   await expect(page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "OK", exact: true })).toHaveAttribute("aria-checked", "true");
   await choose(roomChecks.find(c => c.key === "taps")!.label, "Problème");
   await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
@@ -230,6 +228,7 @@ test("room validation follows corrections and conditional fields without another
   page.on("request", request => { if (request.url().endsWith("/api/entries") && request.method() === "POST") submissions++; });
 
   await dialog.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK", exact: true }).click();
+  await expect(group("Détecteur de fumée fonctionnel").getByRole("radio", { name: "OK", exact: true })).toHaveAttribute("aria-checked", "true");
   await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("Chambre occupée", "Libre");
   await choose("État général de la chambre", "Bon");
@@ -242,17 +241,9 @@ test("room validation follows corrections and conditional fields without another
   await expect(validation).toHaveCount(0);
   await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
 
-  const smoke = group("Détecteur de fumée fonctionnel");
-  await expect(smoke).toHaveAttribute("aria-invalid", "true");
-  await expect(smoke).toBeFocused();
-  await choose("Détecteur de fumée fonctionnel", "OK");
-  await expect(smoke).not.toHaveAttribute("aria-invalid", "true");
-  await expect(smoke.getByText("Ce point reste à renseigner.", { exact: true })).toHaveCount(0);
-  await expect(smoke.getByRole("radio", { name: "OK", exact: true })).toBeFocused();
-  await expect(validation).toBeVisible(); // Other required fields still need answers.
-
-  await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
+  await expect(validation).toBeVisible();
   await expect(group("Nettoyage / ménage")).toHaveAttribute("aria-invalid", "true");
+  await expect(group("Nettoyage / ménage")).toBeFocused();
   await expect(group("Propreté du micro-ondes")).toHaveAttribute("aria-invalid", "true");
   await expect(group("Propreté du minibar")).toHaveAttribute("aria-invalid", "true");
   await choose("Chambre occupée", "Occupée");

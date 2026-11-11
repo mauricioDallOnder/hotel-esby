@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, AlertTitle, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { CafardFollowupDialog } from "@/components/CafardFollowupDialog";
@@ -97,7 +97,7 @@ export default function CafardsPage() {
   const { history, pendingIds, day } = useRoomObservations();
   const { events, isPending } = useWorkEvents();
   const { ready } = useEntries();
-  const records = cafardCases(history, events, cafardSeedsFromIssues(issues));
+  const records = useMemo(() => cafardCases(history, events, cafardSeedsFromIssues(issues)), [history, events, issues]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<CafardFilter>("pending");
   const [editing, setEditing] = useState<CafardCase | null>(null);

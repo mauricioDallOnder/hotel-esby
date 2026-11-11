@@ -37,7 +37,7 @@ test("a blank checklist fits one portrait A4 page and includes every room inspec
   assert.ok(Math.abs(doc.internal.pageSize.getHeight() - 297) < 0.1);
   const [text] = pageText(doc);
   for (const { label } of roomChecks) assert.ok(text.includes(label), `Missing equipment: ${label}`);
-  for (const label of ["Chambre :", "Date du contrôle :", "Inspecteur :", "Occupation au contrôle", "État général", "Ménage", "Cafards / nuisibles", "Moquette", "Micro-ondes", "Propreté du micro-ondes", "Propreté du minibar", "Observations et problèmes constatés"])
+  for (const label of ["Chambre :", "Date du contrôle :", "Inspecteur :", "Occupation au contrôle", "État général", "Ménage", "Cafards / nuisibles", "Moquette", "Micro-ondes", "Propreté du micro-ondes", "Minibar / réfrigérateur", "Propreté du minibar", "Observations et problèmes constatés"])
     assert.ok(text.includes(label), `Missing field: ${label}`);
   assert.match(text, /Fiche vierge/);
   assert.match(text, /OK Problème Absent/);
@@ -93,12 +93,15 @@ test("printed results distinguish missing records, absent equipment, unchecked o
   assert.match(roomText("114"), /Ferme-porte \(fermeture automatique\) Non renseigné/);
   assert.match(roomText("114"), /Chauffage \/ radiateur Non renseigné/);
   assert.match(roomText("114"), /Occupation au contrôle Non renseignée/);
+  assert.match(roomText("114"), /Minibar \/ réfrigérateur Non vérifié/);
   assert.match(roomText("114"), /Enregistré sur le serveur/);
   assert.match(roomText("115"), /Détecteur de fumée fonctionnel Absent/);
   assert.match(roomText("115"), /Minibar fonctionnel Absent/);
+  assert.match(roomText("115"), /Minibar \/ réfrigérateur Absent/);
   assert.match(roomText("115"), /Propreté du micro-ondes Non applicable - absent/);
   assert.match(roomText("115"), /Propreté du minibar Non applicable - absent/);
   assert.match(roomText("116"), /En attente d'envoi/);
+  assert.match(roomText("116"), /Minibar \/ réfrigérateur Présent/);
   assert.doesNotMatch(roomText("116"), /Enregistré sur le serveur|Envoi bloqué/);
   assert.match(roomText("117"), /Envoi bloqué/);
   assert.doesNotMatch(roomText("117"), /Enregistré sur le serveur|En attente d'envoi/);

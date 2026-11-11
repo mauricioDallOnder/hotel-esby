@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, LinearProgress, Paper, Stack, TextField, Typography } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
@@ -40,7 +40,7 @@ export default function RoomsPage() {
   const [exportError, setExportError] = useState("");
   const preferences = useDeviceDraft<Preferences>("room-rotation-preferences", () => ({ dailyGoal: 15, intervalDays: 7, deferredDay: day, deferred: [] }));
   const config = preferences.value;
-  const deferred = config?.deferredDay === day ? config.deferred : [];
+  const deferred = useMemo(() => config?.deferredDay === day ? config.deferred : [], [config, day]);
   useEffect(() => {
     const update = () => setDay(today());
     const timer = window.setInterval(update, 30_000);
@@ -48,13 +48,17 @@ export default function RoomsPage() {
     document.addEventListener("visibilitychange", update);
     return () => { clearInterval(timer); window.removeEventListener("focus", update); document.removeEventListener("visibilitychange", update); };
   }, []);
-  const queued = pending.filter(p => p.entry.type === "createRoomInspection").map(p => p.entry as RoomEntry);
-  const history = [...queued, ...roomInspections.filter(i => !queued.some(q => q.id === i.id))];
-  const { latest, history: currentHistory, pendingIds } = roomObservations(roomInspections, pending, day);
-  const availability = new Map(rooms.map(n => [n, roomAvailability(n, workEvents, latest.get(n)).free]));
-  const eligibleRooms = rooms.filter(n => availability.get(n) !== true);
+  const queued = useMemo(() => pending.filter(p => p.entry.type === "createRoomInspection").map(p => p.entry as RoomEntry), [pending]);
+  const history = useMemo(() => {
+    const queuedIds = new Set(queued.map(record => record.id));
+    return [...queued, ...roomInspections.filter(record => !queuedIds.has(record.id))];
+  }, [queued, roomInspections]);
+  const { latest, history: currentHistory, pendingIds } = useMemo(() => roomObservations(roomInspections, pending, day), [roomInspections, pending, day]);
+  const availability = useMemo(() => new Map(rooms.map(n => [n, roomAvailability(n, workEvents, latest.get(n)).free])), [workEvents, latest]);
+  const eligibleRooms = useMemo(() => rooms.filter(n => availability.get(n) !== true), [availability]);
   const eligible = new Set(eligibleRooms);
-  const rotation = roomRotation(currentHistory, day, config?.dailyGoal, config?.intervalDays, deferred, eligibleRooms);
+  const rotation = useMemo(() => roomRotation(currentHistory, day, config?.dailyGoal, config?.intervalDays, deferred, eligibleRooms), [currentHistory, day, config?.dailyGoal, config?.intervalDays, deferred, eligibleRooms]);
+  const openByRoom = useMemo(() => new Map(rooms.map(n => [n, openRoomIssues(issues, n)])), [issues]);
   const visibleDeferred = deferred.filter(n => eligible.has(n));
   const free = rooms.filter(n => availability.get(n) === true);
   const hasPendingControls = currentHistory.some(record => record.date === day && eligible.has(record.room) && pendingIds.has(record.id));
@@ -83,7 +87,7 @@ export default function RoomsPage() {
   const visibleGroups = scopedGroups.map(g => ({ ...g, rooms: g.rooms.filter(n => {
     if (filter === "target") return rotation.plan.includes(n) || rotation.done.includes(n);
     if (filter === "due") return rotation.due.includes(n);
-    if (filter === "problems") return openRoomIssues(issues, n).length > 0;
+    if (filter === "problems") return (openByRoom.get(n)?.length || 0) > 0;
     if (filter === "occupied") return availability.get(n) === false;
     if (filter === "unknown") return availability.get(n) === undefined;
     return true;
@@ -96,7 +100,7 @@ export default function RoomsPage() {
     <Stack spacing={3}>
       {message && <Alert severity="info" onClose={() => setMessage("")}>{message}</Alert>}
       {preferences.error && <Alert severity="error">{preferences.error}</Alert>}
-      <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderColor: "primary.main", bgcolor: "#f4f8f7" }}>
+      <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderColor: "primary.main", bgcolor: "action.hover" }}>
         <Stack spacing={2}>
           <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
             <Box><Typography variant="overline" color="primary">{displayDate(day)} · Rotation</Typography><Typography variant="h5" sx={{ fontWeight: 800 }}>Votre tournée du jour</Typography></Box>
@@ -115,9 +119,20 @@ export default function RoomsPage() {
           </Stack>}
           {rotation.plan.length ? <>
             <Button variant="contained" size="large" onClick={() => setRoom(rotation.plan[0])} disabled={!config}>Continuer la tournée · chambre {rotation.plan[0]}</Button>
-            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>
-              {rotation.plan.map((n, index) => <Button key={n} variant="outlined" color={rotation.priorityRooms.includes(n) ? "warning" : "primary"} onClick={() => setRoom(n)} aria-label={`Ouvrir la chambre ${n} dans la tournée`} sx={{ minWidth: 60, minHeight: 48, maxWidth: "100%" }}><Stack><strong>{n}</strong><Typography variant="caption">{index === 0 ? "Suivante" : latest.has(n) ? `${daysSince(latest.get(n)!.date, day)} j` : "Jamais"}</Typography>{rotation.priorityRooms.includes(n) && <Typography variant="caption">Mauvais état · prioritaire</Typography>}</Stack></Button>)}
-            </Stack>
+            <Box role="group" aria-label="Chambres de la tournée" sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(3, minmax(0, 1fr))", sm: "repeat(5, minmax(0, 1fr))" }, gridAutoRows: "1fr", gap: 1 }}>
+              {rotation.plan.map((n, index) => {
+                const priority = rotation.priorityRooms.includes(n);
+                return <Button key={n} variant="outlined" color={priority ? "warning" : "primary"} onClick={() => setRoom(n)}
+                  aria-label={`Ouvrir la chambre ${n} dans la tournée`} aria-describedby={`rotation-status-${n}`}
+                  sx={{ minWidth: 0, minHeight: 96, height: "100%", width: "100%", px: 0.5, py: 1 }}>
+                  <Stack spacing={0.25} sx={{ alignItems: "center", width: "100%", minWidth: 0 }}>
+                    <Typography component="strong" sx={{ fontWeight: 800, fontSize: 20, lineHeight: 1.3 }}>{n}</Typography>
+                    <Typography variant="caption">{index === 0 ? "Suivante" : latest.has(n) ? `${daysSince(latest.get(n)!.date, day)} j` : "Jamais"}</Typography>
+                    <Typography id={`rotation-status-${n}`} variant="caption" sx={{ fontWeight: priority ? 700 : 400, lineHeight: 1.3 }}>{priority ? "Prioritaire" : "À contrôler"}</Typography>
+                  </Stack>
+                </Button>;
+              })}
+            </Box>
           </> : <Alert severity={rotation.total ? "success" : "info"}>{!rotation.total ? "Toutes les chambres sont marquées libres. Aucune tournée à prévoir." : rotation.done.length >= rotation.goal ? "Objectif du jour atteint. Les chambres restantes vous attendront dans les prochaines tournées." : rotation.due.length ? "Les chambres restantes ont été reportées. Vous pouvez les reprendre ci-dessous." : "Toutes les chambres du checklist sont dans l’intervalle cible."}</Alert>}
           {visibleDeferred.length > 0 && <details><summary style={{ cursor: "pointer" }}>{visibleDeferred.length} chambre(s) reportée(s) aujourd’hui</summary><Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1, mt: 1 }}>{visibleDeferred.map(n => <Button key={n} onClick={() => { changePreference({ deferred: deferred.filter(item => item !== n) }); setRoom(n); }}>Reprendre {n}</Button>)}</Stack></details>}
         </Stack>
@@ -153,12 +168,12 @@ export default function RoomsPage() {
       {rotation.total > 0 && !visibleGroups.length && <Alert severity="info">Aucune chambre ne correspond à ces filtres.</Alert>}
       {visibleGroups.map(g => <Box component="section" key={g.label} aria-label={g.label}>
         <Typography variant="h6" component="h2" sx={{ mb: 1.5 }}>{g.label} · {g.rooms.length}</Typography>
-        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 1.5 }}>
+        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 155px), 1fr))", gridAutoRows: "1fr", gap: 1.5 }}>
           {g.rooms.map(n => {
-            const record = latest.get(n), open = openRoomIssues(issues, n), done = rotation.done.includes(n), target = rotation.plan.includes(n), priority = rotation.priorityRooms.includes(n);
+            const record = latest.get(n), open = openByRoom.get(n) || [], done = rotation.done.includes(n), target = rotation.plan.includes(n), priority = rotation.priorityRooms.includes(n);
             const borderColor = availability.get(n) === false ? "info.main" : "grey.400";
-            return <Paper component="article" key={n} aria-label={`Chambre ${n}`} variant="outlined" sx={{ p: 1.5, minWidth: 0, borderColor: "divider", borderTop: "4px solid", borderTopColor: borderColor }}>
-              <Stack spacing={1}>
+            return <Paper component="article" key={n} aria-label={`Chambre ${n}`} variant="outlined" sx={{ p: 1.5, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", borderColor: "divider", borderTop: "4px solid", borderTopColor: borderColor }}>
+              <Stack spacing={1} sx={{ flex: 1 }}>
                 <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}><Typography variant="h4" component="h3" sx={{ fontSize: 36, lineHeight: 1.2, fontWeight: 800 }}>{n}</Typography>{done && <Chip label="Fait" color="success" size="small" />}</Stack>
                 <Typography variant="caption">{record ? `Dernier : ${displayDate(record.date)}` : "Jamais contrôlée"}</Typography>
                 {priority && <Typography variant="caption" color="warning.main" sx={{ fontWeight: 700 }}>Mauvais état · prioritaire</Typography>}
@@ -167,6 +182,7 @@ export default function RoomsPage() {
                 {open.length > 0 && <Chip label={`${open.length} anomalie(s)`} color="warning" size="small" variant="outlined" />}
                 {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">Contrôle en attente d’envoi</Typography>}
                 {deferred.includes(n) && <Typography variant="caption">Reportée à demain</Typography>}
+                <Box sx={{ flex: 1 }} />
                 <Button variant={target ? "contained" : "outlined"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ minHeight: 48 }}>{done ? "Recontrôler" : "Contrôler"}</Button>
                 <Button aria-label={`Historique de la chambre ${n}`} onClick={() => setHistoryRoom(n)}>Historique</Button>
               </Stack>

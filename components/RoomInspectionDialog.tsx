@@ -1,16 +1,24 @@
 "use client";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
-import { createId, issueResponsible, statuses, today } from "@/lib/domain";
+import { createId, displayDate, issueResponsible, statuses, today } from "@/lib/domain";
+import { cafardCases, cafardStatusLabels, cafardTreatmentReminder } from "@/lib/cafards";
+import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
 import { normalizeRoomDraft, roomChecks, roomEntrySchema, roomFindings, roomProblems, type RoomEntry } from "@/lib/rooms";
 import { matchesRoomFinding, openRoomIssues, planRoomIssue } from "@/lib/roomIssueMatching";
-import { compressPhoto } from "@/lib/photos";
+import { preparePhotos } from "@/lib/photos";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
+import { useRoomObservations } from "@/lib/useRoomObservations";
+import { useWorkEvents } from "@/lib/useWorkEvents";
 import { QuickChoice } from "./QuickChoice";
 
-type Draft = Omit<RoomEntry, "condition" | "carpet"> & { condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | "" };
+type Draft = Omit<RoomEntry, "condition" | "carpet"> & {
+  condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | "";
+  // Draft-only answer: presence alone must not certify an untested fridge as functional.
+  fridgePresent?: boolean;
+};
 const sections = ["Équipements", "État et ménage", "Résumé"];
 function rememberedActor() { try { return localStorage.getItem("room-inspector") || ""; } catch { return ""; } }
 const yesNo = [{ value: "oui", label: "Oui" }, { value: "non", label: "Non" }] as const;
@@ -21,20 +29,26 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
 }) {
   const { issues } = useAppContext();
   const { enqueue } = useEntries();
+  const { history, day } = useRoomObservations();
+  const { events } = useWorkEvents();
   const theme = useTheme();
   const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const content = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
+  const preparingPhotos = useRef(false);
   const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
     type: "createRoomInspection", schemaVersion: 5, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
     cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [],
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [],
   }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
   const value = draft.value;
+  const fridgeResult = value?.checks.find(check => check.key === "fridge")?.result;
+  const fridgePresence = fridgeResult === "absent" ? "non" : fridgeResult === "ok" || fridgeResult === "probleme" || value?.fridgePresent ? "oui" : "";
   const [step, setStep] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [compressing, setCompressing] = useState(false);
+  const [photoProgress, setPhotoProgress] = useState({ completed: 0, total: 0 });
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [showIssues, setShowIssues] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
@@ -42,7 +56,9 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const validation = validationAttempted && value
     ? roomEntrySchema.safeParse({ ...value, inspectedAt: value.inspectedAt || undefined }) : undefined;
   const invalid = validation && !validation.success ? validation.error.issues.map(issue => issue.path.join(".")) : [];
-  const known = openRoomIssues(issues, room);
+  const known = useMemo(() => openRoomIssues(issues, room), [issues, room]);
+  const cafardCase = useMemo(() => cafardCases(history.filter(record => record.room === room), events.filter(event => event.room === room), cafardSeedsFromIssues(issues).filter(seed => seed.room === room))[0], [history, events, issues, room]);
+  const cafardReminder = cafardCase ? cafardTreatmentReminder(cafardCase, day) : null;
   const review: RoomEntry | undefined = value ? { ...value, condition: value.condition || "bon", carpet: value.carpet || "ok" } : undefined;
   const findings = review ? roomFindings(review) : [];
   const otherProblems = review ? roomProblems(review).filter(label => !findings.some(finding => finding.label === label)) : [];
@@ -50,6 +66,16 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const invalidField = (field: string) => invalid.some(item => item === field || item.startsWith(field + "."));
   function goStep(next: number) { setStep(next); content.current?.scrollTo({ top: 0 }); }
   function update(patch: Partial<Draft>) { if (value) draft.update({ ...value, ...patch }); }
+  function updateFridgePresence(present: "oui" | "non") {
+    if (!value) return;
+    update({
+      checks: value.checks.map(check => check.key === "fridge"
+        ? { ...check, result: present === "non" ? "absent" : check.result === "absent" ? "non_verifie" : check.result }
+        : check),
+      fridgePresent: present === "oui",
+      fridgeCleaning: present === "non" ? null : value.fridgeCleaning || "non_verifie",
+    });
+  }
   async function submit(next = false) {
     if (!value || submitting.current) return;
     setError("");
@@ -72,12 +98,13 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     finally { submitting.current = false; setBusy(false); }
   }
   async function addPhotos(files: File[]) {
-    if (!value || !files.length) return;
+    if (!value || !files.length || preparingPhotos.current) return;
     if (value.photosData.length + files.length > 3) { setError("Ajoutez au maximum 3 photos."); return; }
-    setCompressing(true); setError("");
-    try { const photos = []; for (const file of files) photos.push(await compressPhoto(file, true)); update({ photosData: [...value.photosData, ...photos] }); }
+    preparingPhotos.current = true;
+    setCompressing(true); setPhotoProgress({ completed: 0, total: files.length }); setError("");
+    try { const photos = await preparePhotos(files, setPhotoProgress); update({ photosData: [...value.photosData, ...photos] }); }
     catch (e) { setError((e as Error).message); }
-    finally { setCompressing(false); }
+    finally { preparingPhotos.current = false; setCompressing(false); }
   }
   const checked = value?.checks.filter(c => c.result !== "non_verifie").length || 0;
   return <Dialog open fullWidth fullScreen={mobile} maxWidth="sm" onClose={busy || compressing ? undefined : onClose} aria-labelledby="inspection-title">
@@ -99,10 +126,18 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <Button color="warning" onClick={() => setShowIssues(!showIssues)} aria-expanded={showIssues}>{known.length} anomalie(s) déjà signalée(s)</Button>
             {showIssues && <Stack spacing={1}>{known.map(issue => <Alert key={issue.id} severity="warning" icon={false}><strong>{issue.title}</strong><Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>{issue.description}</Typography><Typography variant="caption">{statuses[issue.status]} · {issueResponsible(issue) || "Non attribuée"}</Typography></Alert>)}</Stack>}
           </Box>}
+          {cafardCase && <Alert severity={cafardCase.status === "resolu" ? "success" : cafardReminder?.due ? "warning" : "info"}>
+            <Typography variant="subtitle2">Suivi des cafards déjà existant · {cafardStatusLabels[cafardCase.status]}</Typography>
+            {cafardCase.detectedOn && <Typography variant="body2">Détection : {displayDate(cafardCase.detectedOn)}</Typography>}
+            {cafardCase.treatedOn && <Typography variant="body2">Dernière application : {displayDate(cafardCase.treatedOn)}</Typography>}
+            {cafardReminder?.due && <Typography variant="body2" sx={{ fontWeight: 700 }}>Vérification après traitement à faire depuis le {displayDate(cafardReminder.dueOn)}.</Typography>}
+            <Typography variant="body2">{cafardCase.status === "resolu" ? "Une nouvelle détection rouvrira ce même suivi, en conservant son historique." : "Une nouvelle détection complétera ce même suivi, sans créer de doublon."}</Typography>
+            <Typography variant="caption">« Aucun » ne clôture pas le suivi : confirmez la résolution dans « Suivi des cafards ».</Typography>
+          </Alert>}
           {step === 0 && <>
             <Typography variant="body2" color="text.secondary">Un toucher par résultat. « Absent » indique que l’équipement n’existe pas dans la chambre.</Typography>
-            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.result === "non_verifie" && c.key !== "smoke" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
-            <Typography variant="caption" color="text.secondary">Le ferme-porte est inclus. Pour le radiateur, OK signifie « Libre ». Le détecteur et les équipements déjà signalés restent à vérifier individuellement. Les réponses saisies sont conservées.</Typography>
+            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.result === "non_verifie" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
+            <Typography variant="caption" color="text.secondary">Le détecteur de fumée et le ferme-porte sont inclus. Pour le radiateur, OK signifie « Libre ». Les équipements déjà signalés restent à vérifier individuellement. Les réponses saisies sont conservées.</Typography>
             {roomChecks.map(check => <QuickChoice key={check.key} label={check.label} value={value.checks.find(c => c.key === check.key)?.result} error={invalidField(`checks.${check.key}`)}
               options={check.key === "radiator_clear"
                 ? [{ value: "ok", label: "Libre", color: "success" }, { value: "probleme", label: "Caché", color: "error" }]
@@ -116,26 +151,33 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <Typography variant="caption" color="text.secondary">« Mauvais » donne la priorité à cette chambre dans les prochaines tournées, sans créer d’anomalie à lui seul.</Typography>
             {value.occupied === false && <QuickChoice label="Nettoyage / ménage" value={value.cleaning} options={[{ value: "faite", label: "Fait", color: "success" }, { value: "non_faite", label: "Non fait", color: "warning" }]} error={invalidField("cleaning")} onChange={cleaning => update({ cleaning })} />}
             <QuickChoice label="Présence de cafards ou nuisibles" value={value.bugs} options={[{ value: "non", label: "Aucun", color: "success" }, { value: "oui", label: "Détectés", color: "error" }]} error={invalidField("bugs")} onChange={bugs => update({ bugs })} />
-            {value.bugs === "oui" && <Alert severity="info">Après enregistrement, cette détection apparaîtra dans « Suivi des cafards » pour noter le traitement et les vérifications.</Alert>}
+            {value.bugs === "oui" && <Alert severity="info">{cafardCase ? "Cette détection sera ajoutée au suivi existant de cette chambre, sans créer de doublon." : "Après enregistrement, cette détection apparaîtra dans « Suivi des cafards » pour noter le traitement et les vérifications."}</Alert>}
             <QuickChoice label="État de la moquette" value={value.carpet} options={[{ value: "ok", label: "OK", color: "success" }, { value: "tachee", label: "Tachée", color: "warning" }, { value: "sale", label: "Sale", color: "warning" }]} error={invalidField("carpet")} onChange={carpet => update({ carpet })} />
             {value.carpet && value.carpet !== "ok" && <TextField label="Précisez les taches ou salissures" multiline minRows={2} value={value.carpetNotes} onChange={e => update({ carpetNotes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />}
             <QuickChoice label="Micro-ondes présent ?" value={value.microwave} options={[...yesNo]} error={invalidField("microwave")} onChange={microwave => update({ microwave })} />
             {value.microwave === "oui" && <QuickChoice label="Propreté du micro-ondes" value={value.microwaveCleaning} options={[...cleanliness]} error={invalidField("microwaveCleaning")} onChange={microwaveCleaning => update({ microwaveCleaning })} />}
-            {value.checks.some(c => c.key === "fridge" && ["ok", "probleme"].includes(c.result)) && <QuickChoice label="Propreté du minibar" value={value.fridgeCleaning} options={[...cleanliness]} error={invalidField("fridgeCleaning")} onChange={fridgeCleaning => update({ fridgeCleaning })} />}
+            <QuickChoice label="Minibar / réfrigérateur présent ?" value={fridgePresence}
+              options={[...yesNo]} error={!fridgePresence && invalidField("checks.fridge")} onChange={updateFridgePresence}
+              hint={<Typography variant="caption">« Non » marque le minibar absent dans les équipements. Sa propreté n’est alors pas demandée.</Typography>} />
+            {fridgePresence === "oui" && fridgeResult === "non_verifie" && <QuickChoice label="Minibar fonctionnel" value={fridgeResult}
+              options={[{ value: "ok", label: "OK", color: "success" }, { value: "probleme", label: "Problème", color: "error" }]}
+              error={invalidField("checks.fridge")} onChange={result => update({ checks: value.checks.map(check => check.key === "fridge" ? { ...check, result } : check) })} />}
+            {fridgePresence === "oui" && <QuickChoice label="Propreté du minibar" value={value.fridgeCleaning} options={[...cleanliness]} error={invalidField("fridgeCleaning")} onChange={fridgeCleaning => update({ fridgeCleaning })} />}
           </>}
           {step === 2 && <>
             <TextField required label="Inspecteur" value={value.actor} error={invalidField("actor")} onChange={e => update({ actor: e.target.value })} slotProps={{ htmlInput: { maxLength: 200 } }} helperText="Mémorisé sur cet appareil pour le prochain contrôle." />
             <Button onClick={() => setShowMetadata(!showMetadata)} aria-expanded={showMetadata}>Date : {value.date.split("-").reverse().join("/")} · Modifier</Button>
             {showMetadata && <TextField required label="Date du contrôle" type="date" value={value.date} error={invalidField("date")} onChange={e => update({ date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today() } }} />}
             <Typography variant="h6">Constats pour les anomalies · {findings.length}</Typography>
-            {value.bugs === "oui" && <Alert severity="info">Cafards détectés : le suivi sera ajouté dans « Suivi des cafards ».</Alert>}
+            {value.bugs === "oui" && <Alert severity="info">{cafardCase ? "Cafards détectés : constat ajouté au suivi existant de cette chambre. Aucun doublon." : "Cafards détectés : le suivi sera ajouté dans « Suivi des cafards »."}</Alert>}
             {!findings.length && <Alert severity="info">Aucune anomalie automatique à signaler. Les autres constats restent dans l’historique du contrôle.</Alert>}
             {findings.map(finding => {
-              const linked = value.distinctProblemKeys?.includes(finding.key) ? undefined : known.find(i => value.issueLinks?.some(link => link.key === finding.key && link.issueId === i.id)) || known.find(i => matchesRoomFinding(i, finding));
+              const matching = known.filter(issue => matchesRoomFinding(issue, finding));
+              const linked = matching.find(i => value.issueLinks?.some(link => link.key === finding.key && link.issueId === i.id)) || matching[0];
               return <Box key={finding.key} sx={{ p: 1.5, bgcolor: "action.hover", borderRadius: 2 }}>
                 <Typography sx={{ fontWeight: 700 }}>{finding.label}</Typography>
                 <Typography variant="caption" color={linked ? "warning.main" : "error.main"}>{linked ? `Déjà signalé : ${linked.title} · aucun doublon` : "Nouveau signalement"}</Typography>
-                {known.length > 0 && <details><summary style={{ cursor: "pointer", paddingTop: 8 }}>Associer à une anomalie existante</summary><Stack spacing={1} sx={{ mt: 1 }}>{known.map(i => <Button key={i.id} variant={linked?.id === i.id ? "contained" : "outlined"} onClick={() => update({ distinctProblemKeys: value.distinctProblemKeys?.filter(key => key !== finding.key), issueLinks: [...(value.issueLinks || []).filter(l => l.key !== finding.key), { key: finding.key, issueId: i.id }] })}>{i.title}</Button>)}<Button color="warning" onClick={() => update({ issueLinks: value.issueLinks?.filter(l => l.key !== finding.key), distinctProblemKeys: [...new Set([...(value.distinctProblemKeys || []), finding.key])] })}>Signaler un problème distinct</Button></Stack></details>}
+                {matching.length > 1 && <details><summary style={{ cursor: "pointer", paddingTop: 8 }}>Associer au problème existant</summary><Stack spacing={1} sx={{ mt: 1 }}>{matching.map(i => <Button key={i.id} variant={linked?.id === i.id ? "contained" : "outlined"} onClick={() => update({ distinctProblemKeys: value.distinctProblemKeys?.filter(key => key !== finding.key), issueLinks: [...(value.issueLinks || []).filter(l => l.key !== finding.key), { key: finding.key, issueId: i.id }] })}>{i.title}</Button>)}</Stack></details>}
               </Box>;
             })}
             {!!plan?.relatedIssueIds.length && <Chip label={`${plan.relatedIssueIds.length} anomalie(s) existante(s) réutilisée(s)`} color="warning" variant="outlined" />}
@@ -150,10 +192,11 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
               <Button component="label" variant="outlined" disabled={compressing || value.photosData.length >= 3}>Prendre une photo<input hidden type="file" accept="image/*" capture="environment" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
               <Button component="label" disabled={compressing || value.photosData.length >= 3}>Galerie<input hidden multiple type="file" accept="image/*" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
             </Stack>
-            {value.photosData.map((photo, i) => <Box key={i}><Box component="img" src={photo} alt={`Photo du contrôle ${i + 1}`} sx={{ width: "100%", maxHeight: 180, objectFit: "contain" }} /><Button color="error" onClick={() => update({ photosData: value.photosData.filter((_, index) => index !== i) })}>Retirer la photo {i + 1}</Button></Box>)}
+            {compressing && <LinearProgress aria-label="Préparation des photos" variant="determinate" value={photoProgress.total ? photoProgress.completed / photoProgress.total * 100 : 0} />}
+            {value.photosData.map((photo, i) => <Box key={i}><Box component="img" src={photo} alt={`Photo du contrôle ${i + 1}`} decoding="async" sx={{ width: "100%", maxHeight: 180, objectFit: "contain" }} /><Button color="error" onClick={() => update({ photosData: value.photosData.filter((_, index) => index !== i) })}>Retirer la photo {i + 1}</Button></Box>)}
             <Typography variant="caption">Les anomalies ouvertes sont rapprochées à l’envoi. Un contrôle OK ne les clôture pas : la direction conserve le suivi des interventions.</Typography>
           </>}
-          <Typography variant="caption" color="text.secondary">{compressing ? "Compression des photos…" : draft.saving ? "Sauvegarde du brouillon…" : "Brouillon conservé sur cet appareil."}</Typography>
+          <Typography variant="caption" color="text.secondary" role={compressing ? "status" : undefined}>{compressing ? `Préparation des photos… ${photoProgress.completed} / ${photoProgress.total}` : draft.saving ? "Sauvegarde du brouillon…" : "Brouillon conservé sur cet appareil."}</Typography>
         </Stack>
       </Box>}
     </DialogContent>

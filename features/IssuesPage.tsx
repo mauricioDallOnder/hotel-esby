@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, Collapse, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { useAppContext } from "@/context/AppContext";
@@ -47,8 +47,8 @@ export default function IssuesPage() {
   const [message, setMessage] = useState("");
   function change(patch: Partial<IssueFilters>) { setFilters(current => ({ ...current, ...patch })); setLimit(24); }
   function reset() { setFilters(defaultIssueFilters); setLimit(24); }
-  const filtered = selectIssues(issues, filters);
-  const shortcuts = issueShortcuts(issues, filters);
+  const filtered = useMemo(() => selectIssues(issues, filters), [issues, filters]);
+  const shortcuts = useMemo(() => issueShortcuts(issues, filters), [issues, filters]);
   const statusChoices = { pending: "Non résolues", ouvert: statuses.ouvert, en_cours: statuses.en_cours, resolu: statuses.resolu, all: "Toutes" };
   const extraCount = Number(filters.category !== "all") + Number(filters.unassigned);
   const invalidRange = Boolean(filters.from && filters.to && filters.from > filters.to);
@@ -100,6 +100,6 @@ export default function IssuesPage() {
       </Box>}
       {filtered.length > limit && <Button variant="outlined" onClick={() => setLimit(n => n + 24)}>Afficher plus · {filtered.length - limit} restante(s)</Button>}
     </Stack>
-    {dialog && <IssueDialog key={dialog === "new" ? "new" : dialog.id} issue={dialog === "new" ? undefined : dialog} onClose={() => setDialog(null)} onSaved={saved => setMessage(dialog === "new" ? "Anomalie enregistrée." : `Suivi enregistré · ${statuses[saved.status]}.${saved.status === "resolu" && filters.status === "pending" ? " Retrouvez-la avec le filtre Résolu." : ""}`)} />}
+    {dialog && <IssueDialog key={dialog === "new" ? "new" : dialog.id} issue={dialog === "new" ? undefined : dialog} onOpenExisting={setDialog} onClose={() => setDialog(null)} onSaved={saved => setMessage(dialog === "new" ? "Anomalie enregistrée." : `Suivi enregistré · ${statuses[saved.status]}.${saved.status === "resolu" && filters.status === "pending" ? " Retrouvez-la avec le filtre Résolu." : ""}`)} />}
   </>;
 }

@@ -138,7 +138,7 @@ export default function DashboardPage() {
             label: "Critiques à traiter",
             value: critical.length,
             hint: "À suivre en priorité",
-            color: critical.length ? "#b83e30" : undefined,
+            color: critical.length ? "error.main" : undefined,
           },
           {
             label: "Interventions en cours",
@@ -210,6 +210,7 @@ export default function DashboardPage() {
         <IssueDialog
           key={active === "new" ? "new" : active.id}
           issue={active === "new" ? undefined : active}
+          onOpenExisting={setActive}
           onClose={() => setActive(null)}
         />
       )}

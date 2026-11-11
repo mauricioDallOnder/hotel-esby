@@ -1,19 +1,20 @@
 "use client";
 import { useRef, useState } from "react";
-import { Alert, Box, Button, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
+import { Alert, Box, Button, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, MenuItem, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
 import PhotoCameraOutlined from "@mui/icons-material/PhotoCameraOutlined";
 import { useAppContext } from "@/context/AppContext";
-import { compressPhoto } from "@/lib/photos";
+import { preparePhotos, type PhotoProgress } from "@/lib/photos";
 import { categories, commandSchema, displayDate, issuePhotoIds, issueResponsible, MAX_ISSUE_PHOTOS, createId, priorities, statuses, today, type Issue, type IssueFields, type Status } from "@/lib/domain";
-import { issueRoom, openRoomIssues } from "@/lib/roomIssueMatching";
+import { duplicateRoomIssueMessage, findDuplicateOpenIssue, issueRoom, openRoomIssues, shouldCheckIssueDuplicate } from "@/lib/roomIssueMatching";
 import { IssueBadges } from "./HotelUI";
 import { IssuePhoto } from "./IssuePhoto";
 import { QuickChoice } from "./QuickChoice";
 
-export function IssueDialog({ issue, defaults, onClose, onSaved }: {
+export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting }: {
   issue?: Issue;
   defaults?: { title?: string; location?: string; actor?: string; priority?: IssueFields["priority"]; date?: string };
   onClose: () => void; onSaved?: (issue: Issue) => void;
+  onOpenExisting?: (issue: Issue) => void;
 }) {
   const { mutate, busy, role, issues } = useAppContext();
   const readOnly = !!issue && role !== "direction";
@@ -30,23 +31,33 @@ export function IssueDialog({ issue, defaults, onClose, onSaved }: {
   const [note, setNote] = useState("");
   const [photos, setPhotos] = useState<string[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [photoProgress, setPhotoProgress] = useState<PhotoProgress>({ completed: 0, total: 0 });
   const [error, setError] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(!issue || readOnly);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [nextIssue, setNextIssue] = useState<Issue | null>(null);
   const content = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
   const dirty = !readOnly && (JSON.stringify(fields) !== JSON.stringify(initial) || actor !== initialActor || !!note || !!photos.length || status !== (issue?.status || "ouvert") || date !== initialDate);
   const room = issueRoom({ location: fields.location });
   const known = !issue && room ? openRoomIssues(issues, room) : [];
+  const candidate = issue ? { ...issue, ...fields, room, status } : { ...fields, id };
+  const checkDuplicate = !readOnly && (!issue || shouldCheckIssueDuplicate({ ...issue, ...fields, room, status }, issue));
+  const duplicate = checkDuplicate ? findDuplicateOpenIssue(candidate, issues) : undefined;
   function change<K extends keyof IssueFields>(key: K, value: IssueFields[K]) { setFields(current => ({ ...current, [key]: value })); }
-  function close() { if (!busy && !processing) { if (dirty) setConfirmClose(true); else onClose(); } }
+  function close() { if (!busy && !processing) { setNextIssue(null); if (dirty) setConfirmClose(true); else onClose(); } }
+  function openExisting(existing: Issue) {
+    if (busy || processing || !onOpenExisting) return;
+    if (dirty) { setNextIssue(existing); setConfirmClose(true); }
+    else onOpenExisting(existing);
+  }
   function showError(message: string) { setError(message); content.current?.scrollTo({ top: 0 }); }
   async function loadPhotos(files: File[]) {
     if (!files.length || processing || busy) return;
     if (photos.length + files.length > MAX_ISSUE_PHOTOS) { showError(`Ajoutez au maximum ${MAX_ISSUE_PHOTOS} photos.`); return; }
     setProcessing(true); setError("");
-    try { const added = await Promise.all(files.map(file => compressPhoto(file, true))); setPhotos(current => [...current, ...added]); }
+    try { const added = await preparePhotos(files, setPhotoProgress); setPhotos(current => [...current, ...added]); }
     catch (e) { showError((e as Error).message); }
     finally { setProcessing(false); }
   }
@@ -54,6 +65,7 @@ export function IssueDialog({ issue, defaults, onClose, onSaved }: {
     e.preventDefault();
     if (readOnly || processing || busy || submitting.current) return;
     setError("");
+    if (duplicate) { showError(duplicateRoomIssueMessage(duplicate)); return; }
     const issueFields = { ...fields, assignee: issue ? issueResponsible(issue) : actor.trim() };
     const parsed = commandSchema.safeParse(issue ? { type: "updateIssue", id, version: issue.version, actor, note, status, fields: issueFields }
       : { type: "createIssue", id, date, actor, fields: issueFields, photosData: photos });
@@ -81,6 +93,10 @@ export function IssueDialog({ issue, defaults, onClose, onSaved }: {
         <DialogContent ref={content} dividers sx={{ px: { xs: 2, sm: 3 } }}>
           <Stack spacing={2}>
             {error && <Alert severity="error">{error}</Alert>}
+            {duplicate && <Alert severity="warning">
+              {duplicateRoomIssueMessage(duplicate)}
+              {onOpenExisting && <Button color="inherit" disabled={busy || processing} onClick={() => openExisting(duplicate)} sx={{ display: "flex", mt: 1 }}>Ouvrir le signalement existant</Button>}
+            </Alert>}
             {issue && <><IssueBadges issue={issue} /><Typography variant="body2" sx={{ fontWeight: 600 }}>Responsable : {issueResponsible(issue) || "Non renseigné"}</Typography><Typography variant="caption" color="text.secondary">Signalée le {displayDate(issue.date)}</Typography></>}
             {readOnly && <Typography variant="body2" color="text.secondary">La direction gère les interventions et les changements d’état.</Typography>}
             <Box component="fieldset" disabled={busy || processing} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>
@@ -111,7 +127,7 @@ export function IssueDialog({ issue, defaults, onClose, onSaved }: {
                         <Button component="label" disabled={processing || busy || photos.length >= MAX_ISSUE_PHOTOS}>Choisir des photos<input hidden type="file" accept="image/*" multiple onChange={e => { void loadPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
                       </Stack>
                       <Typography variant="body2" color="text.secondary">{photos.length} / {MAX_ISSUE_PHOTOS} photos · facultatif</Typography>
-                      {processing && <Typography>Préparation des photos…</Typography>}
+                      {processing && <Box role="status"><Typography variant="body2">Préparation de la photo {Math.min(photoProgress.completed + 1, photoProgress.total)} / {photoProgress.total}…</Typography><LinearProgress variant="determinate" value={photoProgress.total ? 100 * photoProgress.completed / photoProgress.total : 0} sx={{ mt: 1 }} /></Box>}
                       {photos.map((src, index) => <Box key={index}><Box component="img" className="photo-preview" src={src} alt={`Photo ${index + 1} du problème signalé`} /><Button disabled={busy || processing} onClick={() => setPhotos(current => current.filter((_, i) => i !== index))}>Retirer la photo {index + 1}</Button></Box>)}
                     </>}
                     {issue && existingPhotos.map((photoId, index) => <IssuePhoto key={photoId} issueId={issue.id} index={index} alt={`Photo ${index + 1} du problème signalé`} lazy={false} />)}
@@ -138,14 +154,14 @@ export function IssueDialog({ issue, defaults, onClose, onSaved }: {
         </DialogContent>
         <DialogActions sx={{ p: 2, flexWrap: "wrap", gap: 1 }}>
           <Button disabled={busy || processing} onClick={close}>{readOnly ? "Fermer" : "Annuler"}</Button>
-          {!readOnly && <Button disabled={busy || processing} variant="contained" type="submit">{busy ? "Enregistrement…" : issue ? "Enregistrer le suivi" : "Enregistrer l’anomalie"}</Button>}
+          {!readOnly && <Button disabled={busy || processing || !!duplicate} variant="contained" type="submit">{busy ? "Enregistrement…" : issue ? "Enregistrer le suivi" : "Enregistrer l’anomalie"}</Button>}
         </DialogActions>
       </Box>
     </Dialog>
     <Dialog open={confirmClose} onClose={() => setConfirmClose(false)} fullWidth maxWidth="xs" aria-labelledby="discard-issue-title">
-      <DialogTitle id="discard-issue-title">Fermer sans enregistrer ?</DialogTitle>
-      <DialogContent>Les modifications saisies dans ce formulaire n’ont pas encore été enregistrées.</DialogContent>
-      <DialogActions><Button onClick={() => setConfirmClose(false)}>Continuer la saisie</Button><Button color="error" onClick={onClose}>Abandonner les modifications</Button></DialogActions>
+      <DialogTitle id="discard-issue-title">{nextIssue ? "Ouvrir le suivi existant ?" : "Fermer sans enregistrer ?"}</DialogTitle>
+      <DialogContent>Les modifications saisies dans ce formulaire n’ont pas encore été enregistrées.{nextIssue ? " Le texte et les photos de cette nouvelle saisie ne seront pas ajoutés automatiquement au signalement existant." : ""}</DialogContent>
+      <DialogActions><Button disabled={busy || processing} onClick={() => { setConfirmClose(false); setNextIssue(null); }}>Continuer la saisie</Button><Button color="error" disabled={busy || processing} onClick={() => nextIssue && onOpenExisting ? onOpenExisting(nextIssue) : onClose()}>Abandonner les modifications</Button></DialogActions>
     </Dialog>
   </>;
 }
