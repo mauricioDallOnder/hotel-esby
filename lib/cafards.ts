@@ -38,6 +38,13 @@ export type CafardCase = {
   observationId?: string | null;
 };
 
+export function emptyCafardCase(room: string): CafardCase {
+  return {
+    room, status: "a_verifier", detectedOn: null, treatedOn: null, updatedOn: null, resolvedOn: null,
+    product: "", notes: "", history: [], revision: 0, lastEventId: null, observationId: null,
+  };
+}
+
 export type CafardTreatmentReminder = { dueOn: string; due: boolean };
 
 function calendarDay(value: string | null): Date | null {
@@ -124,8 +131,9 @@ function inspectionHistory(record: Inspection): CafardHistoryEvent {
  * One follow-up per room, projected from existing immutable observations.
  * A positive control appears here without a second write or a maintenance anomaly.
  * Explicit follow-ups are snapshots ordered by revision; the initial list never
- * replaces them. A newer positive observation reopens the follow-up. A negative
- * control alone does not assert that treatment is finished or resolve a case.
+ * replaces them. A newer positive observation joins an ongoing treatment without
+ * resetting its application or reminder, and reopens a resolved follow-up. A
+ * negative control alone does not assert that treatment is finished or resolve a case.
  */
 export function cafardCases(
   inspections: readonly Inspection[],
@@ -175,7 +183,12 @@ export function cafardCases(
     for (const observation of observations) {
       const order = observationOrder(observation.date, observation.inspectedAt);
       if (order <= reviewedThrough) continue;
-      record.status = "signale";
+      // Another detection belongs to the same ongoing treatment. Keep its
+      // verification reminder until an explicit review changes that stage.
+      // A resolved case instead reopens as signale: its previous application
+      // remains historical and must not restart an old reminder.
+      const awaitingTreatmentReview = (record.status === "traite" || record.status === "a_verifier") && !!calendarDay(record.treatedOn);
+      if (!awaitingTreatmentReview) record.status = "signale";
       record.lastEventId = observation.id;
       // Keep the original detection and previous applications useful. The new
       // observation has its own dated history row; only the resolution is cleared.

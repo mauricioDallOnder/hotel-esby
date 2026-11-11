@@ -91,7 +91,7 @@ test("a room inspection routes a cafards detection to its own follow-up without 
   await dialog.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
   await dialog.getByLabel("Inspecteur").fill("Inspection cafards test");
   await dialog.getByLabel("Observations et problèmes constatés").fill("Cafards derrière le minibar.");
-  await expect(dialog.getByText("Constats pour les anomalies · 0", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Problèmes techniques constatés · 0", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Cafards détectés : le suivi sera ajouté dans « Suivi des cafards ».", { exact: true })).toBeVisible();
   const sent = page.waitForResponse(response => response.url().endsWith("/api/entries") && response.request().method() === "POST");
   await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();

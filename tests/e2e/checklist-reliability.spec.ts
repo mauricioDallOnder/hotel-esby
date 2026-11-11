@@ -72,13 +72,14 @@ test("bulk OK includes smoke, minibar presence stays consistent and a new detect
   expect(after.workEvents!.filter(event => event.kind === "cafardFollowup" && event.room === "125")).toHaveLength(1);
   const cases = cafardCases(after.roomInspections || [], after.workEvents || []).filter(record => record.room === "125");
   expect(cases).toHaveLength(1);
-  expect(cases[0].status).toBe("signale");
+  expect(cases[0].status).toBe("traite");
   expect(cases[0].treatedOn).toBe(treatment.treatedOn);
   expect(cases[0].history.map(event => event.id)).toEqual(expect.arrayContaining([treatment.id, inspection.id]));
   await page.goto("/cafards");
   await page.getByLabel("Rechercher une chambre", { exact: true }).fill("125");
   await expect(page.getByRole("article", { name: "Chambre 125", exact: true })).toHaveCount(1);
-  await expect(page.getByRole("article").getByText("Cafards présents", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article").getByText("Produit appliqué", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article").getByText(/Cafards encore observés le/)).toBeVisible();
   await expect(page.getByRole("article").getByText("Produit : Gel fictif", { exact: true })).toBeVisible();
 });
 

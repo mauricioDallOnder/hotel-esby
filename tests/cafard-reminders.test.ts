@@ -63,6 +63,30 @@ test("cases awaiting verification need a documented application date to generate
   assert.equal(cafardTreatmentReminder({ ...pending, treatedOn: "2026-02-30" }, "2026-11-06"), null);
 });
 
+test("new detections on an open treatment keep its original seven-day visit reminder", () => {
+  const positive: RoomEntry = {
+    type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "101", date: "2026-11-05", inspectedAt: "2026-11-05T11:00:00.000Z",
+    actor: "Agent test", notes: "Cafards encore présents.", condition: "bon", occupied: true, cleaning: null,
+    carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "oui", photosData: [],
+    checks: roomChecks.map(check => ({ key: check.key, result: "ok" })),
+  };
+  for (const cafardStatus of ["traite", "a_verifier"] as const) {
+    const treatment: WorkEntry = {
+      type: "createWorkEvent", id: createId(), kind: "cafardFollowup", targetId: "101", room: "101",
+      expectedRevision: 0, date: "2026-10-30", occurredAt: "2026-10-30T10:00:00.000Z", actor: "Agent test", notes: "Produit appliqué.",
+      cafardStatus, detectedOn: "2026-10-29", treatedOn: "2026-10-30", resolvedOn: null, product: "Produit test",
+    };
+    const record = cafardCases([positive], [treatment])[0];
+    assert.equal(record.status, cafardStatus);
+    assert.deepEqual(cafardTreatmentReminder(record, "2026-11-05"), { dueOn: "2026-11-06", due: false });
+    assert.deepEqual(cafardTreatmentReminder(record, "2026-11-06"), { dueOn: "2026-11-06", due: true });
+    const repeated = { ...positive, id: createId(), date: "2026-11-07", inspectedAt: "2026-11-07T11:00:00.000Z" };
+    const afterRepeated = cafardCases([positive, repeated], [treatment])[0];
+    assert.deepEqual(cafardTreatmentReminder(afterRepeated, "2026-11-07"), { dueOn: "2026-11-06", due: true });
+    assert.equal(afterRepeated.revision, 1);
+  }
+});
+
 test("an application imported from legacy history gets its reminder without changing the source or status", () => {
   const issue: Issue = {
     id: createId(), version: 1, date: "2026-10-29", location: "Chambre 101",
@@ -111,6 +135,13 @@ test("manual resolution, a newer positive inspection and a new treatment use the
   assert.equal(reopened.status, "signale");
   assert.equal(reopened.treatedOn, "2026-10-30");
   assert.equal(cafardTreatmentReminder(reopened, "2026-11-06"), null);
+  const recurring = { ...positive, id: createId(), date: "2026-11-07", inspectedAt: "2026-11-07T11:00:00.000Z" };
+  const stillReopened = cafardCases([positive, recurring], [treatment, resolution]);
+  assert.equal(stillReopened.length, 1);
+  assert.equal(stillReopened[0].status, "signale");
+  assert.equal(stillReopened[0].treatedOn, "2026-10-30");
+  assert.equal(stillReopened[0].revision, 2);
+  assert.equal(cafardTreatmentReminder(stillReopened[0], "2026-11-07"), null);
 
   const newTreatment: WorkEntry = {
     ...treatment, id: createId(), expectedRevision: 2, date: "2026-11-06", occurredAt: "2026-11-06T12:00:00.000Z",
