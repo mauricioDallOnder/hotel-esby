@@ -49,8 +49,8 @@ function useClock() {
   return now;
 }
 
-function MachineCard({ state, pending, ready, onAction }: {
-  state: MachineState; pending: boolean; ready: boolean; onAction: (action: LaundryAction) => void;
+function MachineCard({ state, pending, ready, blocked, onReview, onAction }: {
+  state: MachineState; pending: boolean; ready: boolean; blocked: boolean; onReview: () => void; onAction: (action: LaundryAction) => void;
 }) {
   const { machine, cycle, phase } = state;
   const active = !!cycle && cycle.status === "en_cours";
@@ -65,6 +65,10 @@ function MachineCard({ state, pending, ready, onAction }: {
         <Chip label={phaseLabel(phase, machine.kind)} color={color} size="small" variant="outlined" sx={{ mt: 0.5 }} />
       </Stack>
       <Typography variant="body2" color="text.secondary">{machine.program}{machine.kind === "washer" ? ` · ${cycle?.initialDurationMinutes ?? machine.durationMinutes} min` : ""}</Typography>
+      {blocked && <Alert severity="warning" sx={{ "& .MuiAlert-message": { minWidth: 0 } }}>
+        <Typography variant="body2">Une demande en attente doit être vérifiée avant de modifier cette machine.</Typography>
+        <Button color="inherit" onClick={onReview} sx={{ mt: 0.5, px: 0, minHeight: 44 }}>Vérifier la demande</Button>
+      </Alert>}
       {active ? <>
         <Box sx={{ p: 1.75, bgcolor: "action.hover", borderRadius: 2 }}>
           <Typography variant="caption" color="text.secondary">Linge de la chambre</Typography>
@@ -87,23 +91,25 @@ function MachineCard({ state, pending, ready, onAction }: {
         {phase === "ready" && <Typography variant="body2" sx={{ fontWeight: 700 }}>{machine.kind === "washer"
           ? "Le linge est prêt à passer au séchage. Retirez-le avant de libérer la machine à laver."
           : "Le linge attend dans la machine. Retirez-le avant de libérer la place."}</Typography>}
-        <Button variant="outlined" disabled={!ready} onClick={() => onAction("extend")} sx={{ minHeight: 48 }}>Ajouter du temps</Button>
-        <Button variant={phase === "ready" ? "contained" : "outlined"} disabled={!ready} onClick={() => onAction("collect")} sx={{ minHeight: 48 }}>{machine.kind === "washer" ? "Terminé · prêt à sécher" : "Linge récupéré"}</Button>
-        <Button color="inherit" disabled={!ready} onClick={() => onAction("cancel")} sx={{ minHeight: 44 }}>Annuler le cycle</Button>
+        <Button variant="outlined" disabled={!ready || blocked} onClick={() => onAction("extend")} sx={{ minHeight: 48 }}>Ajouter du temps</Button>
+        <Button variant={phase === "ready" ? "contained" : "outlined"} disabled={!ready || blocked} onClick={() => onAction("collect")} sx={{ minHeight: 48 }}>{machine.kind === "washer" ? "Terminé · prêt à sécher" : "Linge récupéré"}</Button>
+        <Button color="inherit" disabled={!ready || blocked} onClick={() => onAction("cancel")} sx={{ minHeight: 44 }}>Annuler le cycle</Button>
       </> : <>
         <Stack direction="row" spacing={1} sx={{ py: 1, alignItems: "center", flexGrow: 1 }}>
           {machine.kind === "washer" ? <LocalLaundryServiceOutlined color="action" /> : <DryCleaningOutlined color="action" />}
           <Typography variant="body2" color="text.secondary">Prête pour un nouveau linge</Typography>
         </Stack>
-        <Button variant="contained" disabled={!ready} onClick={() => onAction("start")} sx={{ minHeight: 48 }}>Démarrer</Button>
+        <Button variant="contained" disabled={!ready || blocked} onClick={() => onAction("start")} sx={{ minHeight: 48 }}>Démarrer</Button>
       </>}
     </Stack>
   </Paper>;
 }
 
 export default function LaundryPage() {
-  const { events, isPending } = useWorkEvents();
-  const { ready } = useEntries();
+  const { events, isPending, queued } = useWorkEvents();
+  const { ready, reviewLaundry } = useEntries();
+  const blockedMachines = new Map(queued.filter(item => item.blocked && item.entry.type === "createWorkEvent" && item.entry.kind === "laundryCycle")
+    .map(item => [item.entry.type === "createWorkEvent" ? item.entry.targetId : "", item.entry.id]));
   const now = useClock();
   const states = laundryMachineStates(events, now);
   const cycles = laundryCycles(events);
@@ -126,6 +132,7 @@ export default function LaundryPage() {
   });
   const currentDialog = dialog && states.find(state => state.machine.id === dialog.state.machine.id);
   const unchanged = !!currentDialog && !!dialog && currentDialog.revision === dialog.state.revision &&
+    !blockedMachines.has(dialog.state.machine.id) &&
     (dialog.action === "start" ? currentDialog.phase === "available" : currentDialog.cycle?.cycleId === dialog.state.cycle?.cycleId);
   return <>
     <ConnectionBar />
@@ -150,6 +157,7 @@ export default function LaundryPage() {
             <Typography component="h2" variant="h6" sx={{ mb: 1.5, fontWeight: 800 }}>{kind === "washer" ? "Machines à laver" : "Machines à sécher"}</Typography>
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(3, minmax(0, 1fr))" }, gap: 2, alignItems: "stretch" }}>
               {states.filter(state => state.machine.kind === kind).map(state => <MachineCard key={state.machine.id} state={state} ready={ready} pending={!!state.cycle && isPending(state.cycle.lastEventId)}
+                blocked={blockedMachines.has(state.machine.id)} onReview={() => { const id = blockedMachines.get(state.machine.id); if (id) reviewLaundry(id); }}
                 onAction={action => setDialog({ action, state })} />)}
             </Box>
           </Box>)}

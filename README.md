@@ -131,6 +131,39 @@ recebem o registro após a sincronização; conflitos ficam visíveis para confe
 O histórico é salvo como eventos `laundryCycle` em **Suivi quotidien**, usando
 os identificadores distintos `washer-1` a `washer-3` e `dryer-1` a `dryer-3`.
 
+### Resolver uma solicitação de lavanderia recusada
+
+Um aviso de revisão concorrente indica que a máquina foi atualizada depois da
+solicitação preparada no aparelho. Reenviar a mesma revisão não resolve esse
+conflito. O aviso compacto **Lingerie · … demandes à vérifier** oferece
+**Vérifier et résoudre**; o cartão da máquina também oferece **Vérifier la demande**.
+**Réessayer l’envoi** abre essa conferência para os conflitos de lavanderia, sem
+reenviar automaticamente a solicitação recusada.
+
+A conferência consulta o servidor e mostra a solicitação original e o estado
+registrado, incluindo quarto, ciclo, pessoa e horário:
+
+- Se a própria ação já foi salva com o mesmo ID e conteúdo, a cópia pendente é
+  removida após a confirmação do registro.
+- Se o mesmo ciclo já foi retirado ou cancelado conforme solicitado, use
+  **Fermer la demande déjà traitée**. O histórico original permanece intacto.
+- Se o mesmo ciclo continua ativo, mas foi atualizado, confira a máquina,
+  marque que ela está parada e vazia e use **Confirmer le retrait maintenant**
+  (ou a confirmação de cancelamento). A nova solicitação conserva autor,
+  observação e identificação das roupas e usa o estado e o horário atuais.
+- Se a máquina já acompanha outro ciclo ou a situação é incompatível, a
+  solicitação antiga não é aplicada a ele. Consulte o histórico e, se for o
+  caso, cancele explicitamente apenas essa solicitação pendente.
+
+Durante o conflito, novas ações ficam bloqueadas somente naquela máquina.
+Falhas de conexão conservam a solicitação. Uma nova confirmação substitui a
+anterior em uma única transação local e continua protegida pela revisão e pela
+confirmação de recebimento do servidor. Ações offline dependentes na mesma
+máquina precisam ser conferidas antes de substituir uma solicitação.
+
+Esta recuperação usa as APIs existentes: não exige nova aba na planilha nem
+alteração adicional no Google Apps Script em relação à versão anterior do app.
+
 ### Ativar os lembretes em cada aparelho
 
 Em **Les rappels de la lingerie**, toque em **Activer sur cet appareil** e aceite
