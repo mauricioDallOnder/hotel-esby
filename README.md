@@ -1,5 +1,55 @@
 # Hôtel Contrôle
 
+## Problemas frequentes e associação ao acompanhamento existente
+
+O formulário **Nouveau problème technique** e os equipamentos do checklist marcados
+com **Problème** oferecem uma lista de problemas frequentes, organizada a partir
+da consulta ao histórico da planilha. As opções incluem tomadas, aquecimento,
+vazamentos, WC, interruptores, torneiras, janelas e iluminação. **Autre problème**
+permite descrever uma situação que não está na lista. Detalhes como “prise près du
+lit” ajudam a distinguir objetos diferentes no mesmo quarto.
+
+No resumo do checklist, **Associer à un problème existant** permite selecionar
+qualquer problema ainda aberto daquele quarto. Assim, uma tomada já sinalizada
+pode ser associada a **Rien de cassé**, mesmo quando o registro anterior tem outro
+título. A nova inspeção, suas observações e fotos permanecem no histórico, com o
+vínculo ao problema escolhido. O vínculo não resolve nem altera automaticamente
+o problema existente.
+
+As correspondências automáticas consideram o tipo de defeito e os detalhes. Uma
+chave genérica como **Rien de cassé** não basta para juntar dois defeitos diferentes.
+Se houver várias possibilidades ou faltar precisão, o formulário pede a escolha.
+A gravação confere novamente se o problema escolhido continua aberto e pertence
+ao quarto; uma alteração concorrente exige revisão, sem criar uma nova anomalia
+silenciosamente. Reenvios confirmados conservam a decisão original.
+
+**Cafards** abre o acompanhamento próprio do quarto. Uma nova detecção durante um
+tratamento acrescenta uma observação à mesma ficha, conserva a aplicação do
+produto e mantém o lembrete de verificação após sete dias. A página destaca a nova
+observação. Se o caso já estava resolvido, uma nova detecção reabre a mesma ficha,
+preservando o histórico sem reativar o lembrete do tratamento anterior.
+
+As regras do checklist continuam respeitadas: cafards são acompanhados no menu
+próprio; cama, colchão, minibar, ferme-porte e poignée não geram problemas técnicos
+automaticamente. Mau estado afeta a rotação com o intervalo de quatro dias.
+O tipo manual **Réfrigérateur en panne** não muda essa regra do checklist.
+
+### Publicação desta atualização
+
+Atualize **`google-apps-script/Code.gs`** e publique uma nova versão da implantação
+existente **antes de publicar o app**. Preserve a URL, o token, a planilha, as fotos
+e os gatilhos. As ações **`commitIssueV3`** e **`commitRoomInspectionV3`** exigem o
+script atualizado; um script antigo recusa essas operações com uma instrução de
+atualização, conservando os controles pendentes no aparelho. O script atualizado
+continua aceitando as ações anteriores e os recibos de envios já confirmados.
+
+Não há nova aba nem limpeza automática do histórico: problemas continuam em
+**Anomalies**, inspeções em **Contrôles chambres** e acompanhamentos de cafards em
+**Suivi quotidien**. Várias linhas de cafards para um mesmo quarto são versões do
+seu histórico; a interface apresenta uma única ficha. Duplicatas antigas de
+problemas técnicos não são apagadas nem marcadas como reparadas sem conferência.
+O GitHub/Vercel não publica o Google Apps Script automaticamente.
+
 ## Modo escuro, checklist e acompanhamentos consistentes
 
 O botão de lua/sol no topo alterna **Mode sombre / Mode clair**, inclusive na
@@ -42,7 +92,7 @@ uma leitura ou recibo antigo não faz um problema resolvido reaparecer como aber
 **Antes de publicar esta versão do app**, substitua `google-apps-script/Code.gs`
 no projeto existente e publique uma nova versão da implantação. Preserve a URL,
 o token, a planilha, as chaves e os gatilhos atuais. As ações protegidas
-`commitIssueV2`, `commitRoomInspectionV2` e `commitCafardFollowupV2` exigem o código
+`commitIssueV3`, `commitRoomInspectionV3` e `commitCafardFollowupV2` exigem o código
 atualizado. A implantação antiga recusa a gravação com uma instrução de atualização;
 controles e acompanhamentos enviados pela fila permanecem no aparelho.
 
@@ -604,7 +654,7 @@ e o download disponível falhou. A integração com o Google real depende da imp
 ## Contrôle rapide et rotation des chambres (version 4)
 
 - **Inspeção por toque:** três etapas (équipements, état/ménage, résumé), botões
-  grandes OK / Problème / Absent, sem dropdowns. O atalho de validação só marca
+  grandes OK / Problème / Absent e seleção do defeito quando necessário. O atalho de validação só marca
   equipamentos ainda sem resposta, incluindo detector e ferme-porte; itens já sinalizados
   exigem resposta individual. Nenhuma resposta é preenchida ao abrir o quarto.
 - **Ferme-porte:** verificar presença e fechamento automático. Defeito ou ausência
@@ -628,8 +678,9 @@ e o download disponível falhou. A integração com o Google real depende da imp
 - **Anomalias sem duplicação:** no salvamento, compara o quarto exato e cada
   constat com anomalias abertas/em andamento, inclusive as criadas pelo menu
   Anomalies. Novos registros usam chaves de equipamento; registros manuais antigos
-  usam termos reconhecidos em francês. Quando há mais de um signalement correspondente,
-  o resumo permite escolher o vínculo entre eles. O antigo atalho para criar outro
+  usam termos reconhecidos em francês. O resumo permite escolher o vínculo com
+  qualquer problema aberto do quarto e pede uma escolha quando há ambiguidade.
+  O antigo atalho para criar outro
   signalement do mesmo item foi retirado. Só constats elegíveis novos criam uma anomalia; vínculos,
   observações e fotos ficam no histórico. Um controle OK não encerra uma anomalia.
   Uma falha que reaparece depois da resolução pode gerar um novo signalement.
@@ -646,7 +697,7 @@ planilha e pasta de fotos. A nova coluna Ferme-porte é adicionada ao final, sem
 mover ou apagar colunas/dados antigos.
 
 O GitHub não publica o Apps Script automaticamente. O aplicativo usa a ação
-`commitRoomInspectionV2`, que o script antigo rejeita antes de gravar: nesse caso
+`commitRoomInspectionV3`, que o script antigo rejeita antes de gravar: nesse caso
 os controles permanecem na fila do aparelho, com instrução de atualização.
 Depois de atualizar a implantação, use **Réessayer**. Não limpe os dados do
 navegador enquanto houver registros pendentes. No modo `local`, não há esta etapa.

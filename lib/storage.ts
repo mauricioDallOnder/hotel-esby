@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChange } from "./rooms";
 import { today } from "./domain";
 import { validateWorkEntry } from "./work";
-import { prepareRoomIssue } from "./roomIssueMatching";
+import { prepareRoomIssue, validateRoomIssuePlan } from "./roomIssueMatching";
 import { ReadCache } from "./readCache";
 import {
   applyCommand,
@@ -112,8 +112,8 @@ export async function google<T>(payload: Record<string, unknown>, timeoutMs = 55
       );
     }
     
-    if (!result.ok && ["commitIssueV2", "commitRoomInspection", "commitRoomInspectionV2", "commitWorkEvent", "commitCafardFollowupV2", "commitLaundryCycle", "commitLaundryCycleV2"].includes(String(payload.action)) && result.error === "Action invalide.")
-      throw new DomainError(payload.action === "commitIssueV2"
+    if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitWorkEvent", "commitCafardFollowupV2", "commitLaundryCycle", "commitLaundryCycleV2"].includes(String(payload.action)) && result.error === "Action invalide.")
+      throw new DomainError(["commitIssueV2", "commitIssueV3"].includes(String(payload.action))
         ? "Mettez à jour et redéployez le fichier Google Apps Script avant d’enregistrer ce problème. Votre saisie reste dans ce formulaire : gardez-le ouvert pour réessayer."
         : "Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser ces modifications. Elles restent conservées sur cet appareil.", 503);
     if (!result.ok)
@@ -144,7 +144,7 @@ export async function execute(command: Command): Promise<State> {
         if ((photosData?.length || 0) > 1 && state.maxIssuePhotos !== MAX_ISSUE_PHOTOS)
           throw new DomainError("La connexion Google doit être mise à jour par la direction pour enregistrer plusieurs photos.", 503);
         await google({
-          action: "commitIssueV2",
+          action: "commitIssueV3",
           ...recordChange,
           ...(photosData?.length === 1 ? { photoData: photosData[0] } : { photosData }),
         });
@@ -277,7 +277,7 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   
   if (storageMode() === "sheets") {
     try {
-      const action = change.collection === "roomInspections" ? "commitRoomInspectionV2"
+      const action = change.collection === "roomInspections" ? "commitRoomInspectionV3"
         : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? "commitLaundryCycleV2"
           : change.record.kind === "cafardFollowup" ? "commitCafardFollowupV2" : "commitWorkEvent" : "commitEntry";
       const receipt = await google<EntryChange>({ action, ...change, expectedVersion: 0, photosData });
@@ -301,6 +301,10 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   
   if (entry.type === "createWorkEvent") {
     const error = validateWorkEntry(entry, state.workEvents || [], state.familyEvents || [], state.deletedFamilyEventIds, state.roomInspections || []);
+    if (error) throw new DomainError(error, 409);
+  }
+  if (change.collection === "roomInspections") {
+    const error = validateRoomIssuePlan(change.issue, change.record, state.issues);
     if (error) throw new DomainError(error, 409);
   }
   mkdirSync(directory(), { recursive: true });

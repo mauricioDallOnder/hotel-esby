@@ -192,7 +192,7 @@ test("Google storage preserves full controls and photos without an anomaly or du
   });
   const input = observationsOnly();
   const receipt = await executeEntry(input);
-  assert.deepEqual(actions, ["commitRoomInspectionV2"]);
+  assert.deepEqual(actions, ["commitRoomInspectionV3"]);
   assertSavedWithoutAnomaly(receipt, input);
   assert.deepEqual(await executeEntry(input), receipt);
   assert.equal(google.files.size, 2);

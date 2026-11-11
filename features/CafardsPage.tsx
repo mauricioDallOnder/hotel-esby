@@ -8,7 +8,7 @@ import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { RoomSelect } from "@/components/RoomSelect";
 import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
-import { cafardCases, cafardStatusLabels, cafardTreatmentReminder, type CafardCase, type CafardStatus } from "@/lib/cafards";
+import { cafardCases, cafardStatusLabels, cafardTreatmentReminder, emptyCafardCase, type CafardCase, type CafardStatus } from "@/lib/cafards";
 import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
 import { displayDate } from "@/lib/domain";
 import { roomGroups } from "@/lib/rooms";
@@ -35,6 +35,7 @@ function matchesFilter(record: CafardCase, filter: CafardFilter, day: string): b
 function CafardCard({ record, day, pending, onEdit }: { record: CafardCase; day: string; pending: boolean; onEdit: () => void }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const reminder = cafardTreatmentReminder(record, day);
+  const newDetection = reminder && record.history.find(event => event.id === record.lastEventId && event.kind === "inspection");
   return <Paper component="article" aria-label={"Chambre " + record.room} variant="outlined"
     sx={{ p: 2, minWidth: 0, borderTop: "4px solid", borderTopColor: (reminder?.due ? "warning" : statusColors[record.status]) + ".main" }}>
     <Stack spacing={1.5}>
@@ -57,6 +58,10 @@ function CafardCard({ record, day, pending, onEdit }: { record: CafardCase; day:
       {reminder?.due && <Alert severity="warning" role="note">
         <AlertTitle>Vérification à faire</AlertTitle>
         Passez dans cette chambre pour vérifier la présence de cafards, puis mettez le suivi à jour.
+      </Alert>}
+      {newDetection && <Alert severity="warning" role="note">
+        <AlertTitle>Cafards encore observés le {dateText(newDetection.date)}</AlertTitle>
+        Cette observation a été ajoutée au suivi existant. La date d’application et le rappel de vérification sont conservés.
       </Alert>}
       {record.product && <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>Produit : {record.product}</Typography>}
       {record.notes && <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{record.notes}</Typography>}
@@ -87,11 +92,6 @@ function CafardCard({ record, day, pending, onEdit }: { record: CafardCase; day:
   </Paper>;
 }
 
-function emptyCase(room: string): CafardCase {
-  return { room, status: "a_verifier", detectedOn: null, treatedOn: null, updatedOn: null, resolvedOn: null,
-    product: "", notes: "", history: [], revision: 0, lastEventId: null };
-}
-
 export default function CafardsPage() {
   const { issues } = useAppContext();
   const { history, pendingIds, day } = useRoomObservations();
@@ -112,7 +112,7 @@ export default function CafardsPage() {
   const existing = records.find(record => record.room === room);
   function openRoom() {
     if (!room) return;
-    setEditing(existing || emptyCase(room));
+    setEditing(existing || emptyCafardCase(room));
     setAdding(false);
   }
   return <>
@@ -123,7 +123,7 @@ export default function CafardsPage() {
       {saved && <Alert severity="success" onClose={() => setSaved(null)} closeText="Masquer ce message">
         Suivi de la chambre {saved.room} conservé.{saved.status === "resolu" ? " Retrouvez-le en choisissant « Résolu » dans le filtre." : ""}
       </Alert>}
-      <Typography variant="body2" color="text.secondary">Les cafards détectés pendant un contrôle apparaissent ici. Un rappel s’affiche 7 jours après l’application du produit : vérifiez la chambre, puis mettez le suivi à jour.</Typography>
+      <Typography variant="body2" color="text.secondary">Chaque chambre garde un seul suivi. Les nouvelles détections pendant un contrôle rejoignent son historique et conservent le traitement en cours. Un rappel s’affiche 7 jours après l’application du produit : vérifiez la chambre, puis mettez le suivi à jour.</Typography>
       {!!dueRooms.length && <Alert severity="warning" role="status" sx={{ "& .MuiAlert-message": { minWidth: 0, width: "100%" } }}>
         <AlertTitle>{dueRooms.length} {dueRooms.length === 1 ? "chambre à vérifier" : "chambres à vérifier"} après traitement</AlertTitle>
         <Typography variant="body2">Le produit a été appliqué il y a au moins 7 jours. Passez dans les chambres concernées pour vérifier la présence de cafards.</Typography>

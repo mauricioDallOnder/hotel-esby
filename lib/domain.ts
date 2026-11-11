@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Role } from "./roles";
-import { duplicateRoomIssueMessage, findDuplicateOpenIssue, issueRoom, shouldCheckIssueDuplicate } from "./roomIssueMatching";
+import { cafardTechnicalReportMessage, duplicateRoomIssueMessage, findDuplicateOpenIssue, isCafardTechnicalReport, issueRoom, shouldCheckIssueDuplicate } from "./roomIssueMatching";
+import { getProblemPreset } from "./problemPresets";
 
 export const MAX_ISSUE_PHOTOS = 3;
 
@@ -106,6 +107,7 @@ const fields = z.object({
   priority,
   description: note.min(1),
   assignee: z.string().trim().max(200),
+  problemType: z.string().refine(value => !!getProblemPreset(value), "Choisissez un type de problème connu.").optional(),
 });
 
 export const checkSchema = z.object({
@@ -175,7 +177,7 @@ export type Event = {
 
 export type Issue = IssueFields & {
   room?: string;
-  roomFindings?: { key: string; label: string }[];
+  roomFindings?: { key: string; label: string; problemType?: string; description?: string }[];
   id: string;
   version: number;
   date: string;
@@ -380,6 +382,7 @@ export function applyCommand(
       ],
     };
 
+    if (isCafardTechnicalReport(record)) throw new DomainError(cafardTechnicalReportMessage(), 409);
     const duplicate = findDuplicateOpenIssue(record, state.issues);
     if (duplicate) throw new DomainError(duplicateRoomIssueMessage(duplicate), 409);
 
@@ -420,6 +423,8 @@ export function applyCommand(
 
     const candidate = { ...current, ...command.fields, room: issueRoom(command.fields), status: command.status };
     if (shouldCheckIssueDuplicate(candidate, current)) {
+      if (isCafardTechnicalReport(candidate) && (current.status === "resolu" || !isCafardTechnicalReport(current)))
+        throw new DomainError(cafardTechnicalReportMessage(), 409);
       const duplicate = findDuplicateOpenIssue(candidate, state.issues);
       if (duplicate) throw new DomainError(duplicateRoomIssueMessage(duplicate), 409);
     }

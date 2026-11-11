@@ -1,14 +1,25 @@
 "use client";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Alert, Box, Button, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, MenuItem, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
 import PhotoCameraOutlined from "@mui/icons-material/PhotoCameraOutlined";
 import { useAppContext } from "@/context/AppContext";
 import { preparePhotos, type PhotoProgress } from "@/lib/photos";
 import { categories, commandSchema, displayDate, issuePhotoIds, issueResponsible, MAX_ISSUE_PHOTOS, createId, priorities, statuses, today, type Issue, type IssueFields, type Status } from "@/lib/domain";
-import { duplicateRoomIssueMessage, findDuplicateOpenIssue, issueRoom, openRoomIssues, shouldCheckIssueDuplicate } from "@/lib/roomIssueMatching";
+import { duplicateRoomIssueMessage, findDuplicateOpenIssue, isCafardTechnicalReport, issueRoom, openRoomIssues, shouldCheckIssueDuplicate } from "@/lib/roomIssueMatching";
+import { getProblemPreset, problemPresets } from "@/lib/problemPresets";
+import { cafardCases, emptyCafardCase, type CafardCase } from "@/lib/cafards";
+import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
+import { useRoomObservations } from "@/lib/useRoomObservations";
+import { useWorkEvents } from "@/lib/useWorkEvents";
+import { rooms } from "@/lib/rooms";
+import { CafardFollowupDialog } from "./CafardFollowupDialog";
 import { IssueBadges } from "./HotelUI";
 import { IssuePhoto } from "./IssuePhoto";
 import { QuickChoice } from "./QuickChoice";
+import { ProblemTypeSelect } from "./ProblemTypeSelect";
+
+const problemOptions = [...problemPresets.filter(preset => preset.id !== "other"),
+  { id: "cafards", label: "Cafards / nuisibles · suivi dédié" }, ...problemPresets.filter(preset => preset.id === "other")];
 
 export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting }: {
   issue?: Issue;
@@ -17,14 +28,22 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
   onOpenExisting?: (issue: Issue) => void;
 }) {
   const { mutate, busy, role, issues } = useAppContext();
+  const { history: roomHistory } = useRoomObservations();
+  const { events: workEvents } = useWorkEvents();
   const readOnly = !!issue && role !== "direction";
   const theme = useTheme(), mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [id] = useState(() => issue?.id || createId());
   const [initial] = useState<IssueFields>({ title: issue?.title || defaults?.title || "", location: issue?.location || defaults?.location || "", category: issue?.category || "Plomberie",
-    priority: issue?.priority || defaults?.priority || "normale", description: issue?.description || "", assignee: issue ? issueResponsible(issue) : "" });
+    priority: issue?.priority || defaults?.priority || "normale", description: issue?.description || "", assignee: issue ? issueResponsible(issue) : "",
+    ...(issue?.problemType ? { problemType: issue.problemType } : {}) });
   const [initialDate] = useState(() => defaults?.date || today());
   const [initialActor] = useState(() => issue ? "" : defaults?.actor || "");
   const [fields, setFields] = useState<IssueFields>(initial);
+  const [customTitle, setCustomTitle] = useState(initial.title);
+  const [cafardMode, setCafardMode] = useState(false);
+  const [cafardDialog, setCafardDialog] = useState<CafardCase | null>(null);
+  const [embeddedIssue, setEmbeddedIssue] = useState<Issue | null>(null);
+  const [feedback, setFeedback] = useState("");
   const [date, setDate] = useState(initialDate);
   const [actor, setActor] = useState(initialActor);
   const [status, setStatus] = useState<Status>(issue?.status || "ouvert");
@@ -41,16 +60,53 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
   const submitting = useRef(false);
   const dirty = !readOnly && (JSON.stringify(fields) !== JSON.stringify(initial) || actor !== initialActor || !!note || !!photos.length || status !== (issue?.status || "ouvert") || date !== initialDate);
   const room = issueRoom({ location: fields.location });
+  const validCafardRoom = !!room && rooms.includes(room);
   const known = !issue && room ? openRoomIssues(issues, room) : [];
   const candidate = issue ? { ...issue, ...fields, room, status } : { ...fields, id };
+  const cafardReport = !issue && (cafardMode || isCafardTechnicalReport(candidate));
+  const presetSelected = !issue && !!fields.problemType && fields.problemType !== "other";
+  const cafardRecords = useMemo(() => cafardCases(roomHistory, workEvents, cafardSeedsFromIssues(issues)), [roomHistory, workEvents, issues]);
+  const existingCafard = room ? cafardRecords.find(record => record.room === room) : undefined;
   const checkDuplicate = !readOnly && (!issue || shouldCheckIssueDuplicate({ ...issue, ...fields, room, status }, issue));
-  const duplicate = checkDuplicate ? findDuplicateOpenIssue(candidate, issues) : undefined;
+  const duplicate = checkDuplicate && !cafardReport ? findDuplicateOpenIssue(candidate, issues) : undefined;
   function change<K extends keyof IssueFields>(key: K, value: IssueFields[K]) { setFields(current => ({ ...current, [key]: value })); }
+  function changeTitle(title: string) {
+    setCustomTitle(title);
+    setFields(current => ({ ...current, title,
+      ...(issue && current.problemType && title.trim() !== current.title.trim() ? { problemType: "other" } : {}),
+    }));
+  }
   function close() { if (!busy && !processing) { setNextIssue(null); if (dirty) setConfirmClose(true); else onClose(); } }
   function openExisting(existing: Issue) {
-    if (busy || processing || !onOpenExisting) return;
+    if (busy || processing) return;
+    if (!onOpenExisting) { setEmbeddedIssue(existing); return; }
     if (dirty) { setNextIssue(existing); setConfirmClose(true); }
     else onOpenExisting(existing);
+  }
+  function openCafardFollowup() {
+    if (busy || processing) return;
+    if (!room || !validCafardRoom) { showError("Indiquez une chambre de l’hôtel dans « Lieu précis » pour ouvrir son suivi des cafards."); return; }
+    setError("");
+    setCafardDialog(existingCafard || emptyCafardCase(room));
+  }
+  function selectProblem(problemType: string) {
+    if (busy || processing) return;
+    setError(""); setFeedback("");
+    if (problemType === "cafards") {
+      setCafardMode(true);
+      if (validCafardRoom) openCafardFollowup();
+      return;
+    }
+    setCafardMode(false);
+    const preset = getProblemPreset(problemType);
+    if (!preset) return;
+    const previousPreset = getProblemPreset(fields.problemType);
+    const automaticDescription = !fields.description.trim() || fields.description === previousPreset?.label;
+    setFields(current => ({ ...current, problemType,
+      title: problemType === "other" ? customTitle : preset.label,
+      category: problemType === "other" ? current.category : preset.category,
+      description: automaticDescription ? problemType === "other" ? "" : preset.label : current.description,
+    }));
   }
   function showError(message: string) { setError(message); content.current?.scrollTo({ top: 0 }); }
   async function loadPhotos(files: File[]) {
@@ -65,8 +121,10 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
     e.preventDefault();
     if (readOnly || processing || busy || submitting.current) return;
     setError("");
+    if (cafardReport) { openCafardFollowup(); return; }
     if (duplicate) { showError(duplicateRoomIssueMessage(duplicate)); return; }
-    const issueFields = { ...fields, assignee: issue ? issueResponsible(issue) : actor.trim() };
+    const issueFields = { ...fields, description: presetSelected && !fields.description.trim() ? fields.title : fields.description,
+      assignee: issue ? issueResponsible(issue) : actor.trim() };
     const parsed = commandSchema.safeParse(issue ? { type: "updateIssue", id, version: issue.version, actor, note, status, fields: issueFields }
       : { type: "createIssue", id, date, actor, fields: issueFields, photosData: photos });
     if (!parsed.success) {
@@ -84,7 +142,7 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
   }
   const existingPhotos = issue ? issuePhotoIds(issue) : [];
   return <>
-    <Dialog open fullWidth fullScreen={mobile} maxWidth="sm" onClose={busy || processing ? undefined : close} aria-labelledby="issue-dialog-title">
+    <Dialog open={!embeddedIssue && !cafardDialog} fullWidth fullScreen={mobile} maxWidth="sm" onClose={busy || processing ? undefined : close} aria-labelledby="issue-dialog-title">
       <Box component="form" noValidate onSubmit={submit} sx={{ display: "flex", flexDirection: "column", minHeight: 0, height: mobile ? "100%" : undefined, maxHeight: "100%" }}>
         <DialogTitle id="issue-dialog-title" sx={{ pb: 1.5 }}>
           {readOnly ? "Consulter l’anomalie" : issue ? "Suivi de l’anomalie" : "Signaler une anomalie"}
@@ -93,9 +151,10 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
         <DialogContent ref={content} dividers sx={{ px: { xs: 2, sm: 3 } }}>
           <Stack spacing={2}>
             {error && <Alert severity="error">{error}</Alert>}
+            {feedback && <Alert severity="success">{feedback}</Alert>}
             {duplicate && <Alert severity="warning">
               {duplicateRoomIssueMessage(duplicate)}
-              {onOpenExisting && <Button color="inherit" disabled={busy || processing} onClick={() => openExisting(duplicate)} sx={{ display: "flex", mt: 1 }}>Ouvrir le signalement existant</Button>}
+              <Button color="inherit" disabled={busy || processing} onClick={() => openExisting(duplicate)} sx={{ display: "flex", mt: 1 }}>Ouvrir le signalement existant</Button>
             </Alert>}
             {issue && <><IssueBadges issue={issue} /><Typography variant="body2" sx={{ fontWeight: 600 }}>Responsable : {issueResponsible(issue) || "Non renseigné"}</Typography><Typography variant="caption" color="text.secondary">Signalée le {displayDate(issue.date)}</Typography></>}
             {readOnly && <Typography variant="body2" color="text.secondary">La direction gère les interventions et les changements d’état.</Typography>}
@@ -111,10 +170,30 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
                 {issue && <Button onClick={() => setDetailsOpen(!detailsOpen)} aria-expanded={detailsOpen} sx={{ justifyContent: "flex-start" }}>{readOnly ? "Fiche et photos" : "Modifier la fiche / voir les photos"}{existingPhotos.length ? ` (${existingPhotos.length})` : ""}</Button>}
                 <Collapse in={detailsOpen} unmountOnExit>
                   <Stack spacing={2}>
-                    <TextField required label="Titre" disabled={readOnly} placeholder="Ex. : Fuite sous le lavabo" value={fields.title} onChange={e => change("title", e.target.value)} slotProps={{ htmlInput: { maxLength: 200 } }} />
-                    <TextField required label="Lieu précis" disabled={readOnly} placeholder="Ex. : Chambre 204 · salle de bain" value={fields.location} onChange={e => change("location", e.target.value)} slotProps={{ htmlInput: { maxLength: 200 } }} />
-                    {known.length > 0 && <Alert severity="info"><strong>{known.length} anomalie(s) déjà ouverte(s) dans cette chambre</strong>{known.slice(0, 3).map(item => <Typography key={item.id} variant="body2">{item.title} · {statuses[item.status]}</Typography>)}<Typography variant="caption">Vérifiez qu’il s’agit d’un nouveau problème avant de l’enregistrer.</Typography></Alert>}
-                    <TextField required disabled={readOnly} label="Description du problème" placeholder="Ex. : fuite sous le lavabo, eau au sol…" multiline minRows={3} value={fields.description} onChange={e => change("description", e.target.value)} slotProps={{ htmlInput: { maxLength: 4000 } }} />
+                    {!issue && <ProblemTypeSelect value={cafardMode ? "cafards" : fields.problemType || "other"} onChange={selectProblem} options={problemOptions} disabled={busy || processing}
+                      helperText="Choisissez un problème fréquent ou « Autre problème » pour le décrire librement." />}
+                    {!cafardMode && (issue || !fields.problemType || fields.problemType === "other") && <TextField required label="Titre" disabled={readOnly} placeholder="Ex. : Fuite sous le lavabo" value={fields.title} onChange={e => changeTitle(e.target.value)} slotProps={{ htmlInput: { maxLength: 200 } }} />}
+                    <TextField required label="Lieu précis" disabled={readOnly} placeholder="Ex. : Chambre 204 · salle de bain" value={fields.location} onChange={e => change("location", e.target.value)}
+                      error={cafardReport && !!fields.location.trim() && !validCafardRoom} helperText={cafardReport && !!fields.location.trim() && !validCafardRoom ? "Indiquez le numéro d’une chambre de l’hôtel." : undefined}
+                      slotProps={{ htmlInput: { maxLength: 200 } }} />
+                    {cafardReport && <Alert severity="info">
+                      <Typography variant="subtitle2">{existingCafard ? `Un suivi des cafards existe déjà pour la chambre ${room}.` : "Les cafards ont leur propre suivi par chambre."}</Typography>
+                      <Typography variant="body2">Utilisez ce suivi pour conserver les détections, les applications et les vérifications au même endroit. Votre saisie technique reste disponible en revenant.</Typography>
+                      <Button color="inherit" disabled={!validCafardRoom || busy || processing} onClick={openCafardFollowup} sx={{ mt: 1 }}>{existingCafard ? "Ouvrir le suivi des cafards existant" : "Ouvrir le suivi des cafards"}</Button>
+                      {!validCafardRoom && <Typography variant="caption" sx={{ display: "block" }}>Renseignez d’abord le numéro de chambre dans « Lieu précis ».</Typography>}
+                    </Alert>}
+                    {!cafardMode && <>
+                    {known.length > 0 && <Alert severity="info">
+                      <Typography variant="subtitle2">{known.length} problème(s) déjà ouvert(s) dans cette chambre</Typography>
+                      <Typography variant="body2">Si le problème est déjà signalé, ouvrez sa fiche pour consulter le suivi.</Typography>
+                      <Stack spacing={1} sx={{ mt: 1 }}>{known.map(item => <Box key={item.id}>
+                        <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>{item.title} · {statuses[item.status]}</Typography>
+                        <Button color="inherit" disabled={busy || processing} onClick={() => openExisting(item)} aria-label={`Ouvrir le suivi · ${item.title}`} sx={{ justifyContent: "flex-start", textAlign: "left" }}>Ouvrir ce suivi</Button>
+                      </Box>)}</Stack>
+                    </Alert>}
+                    <TextField required={!presetSelected} disabled={readOnly} label="Description du problème" placeholder="Ex. : fuite sous le lavabo, eau au sol…" multiline minRows={3} value={fields.description} onChange={e => change("description", e.target.value)}
+                      helperText={presetSelected ? "Facultatif : le problème choisi suffit. Précisez l’emplacement ou le défaut si nécessaire." : undefined}
+                      slotProps={{ htmlInput: { maxLength: 4000 } }} />
                     <TextField select label="Catégorie" disabled={readOnly} value={fields.category} onChange={e => change("category", e.target.value as IssueFields["category"])}>{categories.map(category => <MenuItem key={category} value={category}>{category}</MenuItem>)}</TextField>
                     {readOnly ? <Typography variant="body2">Priorité : {priorities[fields.priority]}</Typography>
                       : <QuickChoice label="Priorité" value={fields.priority} options={[{ value: "normale", label: "Normale" }, { value: "haute", label: "Haute", color: "warning" }, { value: "critique", label: "Critique", color: "error" }]} onChange={value => change("priority", value)} />}
@@ -131,6 +210,7 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
                       {photos.map((src, index) => <Box key={index}><Box component="img" className="photo-preview" src={src} alt={`Photo ${index + 1} du problème signalé`} /><Button disabled={busy || processing} onClick={() => setPhotos(current => current.filter((_, i) => i !== index))}>Retirer la photo {index + 1}</Button></Box>)}
                     </>}
                     {issue && existingPhotos.map((photoId, index) => <IssuePhoto key={photoId} issueId={issue.id} index={index} alt={`Photo ${index + 1} du problème signalé`} lazy={false} />)}
+                    </>}
                   </Stack>
                 </Collapse>
               </Stack>
@@ -154,7 +234,7 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
         </DialogContent>
         <DialogActions sx={{ p: 2, flexWrap: "wrap", gap: 1 }}>
           <Button disabled={busy || processing} onClick={close}>{readOnly ? "Fermer" : "Annuler"}</Button>
-          {!readOnly && <Button disabled={busy || processing || !!duplicate} variant="contained" type="submit">{busy ? "Enregistrement…" : issue ? "Enregistrer le suivi" : "Enregistrer l’anomalie"}</Button>}
+          {!readOnly && <Button disabled={busy || processing || !!duplicate || (cafardReport && !validCafardRoom)} variant="contained" type="submit">{busy ? "Enregistrement…" : cafardReport ? "Continuer dans le suivi des cafards" : issue ? "Enregistrer le suivi" : "Enregistrer l’anomalie"}</Button>}
         </DialogActions>
       </Box>
     </Dialog>
@@ -163,5 +243,10 @@ export function IssueDialog({ issue, defaults, onClose, onSaved, onOpenExisting 
       <DialogContent>Les modifications saisies dans ce formulaire n’ont pas encore été enregistrées.{nextIssue ? " Le texte et les photos de cette nouvelle saisie ne seront pas ajoutés automatiquement au signalement existant." : ""}</DialogContent>
       <DialogActions><Button disabled={busy || processing} onClick={() => { setConfirmClose(false); setNextIssue(null); }}>Continuer la saisie</Button><Button color="error" disabled={busy || processing} onClick={() => nextIssue && onOpenExisting ? onOpenExisting(nextIssue) : onClose()}>Abandonner les modifications</Button></DialogActions>
     </Dialog>
+    {embeddedIssue && <IssueDialog key={embeddedIssue.id} issue={embeddedIssue} onClose={() => setEmbeddedIssue(null)}
+      onSaved={() => { setEmbeddedIssue(null); setFeedback("Le suivi existant a été mis à jour. Votre nouvelle saisie est conservée."); }} />}
+    {cafardDialog && <CafardFollowupDialog key={cafardDialog.room} record={cafardDialog}
+      onClose={() => { setCafardDialog(null); setCafardMode(false); }}
+      onSaved={() => { setFeedback(`Suivi des cafards enregistré pour la chambre ${cafardDialog.room}.`); setCafardDialog(null); setCafardMode(false); }} />}
   </>;
 }

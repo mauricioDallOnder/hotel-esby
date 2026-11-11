@@ -96,6 +96,52 @@ test("manual revisions preserve applications and notes without a negative contro
   assert.deepEqual(events, before);
 });
 
+test("repeated detections join the open treatment without resetting its stage, dates or history", () => {
+  for (const status of ["traite", "a_verifier"] as const) {
+    const first = inspection();
+    const treatment = followup({ cafardStatus: status, treatedOn: "2025-10-29", date: "2025-10-29",
+      occurredAt: "2025-10-29T11:00:00.000Z", product: "Gel", notes: "Application derrière le minibar." });
+    const later = inspection({ date: "2025-11-05", inspectedAt: "2025-11-05T11:00:00.000Z", notes: "Présence près du lavabo." });
+    const repeated = inspection({ date: "2025-11-06", inspectedAt: "2025-11-06T11:00:00.000Z", notes: "Toujours présents près du lavabo." });
+    const observations = [repeated, first, later, repeated], before = structuredClone({ observations, treatment });
+    const records = cafardCases(observations, [treatment, treatment]);
+    assert.equal(records.length, 1);
+    const record = records[0];
+    assert.equal(record.status, status);
+    assert.equal(record.detectedOn, "2025-10-19");
+    assert.equal(record.treatedOn, "2025-10-29");
+    assert.equal(record.product, "Gel");
+    assert.equal(record.resolvedOn, null);
+    assert.equal(record.updatedOn, "2025-11-06");
+    assert.equal(record.notes, repeated.notes);
+    assert.equal(record.lastEventId, repeated.id);
+    assert.equal(record.observationId, repeated.id);
+    assert.equal(record.revision, 1);
+    assert.equal(record.history.length, 4);
+    assert.equal(record.history.find(event => event.id === treatment.id)?.notes, treatment.notes);
+    assert.equal(record.history.filter(event => event.kind === "inspection").length, 3);
+    assert.deepEqual(cafardCases([...observations].reverse(), [treatment]), records);
+    assert.deepEqual({ observations, treatment }, before);
+  }
+});
+
+test("a detection preserves an imported application but confirms a room that was only awaiting inspection", () => {
+  const observation = inspection({ date: "2025-11-06", inspectedAt: "2025-11-06T11:00:00.000Z" });
+  const imported = seed({ treatedOn: "2025-10-29", product: "Gel", treatments: [{ date: "2025-10-29", product: "Gel" }] });
+  const treated = cafardCases([observation], [], [imported])[0];
+  assert.equal(treated.status, "a_verifier");
+  assert.equal(treated.treatedOn, "2025-10-29");
+  assert.equal(treated.product, "Gel");
+  assert.equal(treated.detectedOn, null);
+  assert.equal(treated.lastEventId, observation.id);
+  assert.equal(treated.history.filter(event => event.status === "traite").length, 1);
+  const unconfirmed = cafardCases([observation], [], [seed()])[0];
+  assert.equal(unconfirmed.status, "signale");
+  assert.equal(unconfirmed.detectedOn, "2025-11-06");
+  assert.equal(unconfirmed.treatedOn, null);
+  assert.equal(unconfirmed.revision, 0);
+});
+
 test("late or backdated inspections cannot reopen a resolved case but a later same-day detection can", () => {
   const closure = followup({ cafardStatus: "resolu", treatedOn: "2025-10-29", resolvedOn: "2025-11-05", product: "Gel" });
   const earlier = inspection({ date: "2025-11-05", inspectedAt: "2025-11-05T09:00:00.000Z" });

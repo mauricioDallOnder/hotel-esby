@@ -108,7 +108,7 @@ test("partial and future inspections do not make a room covered; pending complet
   assert.ok(boundary.due.includes("101")); assert.ok(!boundary.due.includes("102"));
 });
 
-test("deduplication uses the exact room and finding, rejects unrelated manual links, and ignores resolved issues", () => {
+test("deduplication uses exact rooms, accepts an explicit same-room link and ignores resolved suggestions", () => {
   const record = saved(problem(["taps", "lights"])), issue = manual();
   const plan = planRoomIssue(roomIssue(record), record, [issue]);
   assert.deepEqual(plan.relatedIssueIds, [issue.id]);
@@ -121,9 +121,12 @@ test("deduplication uses the exact room and finding, rejects unrelated manual li
   assert.equal(planRoomIssue(roomIssue(record), record, [manual({ status: "resolu" })]).relatedIssueIds.length, 0);
   const unclear = manual({ title: "À réparer", description: "Voir photo" });
   const linked = { ...record, issueLinks: [{ key: "taps", issueId: unclear.id }] };
-  assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).relatedIssueIds, []);
-  assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).issue?.roomFindings?.map(finding => finding.key), ["taps", "lights"]);
-  assert.equal(planRoomIssue(roomIssue(linked), linked, [{ ...unclear, location: "115" }]).relatedIssueIds.length, 0);
+  assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).relatedIssueIds, [unclear.id]);
+  assert.deepEqual(planRoomIssue(roomIssue(linked), linked, [unclear]).issue?.roomFindings?.map(finding => finding.key), ["lights"]);
+  const moved = planRoomIssue(roomIssue(linked), linked, [{ ...unclear, location: "115" }]);
+  assert.equal(moved.relatedIssueIds.length, 0);
+  assert.equal(moved.issue, undefined);
+  assert.match(moved.conflicts[0], /résolu, déplacé ou supprimé/);
 });
 
 test("a hidden radiator links only to the same obstruction, not an unrelated heating fault", () => {
@@ -201,7 +204,7 @@ test("old Google scripts reject the new room action before writes and keep a ret
   const original = globalThis.fetch; let requests = 0;
   globalThis.fetch = async (_url, options) => {
     requests++;
-    assert.equal(JSON.parse(String(options?.body)).action, "commitRoomInspectionV2");
+    assert.equal(JSON.parse(String(options?.body)).action, "commitRoomInspectionV3");
     return Response.json({ ok: false, code: 400, error: "Action invalide." });
   };
   try { await assert.rejects(executeEntry(entry()), error => (error as { code: number }).code === 503 && /redéployez/.test((error as Error).message)); assert.equal(requests, 1); }
