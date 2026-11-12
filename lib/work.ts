@@ -93,6 +93,20 @@ export function latestWork(events: Work[], kind: Work["kind"]) {
   return latest;
 }
 
+/** Receipt replay happens before this check. Never guess a legacy request's
+ * predecessor from the current revision: it may belong to another device. */
+export function validateWorkPredecessor(entry: WorkEntry, events: Work[], requireIdentity = false): string | undefined {
+  if (entry.expectedPreviousEventId === undefined) {
+    return requireIdentity && entry.expectedRevision > 0
+      ? "Cette ancienne demande doit être vérifiée avant son envoi. Ouvrez les envois à vérifier pour conserver vos informations et confirmer le suivi actuel."
+      : undefined;
+  }
+  const current = latestWork(events, entry.kind).get(entry.targetId);
+  if ((current?.id || null) !== entry.expectedPreviousEventId)
+    return "Ce suivi a été modifié ailleurs. Vérifiez la demande et l’état actuel avant de confirmer une nouvelle modification.";
+  return undefined;
+}
+
 /** Include the observation identity, not only its day, in cafard form concurrency. */
 export function latestCafardObservationId(inspections: readonly (RoomEntry | RoomInspection)[], room: string): string | null {
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" });
@@ -111,6 +125,8 @@ export function validateWorkEntry(entry: WorkEntry, events: Work[], families: (F
   const current = latestWork(events, entry.kind).get(entry.targetId);
   if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
     return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
+  const predecessorConflict = validateWorkPredecessor(entry, events);
+  if (predecessorConflict) return predecessorConflict;
   if (current?.deleted) return "Cette tâche a déjà été supprimée.";
   if (entry.kind === "cafardFollowup" && entry.cafardObservationId !== undefined &&
     entry.cafardObservationId !== latestCafardObservationId(inspections, entry.room))

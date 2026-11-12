@@ -8,6 +8,7 @@ import Toolbar from "@mui/material/Toolbar";
 
 import { Sidebar } from "./SideBar";
 import { Topbar } from "./TopBar";
+import { VersionNotice } from "@/components/VersionNotice";
 
 const drawerWidth = 260;
 
@@ -58,7 +59,7 @@ export function AppShell({ children }: AppShellProps) {
           overflowX: "hidden",
         }}
       >
-        <Toolbar />
+        <Toolbar sx={{ minHeight: { xs: 64, md: 72 } }} />
 
         <Container
           maxWidth="xl"
@@ -69,6 +70,7 @@ export function AppShell({ children }: AppShellProps) {
             overflowX: "hidden",
           }}
         >
+          <VersionNotice />
           {children}
         </Container>
       </Box>

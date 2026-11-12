@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { today, type Issue } from "../../lib/domain";
-import type { WorkEvent } from "../../lib/rooms";
+import { applyCommand, today, type Command, type Issue } from "../../lib/domain";
+import { commandOperation, isCommandReplay, stampCommandReceipt } from "../../lib/commandReceipt";
+import { workReceipt } from "./helpers/receipts";
 
 const sample = (): Issue => ({
   id: "bcdbf707-567b-44f8-8151-c08b51994394", version: 1,
@@ -63,7 +64,7 @@ test("a duplicate room fault is blocked before sending and opens the existing fo
   await dialog.getByLabel("Lieu précis").fill("Chambre n°114");
   await dialog.getByLabel("Description du problème").fill("Le robinet du lavabo ne ferme plus.");
   await dialog.getByLabel("Signalé par").fill("Test");
-  await expect(dialog.getByRole("alert").filter({ hasText: "Un problème identique" })).toBeVisible();
+  await expect(dialog.getByRole("alert").filter({ hasText: "Un problème similaire" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true })).toBeDisabled();
   await dialog.getByRole("button", { name: "Ouvrir le signalement existant", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "Ouvrir le suivi existant ?", exact: true });
@@ -84,7 +85,7 @@ test("a duplicate room fault is blocked before sending and opens the existing fo
   await dialog.getByLabel("Lieu précis").fill("114");
   await dialog.getByLabel("Description du problème").fill(existing.description);
   await dialog.getByLabel("Signalé par").fill("Test");
-  await expect(dialog.getByText(/Un problème identique/)).toHaveCount(0);
+  await expect(dialog.getByText(/Un problème similaire/)).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true })).toBeEnabled();
 });
 
@@ -96,7 +97,15 @@ test("a background refresh does not block an intervention or restore its old unr
   await page.route("**/api/hotel*", async route => {
     if (route.request().method() === "PATCH") {
       writes++;
-      existing = { ...existing, version: 2, status: "resolu", updatedAt: new Date().toISOString() };
+      const state = { issues: [existing], inspections: [] };
+      const command = route.request().postDataJSON() as Command;
+      const operation = commandOperation(command);
+      if (!isCommandReplay(state, command, operation)) {
+        const change = applyCommand(state, command, new Date().toISOString());
+        stampCommandReceipt(change, operation);
+        expect(change.collection).toBe("issues");
+        if (change.collection === "issues") existing = change.record;
+      }
       return route.fulfill({ json: { mode: "local", issues: [existing], inspections: [] } });
     }
     const snapshot = structuredClone(existing);
@@ -135,12 +144,11 @@ test("a background refresh does not block an intervention or restore its old unr
 
 test("a legacy cafard draft and its notes survive a newer follow-up and an explicit reload", async ({ page }) => {
   await login(page);
-  const followup: WorkEvent = {
+  const followup = workReceipt({
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "cafardFollowup", targetId: "125", room: "125",
-    expectedRevision: 0, date: today(), occurredAt: new Date().toISOString(), actor: "Test suivi",
+    expectedRevision: 0, expectedPreviousEventId: null, date: today(), occurredAt: new Date().toISOString(), actor: "Test suivi",
     cafardStatus: "traite", detectedOn: today(), treatedOn: today(), resolvedOn: null, product: "Gel test", notes: "Application fictive.",
-    updatedAt: new Date().toISOString(), version: 1, submissionHash: "a".repeat(64),
-  };
+  });
   const data = { mode: "local", issues: [], inspections: [], roomInspections: [], workEvents: [followup] };
   await page.route("**/api/hotel*", route => route.fulfill({ json: data }));
   await page.goto("/cafards");
@@ -155,7 +163,9 @@ test("a legacy cafard draft and its notes survive a newer follow-up and an expli
     try {
       await new Promise<void>((resolve, reject) => {
         const transaction = db.transaction("records", "readwrite");
-        transaction.objectStore("records").put({ ...entry, id: crypto.randomUUID(), expectedRevision: 1, cafardStatus: "resolu", resolvedOn: entry.date, notes }, "draft:cafard:125:1");
+        const legacy = { ...entry };
+        delete legacy.expectedPreviousEventId;
+        transaction.objectStore("records").put({ ...legacy, id: crypto.randomUUID(), expectedRevision: 1, cafardStatus: "resolu", resolvedOn: entry.date, notes }, "draft:cafard:125:1");
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
       });
@@ -171,7 +181,8 @@ test("a legacy cafard draft and its notes survive a newer follow-up and an expli
   await expect(dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true })).toBeEnabled();
   await dialog.getByRole("button", { name: "Fermer", exact: true }).click();
 
-  data.workEvents.push({ ...followup, id: crypto.randomUUID(), expectedRevision: 1, cafardStatus: "signale", notes: "Mise à jour par un autre collègue." });
+  data.workEvents.push(workReceipt({ ...followup, id: crypto.randomUUID(), expectedRevision: 1, expectedPreviousEventId: followup.id,
+    cafardStatus: "signale", notes: "Mise à jour par un autre collègue." }));
   await page.reload();
   await page.getByRole("article", { name: "Chambre 125", exact: true }).getByRole("button", { name: "Mettre à jour", exact: true }).click();
   await expect(dialog.getByLabel("Observations", { exact: true })).toHaveValue(notes);

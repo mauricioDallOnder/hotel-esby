@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, Collapse, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { useAppContext } from "@/context/AppContext";
@@ -8,10 +8,14 @@ import { defaultIssueFilters, issueAge, issueShortcuts, lastIntervention, select
 import { ConnectionBar, EmptyState, IssueBadges, PageTitle } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
 import { IssuePhoto } from "@/components/IssuePhoto";
+import { deviceStore } from "@/lib/deviceStore";
+import { type ActiveIssueDraft, type IssueDraft } from "@/lib/issueDraft";
+import { issueFindingProgress } from "@/lib/issueFindings";
 
 function IssueCard({ issue, onOpen, direction }: { issue: Issue; onOpen: () => void; direction: boolean }) {
   const [photosOpen, setPhotosOpen] = useState(false);
   const photos = issuePhotoIds(issue), last = lastIntervention(issue), age = issueAge(issue, today()), responsible = issueResponsible(issue);
+  const progress = issueFindingProgress(issue);
   return <Paper component="article" aria-label={`${issue.location} · ${issue.title}`} variant="outlined" sx={{ p: 2, minWidth: 0, borderLeft: "4px solid", borderLeftColor: issue.status === "resolu" ? "success.main" : issue.priority === "critique" ? "error.main" : issue.priority === "haute" ? "warning.main" : "divider" }}>
     <Stack spacing={1.5}>
       <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
@@ -24,6 +28,7 @@ function IssueCard({ issue, onOpen, direction }: { issue: Issue; onOpen: () => v
         <Typography variant="caption" color="text.secondary">{issue.category} · Signalée le {displayDate(issue.date)}</Typography>
       </Box>
       <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{issue.description}</Typography>
+      {progress.total > 1 && <Typography variant="body2" sx={{ fontWeight: 700 }}>{progress.pending} / {progress.total} problème(s) restant(s) · {progress.resolved} résolu(s)</Typography>}
       <Box sx={{ bgcolor: "action.hover", borderRadius: 1.5, p: 1.25 }}>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>{responsible ? `Responsable : ${responsible}` : "Responsable non renseigné"}</Typography>
         <Typography variant="caption" color="text.secondary">{last ? `Dernier suivi · ${new Date(last.at).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" })} · ${last.actor}` : "Aucune intervention enregistrée"}</Typography>
@@ -33,7 +38,7 @@ function IssueCard({ issue, onOpen, direction }: { issue: Issue; onOpen: () => v
         {photos.length > 0 && <Button size="small" onClick={() => setPhotosOpen(!photosOpen)} aria-expanded={photosOpen}>{photosOpen ? "Masquer les photos" : `Voir les photos (${photos.length})`}</Button>}
         <Button variant="outlined" onClick={onOpen} sx={{ ml: "auto", minHeight: 44 }}>{direction ? "Ouvrir le suivi" : "Consulter"}</Button>
       </Stack>
-      <Collapse in={photosOpen} unmountOnExit><Stack spacing={1}>{photos.map((photoId, index) => <IssuePhoto key={photoId} issueId={issue.id} index={index} alt={`${issue.title} · photo ${index + 1}`} />)}</Stack></Collapse>
+      <Collapse in={photosOpen} unmountOnExit><Stack spacing={1}>{photos.map((photoId, index) => <IssuePhoto key={photoId} issueId={issue.id} index={index} photoCount={photos.length} alt={`${issue.title} · photo ${index + 1}`} />)}</Stack></Collapse>
     </Stack>
   </Paper>;
 }
@@ -45,6 +50,28 @@ export default function IssuesPage() {
   const [limit, setLimit] = useState(24);
   const [dialog, setDialog] = useState<Issue | "new" | null>(null);
   const [message, setMessage] = useState("");
+  const [activeDraft, setActiveDraft] = useState<ActiveIssueDraft | null>(null);
+  const [restoredDraftKey, setRestoredDraftKey] = useState<string | undefined>();
+  useEffect(() => {
+    let active = true;
+    const read = async () => {
+      try {
+        const pointer = await deviceStore<ActiveIssueDraft | undefined>("get", "active-issue-draft");
+        const draft = pointer && await deviceStore<IssueDraft | undefined>("get", pointer.key);
+        if (active) setActiveDraft(pointer && draft ? pointer : null);
+      } catch { /* Opening the form still reports any local storage problem. */ }
+    };
+    void read();
+    window.addEventListener("issue-draft-change", read);
+    return () => { active = false; window.removeEventListener("issue-draft-change", read); };
+  }, [dialog]);
+  function openDialog(value: Issue | "new") { setRestoredDraftKey(undefined); setDialog(value); }
+  function resumeDraft() {
+    if (!activeDraft) return;
+    const record = activeDraft.issueId ? issues.find(issue => issue.id === activeDraft.issueId) : undefined;
+    if (activeDraft.issueId && !record) { setMessage("La fiche de ce brouillon n’est pas chargée. Actualisez les données pour reprendre son suivi."); return; }
+    setRestoredDraftKey(activeDraft.key); setDialog(record || "new");
+  }
   function change(patch: Partial<IssueFilters>) { setFilters(current => ({ ...current, ...patch })); setLimit(24); }
   function reset() { setFilters(defaultIssueFilters); setLimit(24); }
   const filtered = useMemo(() => selectIssues(issues, filters), [issues, filters]);
@@ -55,9 +82,12 @@ export default function IssuesPage() {
   const changed = JSON.stringify(filters) !== JSON.stringify(defaultIssueFilters);
   return <>
     <ConnectionBar />
-    <PageTitle eyebrow="Maintenance" title="Problèmes techniques" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={<Button variant="contained" startIcon={<Add />} onClick={() => setDialog("new")}>Signaler une anomalie</Button>} />
+    <PageTitle eyebrow="Maintenance" title="Problèmes techniques" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={<Button variant="contained" startIcon={<Add />} onClick={() => openDialog("new")}>Signaler une anomalie</Button>} />
     <Stack spacing={2.5}>
       {message && <Alert severity="success" onClose={() => setMessage("")}>{message}</Alert>}
+      {activeDraft && (!activeDraft.issueId || role === "direction") && <Alert severity="info">Un brouillon de problème technique est conservé sur cet appareil, avec son texte et ses photos.
+        <Button color="inherit" onClick={resumeDraft}>Reprendre le brouillon</Button>
+      </Alert>}
       <Stack spacing={0.75}>
         <Box role="group" aria-label="Vues rapides des anomalies" sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }}>
           {shortcuts.map(shortcut => <Button key={shortcut.id} variant={shortcut.selected ? "contained" : "outlined"} aria-pressed={shortcut.selected} onClick={() => { setFilters(shortcut.filters); setLimit(24); }} sx={{ flexDirection: "column", alignItems: "flex-start", justifyContent: "space-between", p: { xs: 1.25, sm: 2 }, textTransform: "none", textAlign: "left", minWidth: 0, gap: 1 }}>
@@ -96,10 +126,10 @@ export default function IssuesPage() {
         </TextField>
       </Stack>
       {!filtered.length ? <EmptyState title="Aucune anomalie dans cette sélection" detail="Modifiez les filtres pour retrouver un signalement, ou signalez un nouveau problème." /> : <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>
-        {filtered.slice(0, limit).map(issue => <IssueCard key={issue.id} issue={issue} direction={role === "direction"} onOpen={() => setDialog(issue)} />)}
+        {filtered.slice(0, limit).map(issue => <IssueCard key={issue.id} issue={issue} direction={role === "direction"} onOpen={() => openDialog(issue)} />)}
       </Box>}
       {filtered.length > limit && <Button variant="outlined" onClick={() => setLimit(n => n + 24)}>Afficher plus · {filtered.length - limit} restante(s)</Button>}
     </Stack>
-    {dialog && <IssueDialog key={dialog === "new" ? "new" : dialog.id} issue={dialog === "new" ? undefined : dialog} onOpenExisting={setDialog} onClose={() => setDialog(null)} onSaved={saved => setMessage(dialog === "new" ? "Anomalie enregistrée." : `Suivi enregistré · ${statuses[saved.status]}.${saved.status === "resolu" && filters.status === "pending" ? " Retrouvez-la avec le filtre Résolu." : ""}`)} />}
+    {dialog && <IssueDialog key={(dialog === "new" ? "new" : dialog.id) + (restoredDraftKey || "")} draftKey={restoredDraftKey} issue={dialog === "new" ? undefined : dialog} onOpenExisting={openDialog} onClose={() => setDialog(null)} onSaved={saved => setMessage(dialog === "new" ? "Anomalie enregistrée." : `Suivi enregistré · ${statuses[saved.status]}.${saved.status === "resolu" && filters.status === "pending" ? " Retrouvez-la avec le filtre Résolu." : ""}`)} />}
   </>;
 }

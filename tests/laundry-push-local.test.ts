@@ -93,7 +93,7 @@ test("claims enforce the current machine, notification windows and collection st
   const finished = { ...request(entry, 2), stage: "finished" as const, expiresAt: "2026-10-01T09:55:00.000Z" };
   assert.equal((await claimLaundryPushDeliveries([finished], end)).length, 1);
   assert.deepEqual(await claimLaundryPushDeliveries([{ ...finished, id: digest("late") }], finished.expiresAt), []);
-  await executeEntry({ ...entry, id: randomUUID(), expectedRevision: 1, laundryStatus: "recupere",
+  await executeEntry({ ...entry, id: randomUUID(), expectedRevision: 1, expectedPreviousEventId: entry.id, laundryStatus: "recupere",
     occurredAt: "2026-10-01T09:42:00.000Z", laundryCollectedAt: "2026-10-01T09:42:00.000Z", laundryCollectedBy: entry.actor });
   assert.deepEqual(await claimLaundryPushDeliveries([{ ...finished, id: digest("collected") }], "2026-10-01T09:43:00.000Z"), []);
   await assert.rejects(claimLaundryPushDeliveries([{ ...request(entry), id: "invalid" }], soon), { code: 400 });
@@ -116,7 +116,7 @@ test("local notification claims reject an old plan and follow each extension wit
   const entry = cycle(); await executeEntry(entry);
   const original = await claimLaundryPushDeliveries([request(entry)], soon);
   await completeLaundryPushDeliveries(original.map(claim => ({ ...claim, outcome: "sent" })), soon);
-  const extended: WorkEntry = { ...entry, id: randomUUID(), expectedRevision: 1,
+  const extended: WorkEntry = { ...entry, id: randomUUID(), expectedRevision: 1, expectedPreviousEventId: entry.id,
     occurredAt: "2026-10-01T09:31:00.000Z", laundryAddedMinutes: 5, laundryEndsAt: "2026-10-01T09:45:00.000Z" };
   await executeEntry(extended);
   const currentTime = "2026-10-01T09:36:00.000Z";
@@ -124,7 +124,7 @@ test("local notification claims reject an old plan and follow each extension wit
   const updated = { ...request(entry, 3), expiresAt: extended.laundryEndsAt! };
   assert.equal((await claimLaundryPushDeliveries([updated], currentTime)).length, 1);
   assert.equal((await claimLaundryPushDeliveries([{ ...request(entry, 4), stage: "finished", expiresAt: "2026-10-01T10:00:00.000Z" }], extended.laundryEndsAt!)).length, 1);
-  const overdue: WorkEntry = { ...extended, id: randomUUID(), expectedRevision: 2,
+  const overdue: WorkEntry = { ...extended, id: randomUUID(), expectedRevision: 2, expectedPreviousEventId: extended.id,
     occurredAt: "2026-10-01T09:50:00.000Z", laundryEndsAt: "2026-10-01T09:55:00.000Z" };
   await executeEntry(overdue);
   assert.deepEqual(await claimLaundryPushDeliveries([{ ...request(entry, 5), expiresAt: overdue.laundryEndsAt! }], overdue.occurredAt), [], "Adding five minutes after zero must not emit a new ten-minute warning");

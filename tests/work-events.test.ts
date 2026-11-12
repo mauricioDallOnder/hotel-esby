@@ -12,14 +12,14 @@ import { freeRoomRows, buildFreeRoomsReport } from "../lib/roomPdfExport";
 import { mergeHotel } from "../lib/mergeHotel";
 import { executeEntry, readState, deleteAbsence } from "../lib/storage";
 
-const task = (patch: Partial<WorkEntry> = {}): WorkEntry => ({ type: "createWorkEvent", id: createId(), targetId: createId(), kind: "dailyTask", expectedRevision: 0,
+const task = (patch: Partial<WorkEntry> = {}): WorkEntry => ({ type: "createWorkEvent", id: createId(), targetId: createId(), kind: "dailyTask", expectedRevision: 0, expectedPreviousEventId: null,
   room: "", date: "2026-10-17", actor: "Employé", notes: "Préparer les clés", occurredAt: "2026-10-17T10:00:00.000Z", done: false, deleted: false, ...patch });
 const family = (): FamilyEntry => ({ type: "createFamilyEvent", id: createId(), room: "201", actor: "Marie", date: today(), notes: "Retour lundi", kind: "absence", family: "Famille test", returnDate: "" });
-const comment = (parent: FamilyEntry, patch: Partial<WorkEntry> = {}): WorkEntry => ({ type: "createWorkEvent", id: createId(), targetId: createId(), kind: "familyComment", expectedRevision: 0,
+const comment = (parent: FamilyEntry, patch: Partial<WorkEntry> = {}): WorkEntry => ({ type: "createWorkEvent", id: createId(), targetId: createId(), kind: "familyComment", expectedRevision: 0, expectedPreviousEventId: null,
   room: parent.room, familyEventId: parent.id, date: "2026-10-17", actor: "Salima", notes: "Appel de la famille", occurredAt: "2026-10-17T10:00:00.000Z", ...patch });
-const availability = (free: boolean, patch: Partial<WorkEntry> = {}): WorkEntry => ({ type: "createWorkEvent", id: createId(), targetId: "101", kind: "roomAvailability", expectedRevision: 0,
+const availability = (free: boolean, patch: Partial<WorkEntry> = {}): WorkEntry => ({ type: "createWorkEvent", id: createId(), targetId: "101", kind: "roomAvailability", expectedRevision: 0, expectedPreviousEventId: null,
   room: "101", date: "2026-10-17", actor: "Employé", notes: "", occurredAt: "2026-10-17T10:00:00.000Z", free, ...patch });
-const next = (entry: WorkEntry, patch: Partial<WorkEntry> = {}) => ({ ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1, ...patch });
+const next = (entry: WorkEntry, patch: Partial<WorkEntry> = {}) => ({ ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1, expectedPreviousEventId: entry.id, ...patch });
 
 function local() {
   process.env.STORAGE_DRIVER = "local";
@@ -123,7 +123,7 @@ test("Google work save uses the protected action; old deployments fail before wr
   try {
     globalThis.fetch = async (_url, options) => { const input = JSON.parse(options!.body as string); actions.push(input.action); return Response.json({ ok: true, data: { collection: input.collection, record: input.record } }); };
     assert.equal((await executeEntry(task())).collection, "workEvents");
-    assert.deepEqual(actions, ["commitWorkEvent"]);
+    assert.deepEqual(actions, ["commitWorkEventV2"]);
     globalThis.fetch = async () => Response.json({ ok: false, code: 400, error: "Action invalide." });
     await assert.rejects(executeEntry(task()), { code: 503 });
   } finally { globalThis.fetch = original; }

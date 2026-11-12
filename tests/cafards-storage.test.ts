@@ -12,16 +12,16 @@ import { executeEntry, readState } from "../lib/storage";
 import { roomAvailability } from "../lib/work";
 
 const followup = (patch: Partial<WorkEntry> = {}): WorkEntry => ({
-  type: "createWorkEvent", id: createId(), kind: "cafardFollowup", targetId: "114", expectedRevision: 0,
+  type: "createWorkEvent", id: createId(), kind: "cafardFollowup", targetId: "114", expectedRevision: 0, expectedPreviousEventId: null,
   room: "114", date: "2026-10-20", actor: "Marie", notes: "Cafards détectés près des plinthes.",
   occurredAt: "2026-10-20T10:00:00.000Z", cafardStatus: "signale",
   detectedOn: "2026-10-20", treatedOn: null, resolvedOn: null, ...patch,
 });
 const next = (entry: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry => ({
-  ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1, ...patch,
+  ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1, expectedPreviousEventId: entry.id, ...patch,
 });
 const availability = (patch: Partial<WorkEntry> = {}): WorkEntry => ({
-  type: "createWorkEvent", id: createId(), kind: "roomAvailability", targetId: "114", expectedRevision: 0,
+  type: "createWorkEvent", id: createId(), kind: "roomAvailability", targetId: "114", expectedRevision: 0, expectedPreviousEventId: null,
   room: "114", date: "2026-10-20", actor: "Marie", notes: "", occurredAt: "2026-10-20T10:00:00.000Z", free: false, ...patch,
 });
 const inspection = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
@@ -183,7 +183,7 @@ test("the existing protected Apps Script work transaction accepts cafard fields 
   await assert.rejects(executeEntry(next(reported, { notes: "Modification concurrente." })), { code: 409 });
   await assert.rejects(executeEntry({ ...reported, notes: "Même ID, autre contenu." }), { code: 409 });
   await executeEntry(availability());
-  assert.ok(requests.every(request => request.action === (request.record.kind === "cafardFollowup" ? "commitCafardFollowupV2" : "commitWorkEvent") && request.expectedVersion === 0 && request.token === "test-token"));
+  assert.ok(requests.every(request => request.action === (request.record.kind === "cafardFollowup" ? "commitCafardFollowupV3" : "commitWorkEventV2") && request.expectedVersion === 0 && request.token === "test-token"));
   const events = google.records();
   assert.equal(events.length, 3);
   assert.deepEqual(events.slice(0, 2), [first.record, second.record]);

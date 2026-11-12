@@ -26,8 +26,9 @@ function rememberedActor() { try { return localStorage.getItem("room-inspector")
 const yesNo = [{ value: "oui", label: "Oui" }, { value: "non", label: "Non" }] as const;
 const cleanliness = [{ value: "propre", label: "Propre", color: "success" }, { value: "sale", label: "Sale", color: "warning" }] as const;
 
-export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer }: {
+export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer, recovery }: {
   room: string; nextRoom?: string; onClose: () => void; onSaved: (next: boolean) => void; onDefer: () => void;
+  recovery?: { originalId: string; entry: RoomEntry; onSubmit: (entry: RoomEntry) => Promise<void> };
 }) {
   const { issues } = useAppContext();
   const { enqueue } = useEntries();
@@ -38,7 +39,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const content = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
   const preparingPhotos = useRef(false);
-  const draft = useDeviceDraft<Draft>(`draft:room:${room}`, () => ({
+  const draft = useDeviceDraft<Draft>(recovery ? `draft:room-recovery:${recovery.originalId}` : `draft:room:${room}`, () => recovery ? normalizeRoomDraft(recovery.entry) as Draft : ({
     type: "createRoomInspection", schemaVersion: 5, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
     cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [],
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [], problemDetails: [],
@@ -129,9 +130,12 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     setValidationAttempted(false); submitting.current = true; setBusy(true);
     try {
       draft.update({ ...value, inspectedAt: parsed.data.inspectedAt });
-      await enqueue(parsed.data);
+      if (recovery) await recovery.onSubmit(parsed.data);
+      else await enqueue(parsed.data);
       try { localStorage.setItem("room-inspector", parsed.data.actor); } catch { /* Optional convenience. */ }
-      await draft.clear(); onSaved(next);
+      if (recovery) { try { await draft.clear(); } catch { /* The replacement is already durable in the queue. */ } }
+      else await draft.clear();
+      onSaved(next);
     } catch (e) { setError((e as Error).message); }
     finally { submitting.current = false; setBusy(false); }
   }
@@ -158,6 +162,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       {invalid.length > 0 && <Alert severity="error" sx={{ mb: 2 }}>Il reste des points à vérifier. Aucun contrôle n’a été enregistré.</Alert>}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {draft.error && <Alert severity="error">{draft.error}</Alert>}
+      {recovery && <Alert severity="info" sx={{ mb: 2 }}>Correction d’un envoi refusé. Les réponses, photos et date du contrôle sont conservées. La demande précédente restera disponible jusqu’à l’enregistrement de cette correction.</Alert>}
       {!value ? <Typography>Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy || compressing} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>
         <Stack spacing={2}>
           {known.length > 0 && <Box>
@@ -286,7 +291,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       </>}
       <Stack direction="row" sx={{ justifyContent: "space-between" }}>
         {step > 0 && <Button disabled={busy || compressing} onClick={() => goStep(step - 1)}>Retour</Button>}
-        <Button disabled={busy || compressing} onClick={onDefer}>Reporter à demain</Button>
+        {!recovery && <Button disabled={busy || compressing} onClick={onDefer}>Reporter à demain</Button>}
       </Stack>
     </DialogActions>
   </Dialog>;

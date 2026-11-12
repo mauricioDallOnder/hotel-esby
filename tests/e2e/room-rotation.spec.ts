@@ -1,17 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
 import { roomChecks, rooms, type RoomInspection } from "../../lib/rooms";
+import { roomReceipt } from "./helpers/receipts";
 
 const day = "2026-11-11";
 
 function control(room: string, date: string, condition: RoomInspection["condition"] = "bon"): RoomInspection {
-  return {
+  return roomReceipt({
     type: "createRoomInspection", id: crypto.randomUUID(), schemaVersion: 5, room, date,
     inspectedAt: date + "T08:00:00.000Z", actor: "Test tournée", notes: "Contrôle fictif de rotation.",
     occupied: true, condition, cleaning: null, carpet: "ok", carpetNotes: "",
     microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",
     checks: roomChecks.map(check => ({ key: check.key, result: "ok" })),
-    version: 1, updatedAt: date + "T08:00:00.000Z", submissionHash: "a".repeat(64), photoIds: [], photoId: null,
-  };
+    photosData: [],
+  }).record;
 }
 
 async function fixture(page: Page, goal: number) {

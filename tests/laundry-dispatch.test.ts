@@ -90,7 +90,7 @@ test("extension dispatch uses new notice IDs after an already delivered completi
   now = Date.parse(original.laundryEndsAt!);
   assert.equal((await (await dispatch()).json()).processed, 1);
   now += 60_000;
-  const extended: WorkEntry = { ...original, id: createId(), expectedRevision: 1, occurredAt: new Date(now).toISOString(),
+  const extended: WorkEntry = { ...original, id: createId(), expectedRevision: 1, expectedPreviousEventId: original.id, occurredAt: new Date(now).toISOString(),
     laundryAddedMinutes: 20, laundryEndsAt: new Date(now + 20 * 60_000).toISOString() };
   await executeEntry(extended);
   assert.equal((await (await dispatch()).json()).processed, 0);
@@ -99,7 +99,7 @@ test("extension dispatch uses new notice IDs after an already delivered completi
   now = Date.parse(extended.laundryEndsAt!);
   assert.equal((await (await dispatch()).json()).processed, 1);
   now += 60_000;
-  const short: WorkEntry = { ...extended, id: createId(), expectedRevision: 2, occurredAt: new Date(now).toISOString(),
+  const short: WorkEntry = { ...extended, id: createId(), expectedRevision: 2, expectedPreviousEventId: extended.id, occurredAt: new Date(now).toISOString(),
     laundryAddedMinutes: 5, laundryEndsAt: new Date(now + 5 * 60_000).toISOString() };
   await executeEntry(short);
   assert.equal((await (await dispatch()).json()).processed, 0);
@@ -117,7 +117,7 @@ test("claim rejects an unsent old-plan warning even while its original expiry re
   t.mock.method(Date, "now", () => now);
   const original = await start(0), subscriber = await device(0);
   const oldNotice = laundryNotices([original], now)[0];
-  const extended: WorkEntry = { ...original, id: createId(), expectedRevision: 1, occurredAt: new Date(now).toISOString(),
+  const extended: WorkEntry = { ...original, id: createId(), expectedRevision: 1, expectedPreviousEventId: original.id, occurredAt: new Date(now).toISOString(),
     laundryAddedMinutes: 5, laundryEndsAt: new Date(Date.parse(original.laundryEndsAt!) + 5 * 60_000).toISOString() };
   await executeEntry(extended);
   now += 5 * 60_000;

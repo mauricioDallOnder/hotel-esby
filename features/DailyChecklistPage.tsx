@@ -16,7 +16,7 @@ function TaskList({ date }: { date: string }) {
   const { events, queued, enqueue, actor, isPending } = useWorkEvents();
   const tasks = dailyTasks(events, date);
   const done = tasks.filter(t => t.done).length;
-  const draft = useDeviceDraft<WorkEntry>(`draft:daily-task:${date}`, () => ({ type: "createWorkEvent", id: createId(), kind: "dailyTask", targetId: createId(), expectedRevision: 0,
+  const draft = useDeviceDraft<WorkEntry>(`draft:daily-task:${date}`, () => ({ type: "createWorkEvent", id: createId(), kind: "dailyTask", targetId: createId(), expectedRevision: 0, expectedPreviousEventId: null,
     date, room: "", actor, notes: "", occurredAt: new Date().toISOString(), done: false, deleted: false }));
   const [editing, setEditing] = useState<WorkEntry | null>(null);
   const [deleting, setDeleting] = useState<WorkEntry | null>(null);
@@ -38,7 +38,7 @@ function TaskList({ date }: { date: string }) {
     finally { saving.current = false; setBusy(false); }
   }
   function revision(task: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry {
-    return { ...task, ...patch, id: createId(), actor, expectedRevision: task.expectedRevision + 1, occurredAt: new Date().toISOString() };
+    return { ...task, ...patch, id: createId(), actor, expectedRevision: task.expectedRevision + 1, expectedPreviousEventId: task.id, occurredAt: new Date().toISOString() };
   }
   async function exportTasks() {
     if (saving.current || generating.current) return;

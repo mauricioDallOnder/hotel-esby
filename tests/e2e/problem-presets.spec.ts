@@ -1,7 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { applyCommand, type Command, type Issue, type State } from "../../lib/domain";
-import { entrySchema, roomIssue, type Entry, type RoomInspection, type WorkEvent } from "../../lib/rooms";
-import { planRoomIssue } from "../../lib/roomIssueMatching";
+import { commandOperation, isCommandReplay, stampCommandReceipt } from "../../lib/commandReceipt";
+import { entrySchema, type Entry, type WorkEvent } from "../../lib/rooms";
+import { validateWorkEntry, validateWorkPredecessor } from "../../lib/work";
+import { roomReceipt, workReceipt } from "./helpers/receipts";
 
 const day = "2026-11-11";
 const instant = day + "T12:00:00.000Z";
@@ -28,7 +30,10 @@ async function fixture(page: Page, initialIssues: Issue[] = [], initialWork: Wor
     if (route.request().method() === "GET") return route.fulfill({ json: data });
     const command = route.request().postDataJSON() as Command;
     commands.push(command);
+    const operation = commandOperation(command);
+    if (isCommandReplay(data, command, operation)) return route.fulfill({ json: data });
     const change = applyCommand(data, command, instant);
+    stampCommandReceipt(change, operation);
     expect(change.collection).toBe("issues");
     if (change.collection === "issues") data.issues = [...data.issues.filter(record => record.id !== change.record.id), change.record];
     return route.fulfill({ json: data });
@@ -37,22 +42,17 @@ async function fixture(page: Page, initialIssues: Issue[] = [], initialWork: Wor
     const entry = entrySchema.parse(route.request().postDataJSON());
     entries.push(entry);
     if (entry.type === "createRoomInspection") {
-      const { photosData, ...fields } = entry;
-      expect(photosData).toHaveLength(0);
-      const record: RoomInspection = { ...fields, version: 1, updatedAt: instant, submissionHash: "a".repeat(64), photoIds: [], photoId: null };
-      const plan = planRoomIssue(roomIssue(record), record, data.issues);
-      expect(plan.conflicts).toEqual([]);
-      record.relatedIssueIds = plan.relatedIssueIds;
-      record.createdIssue = !!plan.issue;
-      record.issueSyncVersion = 2;
-      record.newIssueFindingKeys = plan.issue?.roomFindings?.map(finding => finding.key) || [];
-      data.roomInspections!.push(record);
-      if (plan.issue) data.issues.push(plan.issue);
-      return route.fulfill({ json: { collection: "roomInspections", record, ...(plan.issue ? { issue: plan.issue } : {}) } });
+      const receipt = roomReceipt(entry, data.issues, instant);
+      data.roomInspections!.push(receipt.record);
+      if (receipt.issue) data.issues.push(receipt.issue);
+      return route.fulfill({ json: receipt });
     }
     expect(entry.type).toBe("createWorkEvent");
     if (entry.type === "createWorkEvent") {
-      const record: WorkEvent = { ...entry, version: 1, updatedAt: instant, submissionHash: "b".repeat(64) };
+      const error = validateWorkPredecessor(entry, data.workEvents || [], true) ||
+        validateWorkEntry(entry, data.workEvents || [], data.familyEvents || [], [], data.roomInspections || []);
+      if (error) return route.fulfill({ status: 409, json: { error } });
+      const record = workReceipt(entry);
       data.workEvents!.push(record);
       return route.fulfill({ json: { collection: "workEvents", record } });
     }
@@ -221,12 +221,11 @@ test("a possible duplicate needs an explicit choice and an unspecified broken it
 });
 
 test("cafards opens the existing follow-up and returns to the same technical text and photos", async ({ page }) => {
-  const treatment: WorkEvent = {
+  const treatment = workReceipt({
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "cafardFollowup", targetId: "114", room: "114", expectedRevision: 0,
-    date: day, occurredAt: instant, actor: "Agent fictif", notes: "Application de test.", cafardStatus: "traite",
+    expectedPreviousEventId: null, date: day, occurredAt: instant, actor: "Agent fictif", notes: "Application de test.", cafardStatus: "traite",
     detectedOn: day, treatedOn: day, resolvedOn: null, product: "Gel fictif", cafardObservationId: null,
-    version: 1, updatedAt: instant, submissionHash: "c".repeat(64),
-  };
+  });
   const api = await fixture(page, [], [treatment]);
   await page.goto("/anomalies");
   await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();

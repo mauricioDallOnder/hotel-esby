@@ -13,7 +13,7 @@ import { useWorkEvents } from "@/lib/useWorkEvents";
 
 export type LaundryAction = "start" | "extend" | "collect" | "cancel";
 type Machine = typeof laundryMachines[number];
-type Draft = { eventId: string; cycleId: string; room: string; owner: string; actor: string; notes: string; addedMinutes: string };
+type Draft = { eventId: string; cycleId: string; room: string; owner: string; actor: string; notes: string; addedMinutes: string; expectedRevision?: number; expectedPreviousEventId?: string | null };
 const titles = { start: "Démarrer", extend: "Ajouter du temps", collect: "Récupérer le linge", cancel: "Annuler le cycle" };
 const labels = { start: "Démarrer", extend: "Confirmer l’ajout", collect: "Confirmer la récupération", cancel: "Confirmer l’annulation" };
 
@@ -22,11 +22,12 @@ function rememberedActor() {
   catch { return ""; }
 }
 
-export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged, onClose, onSaved }: {
+export function LaundryCycleDialog({ action, machine, cycle, revision, previousEventId, unchanged, onClose, onSaved }: {
   action: LaundryAction;
   machine: Machine;
   cycle?: LaundryCycle;
   revision: number;
+  previousEventId: string | null;
   unchanged: boolean;
   onClose: () => void;
   onSaved: (room: string) => void;
@@ -41,12 +42,13 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
   const [showNotes, setShowNotes] = useState(false);
   function initial(previous?: Draft): Draft {
     return { eventId: createId(), cycleId: cycle?.cycleId || createId(), room: cycle?.room || previous?.room || "",
-      owner: cycle?.owner || previous?.owner || "", actor: previous?.actor || rememberedActor(), notes: cycle?.notes || previous?.notes || "",
-      addedMinutes: previous?.addedMinutes || "5" };
+      owner: cycle?.owner || previous?.owner || "", actor: previous?.actor || rememberedActor(), notes: previous?.notes ?? cycle?.notes ?? "",
+      addedMinutes: previous?.addedMinutes || "5", expectedRevision: revision, expectedPreviousEventId: previousEventId };
   }
   const draft = useDeviceDraft<Draft>(`draft:laundry:${machine.id}:${action}:${cycle?.cycleId || "new"}`, initial,
     value => events.some(event => event.id === value.eventId) ? initial(value) : { ...value, addedMinutes: value.addedMinutes ?? "5" });
   const value = draft.value;
+  const staleDraft = !!value && (value.expectedRevision !== revision || value.expectedPreviousEventId !== previousEventId);
   function update(patch: Partial<Draft>) {
     if (value) draft.update({ ...value, ...patch });
     setInvalid([]);
@@ -59,7 +61,7 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
       : cycle!.endsAt;
     return {
       type: "createWorkEvent", kind: "laundryCycle", id: current.eventId, targetId: machine.id,
-      expectedRevision: revision, room: current.room, date: today(), actor: current.actor, notes: current.notes,
+      expectedRevision: current.expectedRevision!, expectedPreviousEventId: current.expectedPreviousEventId, room: current.room, date: today(), actor: current.actor, notes: current.notes,
       occurredAt: at, laundryCycleId: current.cycleId, laundryOwner: current.owner,
       laundryStartedAt: cycle?.startedAt || at,
       laundryEndsAt: endsAt,
@@ -71,7 +73,7 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!value || saving.current || !unchanged) return;
+    if (!value || saving.current || !unchanged || staleDraft) return;
     saving.current = true; setBusy(true); setError("");
     try {
       const addedMinutes = Number(value.addedMinutes);
@@ -117,6 +119,9 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
           {error && <Alert severity="error">{error}</Alert>}
           {draft.error && <Alert severity="error">{draft.error}</Alert>}
           {!unchanged && <Alert severity="warning">Cette machine a été mise à jour. Fermez cette fenêtre puis consultez son état avant de continuer. Votre saisie reste conservée.</Alert>}
+          {unchanged && staleDraft && <Alert severity="warning">Le brouillon utilise un ancien état de cette machine. Vérifiez le cycle affiché avant de reprendre.
+            <Button color="inherit" disabled={busy} onClick={() => { if (value) draft.update(initial(value)); setError(""); }} sx={{ display: "block", mt: 1 }}>Utiliser l’état actuel en conservant ma saisie</Button>
+          </Alert>}
           {!value ? <Typography role="status">Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy || !unchanged} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
             <Stack spacing={2.5}>
               {action === "start" ? <>
@@ -160,7 +165,7 @@ export function LaundryCycleDialog({ action, machine, cycle, revision, unchanged
       </DialogContent>
       <DialogActions sx={{ p: 2, gap: 1 }}>
         <Button onClick={onClose} disabled={busy} sx={{ minHeight: 48 }}>Fermer</Button>
-        <Button type="submit" variant="contained" color={action === "cancel" ? "error" : "primary"} disabled={busy || !value || !unchanged} sx={{ minHeight: 48 }}>
+        <Button type="submit" variant="contained" color={action === "cancel" ? "error" : "primary"} disabled={busy || !value || !unchanged || staleDraft} sx={{ minHeight: 48 }}>
           {busy ? "Enregistrement…" : action === "collect" && machine.kind === "washer" ? "Confirmer · prêt à sécher" : labels[action]}
         </Button>
       </DialogActions>

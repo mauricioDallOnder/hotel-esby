@@ -1,17 +1,18 @@
-import { createHash } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import type { PendingEntry } from "../../lib/entryQueue";
-import { getLaundryMachine, validateWorkEntry } from "../../lib/work";
+import { getLaundryMachine, validateWorkEntry, validateWorkPredecessor } from "../../lib/work";
 import { workEntrySchema, type WorkEntry, type WorkEvent } from "../../lib/rooms";
+import { workReceipt as receipt } from "./helpers/receipts";
 
 const startedAt = "2026-10-01T09:00:00.000Z";
 const revisionMessage = "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
 
-function start(machineId: string, room: string, expectedRevision = 0): WorkEntry {
+function start(machineId: string, room: string, expectedRevision = 0, previousEventId?: string): WorkEntry {
   const machine = getLaundryMachine(machineId)!;
   return workEntrySchema.parse({
     type: "createWorkEvent", kind: "laundryCycle", id: crypto.randomUUID(), targetId: machineId,
     expectedRevision, room, date: "2026-10-01", occurredAt: startedAt,
+    ...(expectedRevision === 0 ? { expectedPreviousEventId: null } : previousEventId ? { expectedPreviousEventId: previousEventId } : {}),
     actor: "Agent démarrage fictif", notes: "Sac de démonstration", laundryCycleId: crypto.randomUUID(),
     laundryOwner: "Repère fictif " + room, laundryStartedAt: startedAt,
     laundryEndsAt: new Date(Date.parse(startedAt) + machine.durationMinutes * 60_000).toISOString(),
@@ -21,13 +22,9 @@ function start(machineId: string, room: string, expectedRevision = 0): WorkEntry
 
 function collect(original: WorkEntry, actor: string, at = "2026-10-01T09:45:00.000Z"): WorkEntry {
   return workEntrySchema.parse({ ...original, id: crypto.randomUUID(), expectedRevision: original.expectedRevision + 1,
+    expectedPreviousEventId: original.id,
     actor, occurredAt: at, laundryStatus: "recupere", laundryCollectedAt: at, laundryCollectedBy: actor,
     laundryAddedMinutes: undefined });
-}
-
-function receipt(entry: WorkEntry): WorkEvent {
-  return { ...entry, version: 1, updatedAt: entry.occurredAt,
-    submissionHash: createHash("sha256").update(JSON.stringify(entry)).digest("hex") };
 }
 
 function blocked(entry: WorkEntry): PendingEntry {
@@ -72,7 +69,7 @@ async function fixture(page: Page, records: WorkEvent[], pending: PendingEntry[]
     const candidate = receipt(entry), existing = control.records.find(record => record.id === entry.id);
     if (existing && existing.submissionHash !== candidate.submissionHash)
       return route.fulfill({ status: 409, json: { error: "Même identifiant, autre contenu." } });
-    const error = existing ? undefined : validateWorkEntry(entry, control.records, []);
+    const error = existing ? undefined : validateWorkPredecessor(entry, control.records, true) || validateWorkEntry(entry, control.records, []);
     if (error) return route.fulfill({ status: 409, json: { error } });
     const saved = existing || candidate;
     if (!existing) control.records.push(saved);
@@ -114,7 +111,7 @@ test("the two blocked room 328 retrievals are closed independently after checkin
   const pendingFirst = collect(first, "Mauricio"), pendingThird = collect(third, "Belkacem");
   const savedFirst = collect(first, "Collègue retrait un", "2026-10-01T09:46:00.000Z");
   const savedThird = collect(third, "Collègue retrait trois", "2026-10-01T09:47:00.000Z");
-  const next = start("washer-1", "114", 6);
+  const next = start("washer-1", "114", 6, savedFirst.id);
   next.occurredAt = next.laundryStartedAt = "2026-10-01T10:00:00.000Z";
   next.laundryEndsAt = "2026-10-01T10:44:00.000Z";
   const recorded = [first, savedFirst, next, third, savedThird].map(receipt);
@@ -145,6 +142,7 @@ test("the two blocked room 328 retrievals are closed independently after checkin
 test("a retrieval behind an extension requires a physical check and creates a new current-revision action", async ({ page }) => {
   const first = start("washer-2", "202");
   const extension = workEntrySchema.parse({ ...first, id: crypto.randomUUID(), expectedRevision: 1,
+    expectedPreviousEventId: first.id,
     occurredAt: "2026-10-01T09:35:00.000Z", laundryAddedMinutes: 10, laundryEndsAt: "2026-10-01T09:48:00.000Z" });
   const old = collect(first, "Agent vérification fictif");
   const control = await fixture(page, [receipt(first), receipt(extension)], [blocked(old)]);
@@ -166,6 +164,7 @@ test("a retrieval behind an extension requires a physical check and creates a ne
   const saved = control.writes[0];
   expect(saved.id).not.toBe(old.id);
   expect(saved.expectedRevision).toBe(2);
+  expect(saved.expectedPreviousEventId).toBe(extension.id);
   expect(saved.targetId).toBe(first.targetId);
   expect(saved.laundryCycleId).toBe(first.laundryCycleId);
   expect(saved.room).toBe(first.room);
@@ -183,8 +182,9 @@ test("a retrieval behind an extension requires a physical check and creates a ne
 test("an unavailable fresh read and a different cycle cannot discard or apply the old retrieval", async ({ page }) => {
   const first = start("washer-1", "328"), old = collect(first, "Mauricio");
   const cancelled = workEntrySchema.parse({ ...first, id: crypto.randomUUID(), expectedRevision: 1,
+    expectedPreviousEventId: first.id,
     occurredAt: "2026-10-01T09:43:00.000Z", laundryStatus: "annule", actor: "Agent arrêt fictif" });
-  const next = start("washer-1", "110", 2);
+  const next = start("washer-1", "110", 2, cancelled.id);
   next.occurredAt = next.laundryStartedAt = "2026-10-01T10:00:00.000Z";
   next.laundryEndsAt = "2026-10-01T10:44:00.000Z";
   const records = [first, cancelled, next].map(receipt);
@@ -223,6 +223,7 @@ test("an unavailable fresh read and a different cycle cannot discard or apply th
 test("a lost response after a reviewed retrieval retries the exact replacement action once", async ({ page }) => {
   const first = start("washer-3", "328");
   const extension = workEntrySchema.parse({ ...first, id: crypto.randomUUID(), expectedRevision: 1,
+    expectedPreviousEventId: first.id,
     occurredAt: "2026-10-01T09:35:00.000Z", laundryAddedMinutes: 5, laundryEndsAt: "2026-10-01T09:43:00.000Z" });
   const old = collect(first, "Belkacem");
   const control = await fixture(page, [receipt(first), receipt(extension)], [blocked(old)]);

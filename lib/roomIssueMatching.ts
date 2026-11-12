@@ -1,7 +1,8 @@
 // Pure functions shared by the browser, local storage and the generated Apps Script bundle.
 import type { Issue } from "./domain";
 import type { RoomInspection } from "./rooms";
-import { getProblemPreset, type ProblemType } from "./problemPresets";
+import { getProblemPreset, problemPresets, type ProblemType } from "./problemPresets";
+import { issueFindingStatus, issueMatchingSnapshot } from "./issueFindings";
 
 export function normalizeIssueText(text: string) {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
@@ -95,6 +96,7 @@ function typedFindingMatches(issue: Issue, finding: Finding) {
 }
 
 export function matchesRoomFinding(issue: Issue, finding: Finding) {
+  issue = issueMatchingSnapshot(issue);
   if (finding.problemType) {
     if (issue.roomFindings?.length) return issue.roomFindings.some(item => {
       if (!item.problemType) return typedFindingMatches({ ...issue, roomFindings: undefined }, finding);
@@ -124,7 +126,7 @@ export function matchesRoomFinding(issue: Issue, finding: Finding) {
   return keywords[finding.key]?.test(text) || false;
 }
 
-export type IssueCandidate = Pick<Issue, "location" | "title" | "description"> & Partial<Pick<Issue, "id" | "room" | "roomFindings" | "problemType">>;
+export type IssueCandidate = Pick<Issue, "location" | "title" | "description"> & Partial<Pick<Issue, "id" | "room" | "roomFindings" | "problemType" | "roomFindingsActive" | "distinctFromIssueIds" | "distinctReason" | "status">>;
 
 const genericText = /^(?:chambre\s+\d{3}\s*)?(?:probleme(?: constate| technique)?|anomalie|a verifier|a reparer|voir (?:la )?photo|voir sur place|test)$/;
 const failureKinds: [string, RegExp][] = [
@@ -139,14 +141,17 @@ const failureKinds: [string, RegExp][] = [
 
 function differentDetails(left: string, right: string) {
   const a = normalizeIssueText(left), b = normalizeIssueText(right);
-  for (const dimension of [["gauche", "droite"], ["haut", "bas"]]) {
+  for (const dimension of [["gauche", "droite"], ["haut", "bas"], ["nord", "sud"], ["est", "ouest"]]) {
     const sidesA = dimension.filter(side => new RegExp(`\\b${side}\\b`).test(a));
     const sidesB = dimension.filter(side => new RegExp(`\\b${side}\\b`).test(b));
     if (sidesA.length && sidesB.length && !sidesA.some(side => sidesB.includes(side))) return true;
   }
   // Named positions and components are evidence of different fittings; a
   // common "damage" key, preset or room number is never such evidence.
-  const positions = (text: string): string[] => text.match(/\b(douche|lavabo|wc|entree|plafond|chevet|fenetre|television|lit|gauche|droite|bureau|evier)\b/g) || [];
+  const numbered = (text: string) => [...text.matchAll(/\b(prise|robinet|fenetre|lit|radiateur|lampe)\s*(?:n(?:o|umero)?\s*)?(\d+)\b/g)].map(match => `${match[1]}:${match[2]}`);
+  const numberedA = numbered(a), numberedB = numbered(b);
+  if (numberedA.length && numberedB.length && !numberedA.some(position => numberedB.includes(position))) return true;
+  const positions = (text: string): string[] => text.match(/\b(douche|lavabo|wc|entree|plafond|chevet|fenetre|television|lit|gauche|droite|bureau|evier|balcon|cuisine)\b/g) || [];
   const locationsA = positions(a), locationsB = positions(b);
   if (locationsA.length && locationsB.length && !locationsA.some(position => locationsB.includes(position))) return true;
   const components = (text: string): string[] => text.match(/\b(bec|flexible|poignee|joint|fixation|bouton|vitre)\b/g) || [];
@@ -170,7 +175,8 @@ function sameManualProblem(candidate: IssueCandidate, existing: Issue) {
   const leftFailures = failureKinds.filter(([, pattern]) => pattern.test(left)).map(([kind]) => kind);
   const rightFailures = failureKinds.filter(([, pattern]) => pattern.test(right)).map(([kind]) => kind);
   const description = meaningful(candidate.description), title = meaningful(candidate.title);
-  if ((description && description === meaningful(existing.description)) || (title && title === meaningful(existing.title))) return true;
+  const presetTitle = problemPresets.some(preset => normalizeIssueText(preset.label) === title);
+  if ((description && description === meaningful(existing.description)) || (title && !presetTitle && title === meaningful(existing.title))) return true;
   if (!leftFailures.some(kind => rightFailures.includes(kind))) return false;
   // Paraphrases are matched only with both a named fitting and the same fault;
   // generic titles or a shared category alone must never hide another repair.
@@ -184,17 +190,33 @@ function sameManualProblem(candidate: IssueCandidate, existing: Issue) {
 export function findDuplicateOpenIssue(candidate: IssueCandidate, issues: readonly Issue[]): Issue | undefined {
   const room = issueRoom(candidate);
   if (!room) return undefined;
-  return openRoomIssues(issues, room).find(existing => {
+  const currentCandidate = issueMatchingSnapshot(candidate);
+  return openRoomIssues(issues, room).find(original => {
+    const existing = issueMatchingSnapshot(original);
     if (candidate.id === existing.id) return false;
+    if (candidate.distinctFromIssueIds?.includes(existing.id) || (candidate.id && existing.distinctFromIssueIds?.includes(candidate.id))) return false;
     const identified = (finding: Finding) => finding.key !== "damage" || !!finding.problemType || !!meaningful(finding.description || "");
-    if (candidate.roomFindings?.some(finding => identified(finding) && matchesRoomFinding(existing, finding))) return true;
-    if (existing.roomFindings?.some(finding => identified(finding) && matchesRoomFinding(candidate as Issue, finding))) return true;
-    return sameManualProblem(candidate, existing);
+    if (currentCandidate.roomFindings?.some(finding => identified(finding) && matchesRoomFinding(existing, finding))) return true;
+    if (existing.roomFindings?.some(finding => identified(finding) && matchesRoomFinding(currentCandidate as Issue, finding))) return true;
+    return sameManualProblem(currentCandidate, existing);
   });
 }
 
+/** Explicit distinctions are evidence, not an implicit escape from duplicate checks. */
+export function validateIssueDistinction(candidate: IssueCandidate, issues: readonly Issue[], current?: IssueCandidate): string | undefined {
+  const ids = candidate.distinctFromIssueIds || [];
+  const changed = ids.filter(id => !current?.distinctFromIssueIds?.includes(id));
+  if (new Set(ids).size !== ids.length) return "Choisissez chaque problème à distinguer une seule fois.";
+  if (!changed.length) return undefined;
+  if (!meaningful(candidate.distinctReason || "")) return "Précisez l’équipement ou l’emplacement différent avant de créer un autre suivi.";
+  const room = issueRoom(candidate);
+  if (!room || changed.some(id => id === candidate.id || !issues.some(issue => issue.id === id && issueRoom(issue) === room)))
+    return "Le problème à distinguer a été déplacé ou supprimé. Actualisez puis vérifiez la chambre.";
+  return undefined;
+}
+
 export function duplicateRoomIssueMessage(issue: Issue) {
-  return `Un problème identique est déjà ouvert dans la chambre ${issueRoom(issue)} : ${issue.title}. Ouvrez ce signalement pour le mettre à jour.`;
+  return `Un problème similaire est déjà ouvert dans la chambre ${issueRoom(issue)} : ${issue.title}. Ouvrez ce signalement ou précisez qu’il s’agit d’un équipement différent.`;
 }
 
 /** Only an unambiguous pest report is routed away from technical repairs. */
@@ -232,14 +254,23 @@ export function cafardTechnicalReportMessage() {
 
 /** Existing duplicate history can still be progressed or resolved, never erased. */
 export function shouldCheckIssueDuplicate(candidate: Issue, current?: Issue) {
+  const details = (issue: Issue) => (issue.roomFindings || []).map(({ key, label, problemType, description }) => ({ key, label, problemType, description }));
+  const reopenedFinding = current && candidate.roomFindings?.some(finding => {
+    const before = current.roomFindings?.find(item => item.key === finding.key);
+    return before && issueFindingStatus(current, before) === "resolu" && issueFindingStatus(candidate, finding) !== "resolu";
+  });
   return candidate.status !== "resolu" && (!current || current.status === "resolu" ||
     issueRoom(candidate) !== issueRoom(current) || normalizeIssueText(candidate.title || "") !== normalizeIssueText(current.title || "") ||
-    normalizeIssueText(candidate.description || "") !== normalizeIssueText(current.description || "") || candidate.problemType !== current.problemType);
+    normalizeIssueText(candidate.description || "") !== normalizeIssueText(current.description || "") || candidate.problemType !== current.problemType ||
+    JSON.stringify(details(candidate)) !== JSON.stringify(details(current)) || reopenedFinding || (candidate.roomFindingsActive === false) !== (current.roomFindingsActive === false) ||
+    JSON.stringify(candidate.distinctFromIssueIds) !== JSON.stringify(current.distinctFromIssueIds));
 }
 
 type RoomIssueRecord = Pick<RoomInspection, "room" | "issueLinks" | "distinctProblemKeys" | "notes">;
 
 function exactTypedDescription(issue: Issue, finding: Finding) {
+  if (issue.roomFindingsActive === false) return false;
+  issue = issueMatchingSnapshot(issue);
   const detail = meaningful(finding.description || "");
   if (!detail) return false;
   return detail === meaningful(issue.description || "") ||
@@ -263,6 +294,14 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
     const existing = issues.find(issue => issue.id === link.issueId);
     if (!existing || existing.status === "resolu" || issueRoom(existing) !== record.room)
       conflicts.push("Le problème associé a été résolu, déplacé ou supprimé. Actualisez puis choisissez un problème encore ouvert dans cette chambre.");
+    else {
+      const finding = findings.find(item => item.key === link.key)!;
+      const resolved = (existing.roomFindings || []).filter(item => issueFindingStatus(existing, item) === "resolu");
+      const resolvedMatch = resolved.some(item => matchesRoomFinding({ ...existing, status: "ouvert", roomFindingsActive: true,
+        roomFindings: [{ ...item, status: "ouvert" }], title: item.label, description: item.description || item.label }, finding));
+      if ((existing.roomFindingsActive === false && resolved.length) || (resolvedMatch && !matchesRoomFinding(existing, finding)))
+        conflicts.push("Cet équipement est déjà résolu dans la fiche choisie. Signalez la nouvelle panne ou demandez à la direction de rouvrir cet élément avant de l’associer.");
+    }
   }
   if (!candidate) return { issue: undefined, relatedIssueIds: [] as string[], conflicts, requiresChoice };
   const open = openRoomIssues(issues, record.room);
@@ -277,7 +316,7 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
       return true; // A stale link must never silently create a replacement.
     }
     const matching = open.filter(issue => matchesRoomFinding(issue, finding));
-    if (matching.length > 1 || (matching.length === 1 && ((finding.problemType && !exactTypedDescription(matching[0], finding)) ||
+    if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && !exactTypedDescription(matching[0], finding)) ||
       (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
       requiresChoice.push(finding.key);
       conflicts.push(`Un problème similaire est déjà ouvert pour « ${getProblemPreset(finding.problemType)?.label || finding.label} ». Choisissez le signalement à réutiliser ou précisez un problème différent.`);

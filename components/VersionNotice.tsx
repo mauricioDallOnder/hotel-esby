@@ -6,6 +6,7 @@ import { flushDeviceDrafts } from "@/lib/useDeviceDraft";
 export function VersionNotice() {
   const [available, setAvailable] = useState(false);
   const [error, setError] = useState("");
+  const [updating, setUpdating] = useState(false);
   useEffect(() => {
     let active = true, checking = false, lastCheck = 0;
     const check = async () => {
@@ -26,14 +27,17 @@ export function VersionNotice() {
     return () => { active = false; window.removeEventListener("focus", check); window.removeEventListener("pageshow", check); window.removeEventListener("online", check); document.removeEventListener("visibilitychange", check); };
   }, []);
   async function update() {
+    if (updating) return;
+    setUpdating(true);
+    setError("");
     try {
       if (document.querySelector('fieldset:disabled')) throw new Error("Attendez la fin de l’enregistrement ou de la compression des photos.");
       await flushDeviceDrafts();
       window.location.reload();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError((e as Error).message); setUpdating(false); }
   }
   if (!available) return null;
-  return <Alert severity={error ? "error" : "info"} action={<Button onClick={() => void update()}>Actualiser l’application</Button>}>
+  return <Alert severity={error ? "error" : "info"} sx={{ mb: 2, flexWrap: "wrap", "& .MuiAlert-action": { ml: 0 } }} action={<Button disabled={updating} onClick={() => void update()}>{updating ? "Préparation…" : "Actualiser l’application"}</Button>}>
     {error || "Nouvelle version disponible. Vos brouillons enregistrés seront conservés."}
   </Alert>;
 }

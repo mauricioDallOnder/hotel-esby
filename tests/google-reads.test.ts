@@ -88,7 +88,7 @@ test("failed commits are never automatically repeated and invalidate cached stat
   globalThis.fetch = async (_url, options) => {
     const input = JSON.parse(options!.body as string);
     actions.push(input.action);
-    if (input.action === "commitIssueV3") throw new TypeError("fetch failed");
+    if (input.action === "commitIssueV4") throw new TypeError("fetch failed");
     return Response.json({ ok: true, data: empty });
   };
   await readState();
@@ -97,5 +97,5 @@ test("failed commits are never automatically repeated and invalidate cached stat
     fields: { title: "Test", description: "Test", category: "Autre", priority: "normale", location: "204", assignee: "" },
   }), { code: 503 });
   await readState();
-  assert.deepEqual(actions, ["list", "list", "commitIssueV3", "list"]);
+  assert.deepEqual(actions, ["list", "list", "commitIssueV4", "list"]);
 });

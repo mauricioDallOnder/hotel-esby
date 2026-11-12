@@ -12,6 +12,8 @@ import {
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogContent,
   MenuItem,
   Paper,
   Stack,
@@ -23,7 +25,7 @@ import { mergeHotel } from "@/lib/mergeHotel";
 import { deviceStore } from "@/lib/deviceStore";
 import { EntriesProvider } from "./EntriesContext";
 import { LaundryNotificationsProvider } from "./LaundryNotificationsContext";
-import type { EntryChange, WorkEvent } from "@/lib/rooms";
+import type { EntryChange } from "@/lib/rooms";
 import { roles, type Role } from "@/lib/roles";
 import { ThemeModeToggle } from "@/components/ThemeModeToggle";
 
@@ -31,12 +33,13 @@ type Data = State & { mode: "local" | "sheets" };
 type Context = Data & {
   hotelName: string;
   role: Role;
+  authenticated: boolean;
   busy: boolean;
   error: string;
   saveError: string;
   clearSaveError: () => void;
   cachedAt: string;
-  refresh: () => Promise<void>;
+  refresh: (fresh?: boolean) => Promise<void>;
   mutate: (command: Command) => Promise<Data>;
   logout: () => Promise<void>;
 };
@@ -89,7 +92,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch {
       throw new Error("Le serveur n’a pas pu répondre. Réessayez dans quelques instants.");
     }
-    if (!response.ok) throw new Error(result.error || "Erreur de connexion.");
+    if (!response.ok) throw Object.assign(new Error(result.error || "Erreur de connexion."), { status: response.status });
     return result;
   }, []);
 
@@ -146,7 +149,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/session", { cache: "no-store" })
+    const controller = new AbortController();
+    fetch("/api/session", { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]) })
       .then((response) => {
         if (!response.ok) throw new Error("Session inaccessible.");
         return response.json();
@@ -155,7 +159,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         setSession(result);
         if (result.availableRoles?.length)
-          setLoginRole(result.availableRoles.includes("employe") ? "employe" : result.availableRoles[0]);
+          setLoginRole(result.authenticated && result.role ? result.role : result.availableRoles.includes("employe") ? "employe" : result.availableRoles[0]);
         if (result.authenticated) await refresh(false);
       })
       .catch(() => {
@@ -163,6 +167,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [request, refresh]);
 
@@ -226,15 +231,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Recovery needs a successful live read, never the last cached snapshot or a
   // refresh that swallowed its error. Merge it for the machine cards as well.
-  const readLaundryRecoveryState = useCallback(async (): Promise<WorkEvent[]> => {
+  const readRecoveryState = useCallback(async (): Promise<State> => {
     const result: Data = await request("/api/hotel?fresh=1");
     if (!Array.isArray(result.issues) || !Array.isArray(result.inspections) ||
-      result.workEvents !== undefined && !Array.isArray(result.workEvents))
-      throw new Error("L’état de la lingerie n’a pas pu être vérifié. La demande est conservée.");
+      result.workEvents !== undefined && !Array.isArray(result.workEvents) ||
+      result.roomInspections !== undefined && !Array.isArray(result.roomInspections) ||
+      result.familyEvents !== undefined && !Array.isArray(result.familyEvents))
+      throw new Error("L’état actuel n’a pas pu être vérifié. La demande est conservée.");
     setData(current => mergeHotel(current, result));
     setCachedAt("");
     setError("");
-    return result.workEvents || [];
+    return result;
   }, [request]);
 
   const deleteAbsence = useCallback(async (id: string) => {
@@ -283,21 +290,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       </Box>
     );
 
-  if (!session.authenticated)
-    return (
-      <Box
-        sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 2 }}
-      >
-        <Paper sx={{ p: 4, width: "100%", maxWidth: 420 }}>
+  const loginForm = (
           <Stack component="form" onSubmit={login} spacing={3}>
             <Box sx={{ display: "flex", justifyContent: "flex-end" }}><ThemeModeToggle /></Box>
             <Typography variant="overline" color="primary">
               Hôtel Contrôle
             </Typography>
-            <Typography variant="h4">Bienvenue</Typography>
+            <Typography variant="h4" id="session-signin-title">{loaded ? "Reconnectez-vous" : "Bienvenue"}</Typography>
             <Typography color="text.secondary">
-              Connectez-vous pour accéder aux chambres, aux tâches et au suivi des
-              interventions.
+              {loaded ? "Votre session a expiré. Votre saisie reste ouverte ; reconnectez-vous pour continuer." : "Connectez-vous pour accéder aux chambres et au suivi des interventions."}
             </Typography>
             {error && <Alert severity="error">{error}</Alert>}
             {!session.configured ? (
@@ -338,7 +339,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               </>
             )}
           </Stack>
-        </Paper>
+  );
+
+  if (!session.authenticated && !loaded)
+    return (
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 2 }}>
+        <Paper sx={{ p: 4, width: "100%", maxWidth: 420 }}>{loginForm}</Paper>
       </Box>
     );
 
@@ -348,6 +354,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...data,
         hotelName: session.hotelName,
         role: session.role!,
+        authenticated: session.authenticated,
         busy,
         error,
         saveError,
@@ -358,9 +365,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         logout,
       }}
     >
-      <EntriesProvider onSaved={mergeEntry} onDelete={deleteAbsence} readLaundryRecoveryState={readLaundryRecoveryState}>
+      <EntriesProvider onSaved={mergeEntry} onDelete={deleteAbsence} readRecoveryState={readRecoveryState} authenticated={session.authenticated}>
         <LaundryNotificationsProvider>{children}</LaundryNotificationsProvider>
       </EntriesProvider>
+      <Dialog open={!session.authenticated} fullWidth maxWidth="xs" aria-labelledby="session-signin-title">
+        <DialogContent sx={{ p: 3 }}>{loginForm}</DialogContent>
+      </Dialog>
     </AppContext.Provider>
   );
 }

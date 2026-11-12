@@ -58,10 +58,23 @@ export function laundryNoticeForCycle(cycle: LaundryCycle, now = Date.now()): La
 }
 
 export function laundryNotices(events: (WorkEntry | WorkEvent)[], now = Date.now()): LaundryNotice[] {
-  return laundryMachineStates(events, now).flatMap(({ cycle }) => {
-    const notice = cycle && laundryNoticeForCycle(cycle, now);
+  return laundryNoticesForCycles(laundryMachineStates(events, now).flatMap(({ cycle }) => cycle ? [cycle] : []), now);
+}
+
+export function laundryNoticesForCycles(cycles: readonly LaundryCycle[], now = Date.now()): LaundryNotice[] {
+  return cycles.flatMap(cycle => {
+    const notice = laundryNoticeForCycle(cycle, now);
     return notice ? [notice] : [];
   });
+}
+
+/** Wake for a stage, its push grace period, or expiry; idle machines need no timer. */
+export function nextLaundryNoticeAt(cycles: readonly LaundryCycle[], now = Date.now()): number | null {
+  const times = cycles.filter(cycle => cycle.status === "en_cours").flatMap(cycle => {
+    const end = Date.parse(cycle.endsAt), soon = end - 10 * 60_000;
+    return [soon, soon + 90_000, end, end + 90_000, end + 15 * 60_000];
+  }).filter(time => Number.isFinite(time) && time > now);
+  return times.length ? Math.min(...times) : null;
 }
 
 // Give a healthy minute-based scheduler time to deliver first. An HTTP-success

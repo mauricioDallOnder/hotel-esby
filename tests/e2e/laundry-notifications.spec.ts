@@ -1,17 +1,19 @@
 import { expect, test, type Page, type Worker } from "@playwright/test";
-import { createHash } from "node:crypto";
 import { laundryNotices } from "../../lib/laundryNotifications";
 import { workEntrySchema } from "../../lib/rooms";
+import { workReceipt } from "./helpers/receipts";
 
 async function prepare(page: Page, now: number) {
-  await page.clock.setFixedTime(new Date(now));
+  // Let navigation and worker activation finish before pausing at a deadline.
+  // Advancing timers together with Date exercises the scheduled wake-up itself.
+  await page.clock.install({ time: new Date(now - 60_000) });
   const startedAt = new Date(now - 20 * 60_000 + 1_000).toISOString();
   const start = workEntrySchema.parse({
-    type: "createWorkEvent", kind: "laundryCycle", id: crypto.randomUUID(), targetId: "washer-2", expectedRevision: 0,
+    type: "createWorkEvent", kind: "laundryCycle", id: crypto.randomUUID(), targetId: "washer-2", expectedRevision: 0, expectedPreviousEventId: null,
     room: "201", date: startedAt.slice(0, 10), occurredAt: startedAt, actor: "Agent fictif", notes: "",
     laundryCycleId: crypto.randomUUID(), laundryOwner: "Repère privé", laundryStartedAt: startedAt, laundryStatus: "en_cours", laundryCollectedAt: null, laundryCollectedBy: "",
   });
-  const workEvents = [{ ...start, version: 1, updatedAt: start.occurredAt, submissionHash: createHash("sha256").update(JSON.stringify(start)).digest("hex") }];
+  const workEvents = [workReceipt(start)];
   let hotelReads = 0;
   await page.route("**/api/hotel*", route => {
     hotelReads++;
@@ -67,9 +69,10 @@ test("real worker and IndexedDB deduplicate reminders across navigation and relo
   await expect(page.getByText("Avec l’application ouverte", { exact: true })).toBeVisible();
 
   await page.goto("/occupation");
-  await page.clock.setFixedTime(new Date(now + 1_000));
+  await page.clock.pauseAt(new Date(now + 1_000));
   const shown = () => worker.evaluate(() => (self as unknown as WorkerTestState).laundryTestNotifications);
   await expect.poll(shown).toEqual([{ tag: `laundry:${start.laundryCycleId}:soon`, body: "Machine à laver 2 · chambre 201 : il reste moins de 10 minutes." }]);
+  await page.clock.resume();
   await page.reload();
   const soon = laundryNotices(workEvents, now + 1_000)[0];
   const repeated = await page.evaluate(async notice => {
@@ -86,10 +89,10 @@ test("real worker and IndexedDB deduplicate reminders across navigation and relo
   // A rejected native display must not poison the dedup record. The provider
   // retries after 30 seconds, then acknowledges exactly one finished notice.
   await worker.evaluate(() => { (self as unknown as WorkerTestState).laundryTestFailures = 1; });
-  await page.clock.setFixedTime(new Date(now + 10 * 60_000 + 1_000));
+  await page.clock.pauseAt(new Date(now + 10 * 60_000 + 1_000));
   await expect.poll(() => worker.evaluate(() => (self as unknown as WorkerTestState).laundryTestFailures)).toBe(0);
   expect(await shown()).toHaveLength(1);
-  await page.clock.setFixedTime(new Date(now + 11 * 60_000));
+  await page.clock.pauseAt(new Date(now + 11 * 60_000));
   await expect.poll(shown).toHaveLength(2);
   expect((await shown())[1]).toEqual({ tag: `laundry:${start.laundryCycleId}:finished`, body: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." });
   expect(JSON.stringify(await shown())).not.toContain("Repère privé");
@@ -108,6 +111,7 @@ test("real worker and IndexedDB deduplicate reminders across navigation and relo
     self.dispatchEvent(event); await pending;
   }, soon);
   expect((await shown())[3]).toEqual({ tag: "laundry:check", body: "Ouvrez la lingerie pour vérifier les cycles et la récupération du linge.", silent: true });
+  await page.clock.resume();
   await page.goto("/lingerie");
   await page.getByRole("button", { name: "Désactiver sur cet appareil", exact: true }).click();
   await expect(page.getByRole("button", { name: "Activer sur cet appareil", exact: true })).toBeVisible();
@@ -125,7 +129,7 @@ test("denied notifications keep visible in-app reminders and explain the fallbac
   await expect(page.getByText(/Notifications bloquées :/)).toBeVisible();
   await page.getByRole("button", { name: "Activer sur cet appareil", exact: true }).click();
   await expect(page.getByText("Les notifications sont bloquées. Autorisez-les dans les réglages de ce site, puis réessayez.", { exact: true })).toBeVisible();
-  await page.clock.setFixedTime(new Date(now + 1_000));
+  await page.clock.pauseAt(new Date(now + 1_000));
   await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : il reste moins de 10 minutes." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Envoyer un test", exact: true })).toHaveCount(0);
 });
@@ -155,17 +159,18 @@ test("an extension push before state refresh stays visible, rearms completion an
   await captureNativeDisplay(worker);
   const shown = () => worker.evaluate(() => (self as unknown as WorkerTestState).laundryTestNotifications);
   const closedIds = () => page.evaluate(() => (window as unknown as { laundryClosedIds: string[] }).laundryClosedIds);
-  await page.clock.setFixedTime(new Date(now + 1_000));
+  await page.clock.pauseAt(new Date(now + 1_000));
   await expect.poll(shown).toHaveLength(1);
   const originalEnd = now + 10 * 60_000 + 1_000;
-  await page.clock.setFixedTime(new Date(originalEnd));
+  await page.clock.pauseAt(new Date(originalEnd));
   await expect.poll(shown).toHaveLength(2);
   await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." })).toBeVisible();
   const extended = workEntrySchema.parse({ ...start, id: crypto.randomUUID(), expectedRevision: 1,
+    expectedPreviousEventId: start.id,
     occurredAt: new Date(originalEnd).toISOString(), date: new Date(originalEnd).toISOString().slice(0, 10),
     laundryAddedMinutes: 20, laundryEndsAt: new Date(originalEnd + 20 * 60_000).toISOString() });
-  const extensionReceipt = { ...extended, version: 1, updatedAt: extended.occurredAt, submissionHash: createHash("sha256").update(JSON.stringify(extended)).digest("hex") };
-  await page.clock.setFixedTime(new Date(originalEnd + 10 * 60_000));
+  const extensionReceipt = workReceipt(extended);
+  await page.clock.pauseAt(new Date(originalEnd + 10 * 60_000));
   const remoteNotice = laundryNotices([...workEvents, extensionReceipt], originalEnd + 10 * 60_000)[0];
   const beforePushReads = getHotelReads();
   await worker.evaluate(async notice => {
@@ -186,23 +191,25 @@ test("an extension push before state refresh stays visible, rearms completion an
   expect(await closedIds()).not.toContain(remoteNotice.id);
   await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." })).toHaveCount(0);
   const extendedEnd = Date.parse(extended.laundryEndsAt!);
-  await page.clock.setFixedTime(new Date(extendedEnd));
+  await page.clock.pauseAt(new Date(extendedEnd));
   await expect.poll(shown).toHaveLength(4);
   expect((await shown())[3].tag).toBe(`laundry:${start.laundryCycleId}:${extended.id}:finished`);
 
   const short = workEntrySchema.parse({ ...extended, id: crypto.randomUUID(), expectedRevision: 2,
+    expectedPreviousEventId: extended.id,
     occurredAt: new Date(extendedEnd).toISOString(), date: new Date(extendedEnd).toISOString().slice(0, 10),
     laundryAddedMinutes: 5, laundryEndsAt: new Date(extendedEnd + 5 * 60_000).toISOString() });
-  workEvents.push({ ...short, version: 1, updatedAt: short.occurredAt, submissionHash: createHash("sha256").update(JSON.stringify(short)).digest("hex") });
+  workEvents.push(workReceipt(short));
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(machine.getByLabel("Temps restant", { exact: true })).toHaveText("05:00");
   await expect(page.getByRole("alert").filter({ hasText: "Machine à laver 2 · chambre 201 : le linge est prêt à sécher." })).toHaveCount(0);
-  await page.clock.setFixedTime(new Date(Date.parse(short.laundryEndsAt!) - 1_000));
+  await page.clock.pauseAt(new Date(Date.parse(short.laundryEndsAt!) - 1_000));
   await expect(machine.getByLabel("Temps restant", { exact: true })).toHaveText("00:01");
   expect(await shown()).toHaveLength(4);
-  await page.clock.setFixedTime(new Date(short.laundryEndsAt!));
+  await page.clock.pauseAt(new Date(short.laundryEndsAt!));
   await expect.poll(shown).toHaveLength(5);
   expect((await shown())[4].tag).toBe(`laundry:${start.laundryCycleId}:${short.id}:finished`);
+  await page.clock.resume();
   await page.reload();
   await expect(machine.getByLabel("Temps écoulé", { exact: true })).toHaveText("Terminé");
   expect(await shown()).toHaveLength(5);
