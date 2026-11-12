@@ -5,6 +5,10 @@ const photo = { name: "constat.png", mimeType: "image/png", buffer: Buffer.from(
 for (const width of [390, 1280]) test(`an expired session preserves the open issue, photo and recoverable draft at ${width}px`, async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width, height: 844 });
+  // Keep the mobile session flow usable without this newer abort-composition API.
+  if (width === 390) await page.addInitScript(() => {
+    Object.defineProperty(AbortSignal, "any", { configurable: true, value: undefined });
+  });
   expect((await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } })).ok()).toBeTruthy();
   let rejectRefresh = false;
   await page.route("**/api/hotel*", async route => {

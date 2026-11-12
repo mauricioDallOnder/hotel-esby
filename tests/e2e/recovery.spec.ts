@@ -75,8 +75,12 @@ test("connection status distinguishes offline mode and a failed refresh from con
 test("a failed anomaly save does not erase the warning from a failed data refresh", async ({ page }) => {
   await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
   let failRefresh = false;
+  let saveAttempts = 0;
   await page.route("**/api/hotel*", route => {
-    if (route.request().method() !== "GET") return route.fulfill({ status: 503, json: { error: "Enregistrement temporairement indisponible." } });
+    if (route.request().method() !== "GET") {
+      saveAttempts++;
+      return route.fulfill({ status: 503, json: { error: "Enregistrement temporairement indisponible." } });
+    }
     return failRefresh
       ? route.fulfill({ status: 503, json: { error: "Lecture temporairement indisponible." } })
       : route.fulfill({ json: { issues: [], inspections: [], mode: "sheets" } });
@@ -95,12 +99,34 @@ test("a failed anomaly save does not erase the warning from a failed data refres
   await dialog.getByLabel("Description du problème").fill("Robinet bloqué");
   await dialog.getByLabel("Signalé par").fill("Test de connexion");
   await dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toContainText("Enregistrement temporairement indisponible.");
+  await expect(dialog.getByRole("alert").filter({ hasText: "Enregistrement temporairement indisponible." })).toHaveText("Enregistrement temporairement indisponible.");
+  const uncertain = dialog.getByRole("alert").filter({ hasText: "L’envoi reste à confirmer." });
+  await expect(uncertain).toHaveText("L’envoi reste à confirmer. Votre texte et vos photos sont conservés. Réessayez le même envoi avant de modifier ou supprimer ce brouillon.");
   await dialog.getByRole("button", { name: "Annuler", exact: true }).click();
-  await page.getByRole("button", { name: "Abandonner les modifications", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "Fermer sans enregistrer ?", exact: true });
+  await expect(confirmation.getByRole("button", { name: "Abandonner les modifications", exact: true })).toHaveCount(0);
+  await confirmation.getByRole("button", { name: "Fermer et conserver", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 
   await expect(status.getByRole("status")).toHaveText("Enregistrement non confirmé");
+  await expect(status.getByRole("alert").filter({ hasText: "Enregistrement temporairement indisponible." })).toBeVisible();
+  await expect(status.getByRole("alert").filter({ hasText: "Lecture temporairement indisponible." })).toBeVisible();
   await status.getByRole("button", { name: "Masquer ce message", exact: true }).click();
+  await expect(status.getByRole("status")).toHaveText("Données à actualiser");
+  await expect(status.getByRole("alert")).toContainText("Lecture temporairement indisponible.");
+
+  await page.getByRole("button", { name: "Reprendre le brouillon", exact: true }).click();
+  await expect(dialog.getByLabel("Titre")).toHaveValue("Robinet chambre 203");
+  await expect(dialog.getByLabel("Lieu précis")).toHaveValue("Chambre 203");
+  await expect(dialog.getByLabel("Description du problème")).toHaveValue("Robinet bloqué");
+  await expect(dialog.getByLabel("Signalé par")).toHaveValue("Test de connexion");
+  await expect(dialog.getByLabel("Titre")).toBeDisabled();
+  await expect(uncertain).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Réessayer le même envoi", exact: true })).toBeEnabled();
+  expect(saveAttempts).toBe(1);
+  await dialog.getByRole("button", { name: "Annuler", exact: true }).click();
+  await confirmation.getByRole("button", { name: "Fermer et conserver", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(status.getByRole("status")).toHaveText("Données à actualiser");
   await expect(status.getByRole("alert")).toContainText("Lecture temporairement indisponible.");
 });

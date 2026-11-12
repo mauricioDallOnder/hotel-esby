@@ -150,7 +150,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    fetch("/api/session", { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]) })
+    // Keep the session deadline without requiring the newer AbortSignal.any API.
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    fetch("/api/session", { cache: "no-store", signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error("Session inaccessible.");
         return response.json();
@@ -164,9 +166,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
       .catch(() => {
         if (!cancelled) setError("Serveur inaccessible. Rechargez la page.");
-      });
+      })
+      .finally(() => window.clearTimeout(timeout));
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
       controller.abort();
     };
   }, [request, refresh]);
