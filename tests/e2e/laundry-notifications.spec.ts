@@ -25,7 +25,7 @@ async function prepare(page: Page, now: number) {
 }
 
 test("native browser notification test when the browser supports permission overrides", async ({ page, context }) => {
-  await context.grantPermissions(["notifications"], { origin: "http://127.0.0.1:3127" });
+  await context.grantPermissions(["notifications"], { origin: "http://localhost:3127" });
   await prepare(page, Date.now());
   await page.goto("/lingerie");
   // Some chrome-headless-shell builds expose granted in the Permissions API

@@ -10,10 +10,11 @@ export default defineConfig({
   globalTimeout: 20 * 60_000,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   workers: 1,
-  use: { baseURL: "http://127.0.0.1:3127", browserName: "chromium", trace: "retain-on-failure", screenshot: "only-on-failure" },
+  // Playwright's API cookie jar accepts production Secure cookies on localhost.
+  use: { baseURL: "http://localhost:3127", browserName: "chromium", trace: "retain-on-failure", screenshot: "only-on-failure" },
   webServer: {
-    command: process.env.CI ? "npm run start -- --hostname 127.0.0.1 --port 3127" : "npm run dev -- --hostname 127.0.0.1 --port 3127",
-    url: "http://127.0.0.1:3127/api/session",
+    command: process.env.CI ? "npm run start -- --hostname localhost --port 3127" : "npm run dev -- --hostname localhost --port 3127",
+    url: "http://localhost:3127/api/session",
     reuseExistingServer: false,
     timeout: 120000,
     env: {
