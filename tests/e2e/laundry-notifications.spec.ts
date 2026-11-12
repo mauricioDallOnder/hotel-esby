@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Worker } from "@playwright/test";
+import { expect, test, type Page, type Worker } from "./fixtures";
 import { laundryNotices } from "../../lib/laundryNotifications";
 import { workEntrySchema } from "../../lib/rooms";
 import { workReceipt } from "./helpers/receipts";
@@ -69,11 +69,16 @@ test("real worker and IndexedDB deduplicate reminders across navigation and relo
   await expect(page.getByText("Avec l’application ouverte", { exact: true })).toBeVisible();
 
   await page.goto("/occupation");
+  // A document load can finish before session hydration. Advancing a minute
+  // at that point aborts the still-pending 15-second session request.
+  const syncStatus = page.getByRole("region", { name: "État des enregistrements", exact: true }).getByRole("status");
+  await expect(syncStatus).toHaveText("Enregistrements à jour");
   await page.clock.pauseAt(new Date(now + 1_000));
   const shown = () => worker.evaluate(() => (self as unknown as WorkerTestState).laundryTestNotifications);
   await expect.poll(shown).toEqual([{ tag: `laundry:${start.laundryCycleId}:soon`, body: "Machine à laver 2 · chambre 201 : il reste moins de 10 minutes." }]);
   await page.clock.resume();
   await page.reload();
+  await expect(syncStatus).toHaveText("Enregistrements à jour");
   const soon = laundryNotices(workEvents, now + 1_000)[0];
   const repeated = await page.evaluate(async notice => {
     const registration = await navigator.serviceWorker.ready;
@@ -157,6 +162,7 @@ test("an extension push before state refresh stays visible, rearms completion an
   await page.getByRole("button", { name: "Activer sur cet appareil", exact: true }).click();
   const worker = await createdWorker;
   await captureNativeDisplay(worker);
+  await expect(page.getByText("Avec l’application ouverte", { exact: true })).toBeVisible();
   const shown = () => worker.evaluate(() => (self as unknown as WorkerTestState).laundryTestNotifications);
   const closedIds = () => page.evaluate(() => (window as unknown as { laundryClosedIds: string[] }).laundryClosedIds);
   await page.clock.pauseAt(new Date(now + 1_000));

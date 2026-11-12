@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { today } from "../../lib/domain";
 import type { WorkEntry } from "../../lib/rooms";
 async function login(page: Page) { await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } }); }
@@ -68,8 +68,11 @@ test("daily tasks support offline add, check and edit, ordered synchronization a
   await context.setOffline(true);
   await page.getByLabel("Que faut-il faire ?").fill("Préparer les clés test");
   await page.getByRole("button", { name: "Ajouter", exact: true }).click();
-  await page.getByRole("checkbox", { name: "Terminer : Préparer les clés test", exact: true }).check();
-  await expect(page.getByRole("checkbox", { name: "Terminer : Préparer les clés test", exact: true })).toBeChecked();
+  const taskCheckbox = page.getByRole("checkbox", { name: "Terminer : Préparer les clés test", exact: true });
+  await expect(taskCheckbox).not.toBeChecked();
+  // The controlled value updates after the local queue has been saved in IndexedDB.
+  await taskCheckbox.click();
+  await expect(taskCheckbox).toBeChecked();
   await page.getByRole("button", { name: "Modifier", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel(/^À faire/).fill("Préparer les clés et badges test");

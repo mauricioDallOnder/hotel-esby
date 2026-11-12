@@ -32,12 +32,18 @@ function PhotoFrame({ issueId, collection, source, index, alt, width, lazy, phot
   const [ready, setReady] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState(index);
+  const navigation = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const count = Math.max(index + 1, photoCount), gallery = photoCount > 1;
   const expandedSource = photoSource(issueId, selected, collection);
   const expandedAlt = selected === index ? alt : /\bphoto\s+\d+/i.test(alt)
     ? alt.replace(/(\bphoto\s+)\d+/i, (_, prefix: string) => `${prefix}${selected + 1}`) : `${alt} · photo ${selected + 1}`;
-  const move = (direction: number) => setSelected(current => Math.max(0, Math.min(count - 1, current + direction)));
+  const move = (direction: number) => {
+    // A boundary disables the clicked button; changing photos can also remove a
+    // focused retry button. Keep keyboard events in this stable dialog control.
+    navigation.current?.focus();
+    setSelected(current => Math.max(0, Math.min(count - 1, current + direction)));
+  };
 
   return <Box sx={{ minWidth: 0, width, flexShrink: 0 }}>
     <PhotoImage source={source} index={index} alt={alt} lazy={lazy} onReady={setReady} />
@@ -46,6 +52,7 @@ function PhotoFrame({ issueId, collection, source, index, alt, width, lazy, phot
       onKeyDown={event => {
         if (!gallery || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
         event.preventDefault();
+        event.stopPropagation();
         move(event.key === "ArrowLeft" ? -1 : 1);
       }}>
       <DialogTitle id={titleId}>{expandedAlt}</DialogTitle>
@@ -53,7 +60,7 @@ function PhotoFrame({ issueId, collection, source, index, alt, width, lazy, phot
         <PhotoImage key={expandedSource} source={expandedSource} index={selected} alt={expandedAlt} lazy={false} expanded />
       </DialogContent>
       <DialogActions sx={{ flexWrap: "wrap", gap: 1, p: 2 }}>
-        {gallery && <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", width: "100%", gap: 1 }}>
+        {gallery && <Stack ref={navigation} role="group" aria-label="Navigation des photos" tabIndex={-1} direction="row" sx={{ alignItems: "center", justifyContent: "space-between", width: "100%", gap: 1 }}>
           <Button onClick={() => move(-1)} disabled={selected === 0} aria-label="Photo précédente" sx={{ minHeight: 44 }}>Précédente</Button>
           <Typography variant="body2" role="status" aria-live="polite">Photo {selected + 1} sur {count}</Typography>
           <Button onClick={() => move(1)} disabled={selected === count - 1} aria-label="Photo suivante" sx={{ minHeight: 44 }}>Suivante</Button>

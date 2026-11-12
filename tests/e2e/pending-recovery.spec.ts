@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import type { Issue, State } from "../../lib/domain";
 import type { PendingEntry } from "../../lib/entryQueue";
 import { parseEntry, roomChecks, roomIssue, workEntrySchema, type Entry, type RoomEntry, type RoomInspection, type WorkEntry, type WorkEvent } from "../../lib/rooms";

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { today, type State } from "../../lib/domain";
 import { roomChecks, type RoomEntry } from "../../lib/rooms";
 
@@ -41,7 +41,7 @@ test("a room marked free in Occupation leaves every checklist view and returns w
   await expect(page.getByRole("button", { name: "Toutes : 84", exact: true })).toBeVisible();
   await expect(page.getByRole("article", { name: "Chambre 107", exact: true }).getByRole("checkbox")).toHaveAttribute("aria-checked", "mixed");
   await expect(page.getByRole("button", { name: /^Libres :/ })).toHaveCount(0);
-  for (const filter of ["Tournée du jour", "À contrôler", "Anomalies ouvertes"]) {
+  for (const filter of ["Tournée du jour", "À contrôler", "Problèmes techniques"]) {
     await page.getByRole("group", { name: "Filtrer les contrôles", exact: true }).getByRole("button", { name: filter, exact: true }).click();
     await expect(hidden).toHaveCount(0);
   }

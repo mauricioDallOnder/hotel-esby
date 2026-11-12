@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { displayDate, today, type State } from "../../lib/domain";
 import type { WorkEntry } from "../../lib/rooms";
 

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("mobile recovers from failed data and photo loads without logging in again", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

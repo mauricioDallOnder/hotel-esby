@@ -79,7 +79,9 @@ Vercel não atualiza o Apps Script automaticamente.
 O workflow `.github/workflows/quality.yml` verifica tipos, lint, testes de domínio,
 paridade do Apps Script, build e percursos Playwright a cada pull request para `main`.
 Os testes usam armazenamento local temporário ou serviços Google simulados, sem
-consultar a planilha de produção. Os percursos incluem formatos de celular e desktop.
+consultar a planilha de produção. Cada cenário e nova tentativa começam com dados
+fictícios vazios, em um diretório identificado e validado pelo próprio teste.
+Os percursos incluem formatos de celular e desktop.
 
 ## Problemas frequentes e associação ao acompanhamento existente
 

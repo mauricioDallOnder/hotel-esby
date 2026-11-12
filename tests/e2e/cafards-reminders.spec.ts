@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { workEntrySchema, type WorkEntry, type WorkEvent } from "../../lib/rooms";
 import { validateWorkEntry, validateWorkPredecessor } from "../../lib/work";
 import { workReceipt as receipt } from "./helpers/receipts";

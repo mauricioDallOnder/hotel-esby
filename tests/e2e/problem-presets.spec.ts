@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./fixtures";
 import { applyCommand, type Command, type Issue, type State } from "../../lib/domain";
 import { commandOperation, isCommandReplay, stampCommandReceipt } from "../../lib/commandReceipt";
 import { entrySchema, type Entry, type WorkEvent } from "../../lib/rooms";

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { roomChecks } from "../../lib/rooms";
 async function login(page: Page) { await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } }); }
 async function select(page: Page, label: string, option: string) {

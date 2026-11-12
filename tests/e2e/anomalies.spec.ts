@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { today, type Issue } from "../../lib/domain";
 
 const sample = (patch: Partial<Issue> = {}): Issue => ({ id: crypto.randomUUID(), version: 1, title: "Éclairage défectueux", description: "Ampoule de la salle de bain", location: "Chambre 204", category: "Électricité", status: "ouvert", priority: "haute", date: "2026-10-01", createdAt: "2026-10-01T10:00:00Z", updatedAt: "2026-10-01T10:00:00Z", assignee: "", reportedBy: "Marie", photoId: null, photoIds: [], history: [{ at: "2026-10-01T10:00:00Z", actor: "Marie", note: "Anomalie signalée.", status: "ouvert", priority: "haute", assignee: "" }], ...patch });

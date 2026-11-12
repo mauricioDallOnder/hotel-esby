@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { prepareE2ELocalData } from "./tests/e2e/helpers/local-data";
+
+const localData = prepareE2ELocalData();
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -10,6 +10,7 @@ export default defineConfig({
   maxFailures: process.env.CI ? 5 : undefined,
   globalTimeout: 20 * 60_000,
   reporter: process.env.CI ? [["list"], ["github"], ["html", { open: "never" }]] : "list",
+  fullyParallel: false,
   workers: 1,
   // Playwright's API cookie jar accepts production Secure cookies on localhost.
   use: { baseURL: "http://localhost:3127", browserName: "chromium", trace: "retain-on-failure", screenshot: "only-on-failure" },
@@ -20,7 +21,7 @@ export default defineConfig({
     timeout: 120000,
     env: {
       STORAGE_DRIVER: "local",
-      LOCAL_DATA_DIR: mkdtempSync(path.join(tmpdir(), "hotel-e2e-")),
+      LOCAL_DATA_DIR: localData.directory,
       APP_DIRECTION_PASSWORD: "test-direction",
       APP_EMPLOYEE_PASSWORD: "test-employee",
     },
