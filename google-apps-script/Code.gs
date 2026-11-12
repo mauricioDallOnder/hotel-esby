@@ -48,17 +48,20 @@ function records_(collection) {
   return sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.length).getValues().filter(row => row[0]).map(row => JSON.parse(row.slice(10, 22).map(chunk => String(chunk).slice(1)).join('')));
 }
 function json_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }
+function requestError_(message) { const error = new Error(message); error.code = 400; return error; }
 // GET exposes only health. Private reads use POST so the API token stays out of URLs.
-function doGet() { return json_({ ok: true, service: 'Hôtel Contrôle', version: 3 }); }
+function doGet() { return json_({ ok: true, service: 'Hôtel Contrôle', version: 4 }); }
 function doPost(e) {
   let lock;
   try {
-    if (!e || !e.postData || e.postData.contents.length > 9000000) throw new Error('Requête invalide.');
-    const input = JSON.parse(e.postData.contents);
+    if (!e || !e.postData || e.postData.contents.length > 9000000) throw requestError_('Requête invalide.');
+    let input;
+    try { input = JSON.parse(e.postData.contents); } catch (_) { throw requestError_('Requête invalide.'); }
+    if (!input || typeof input !== 'object') throw requestError_('Requête invalide.');
     const token = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
     if (!token || input.token !== token) return json_({ ok: false, code: 401, error: 'Accès refusé.' });
     if (String(input.action || '').indexOf('laundryPush') === 0) return laundryPushAction_(input);
-    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), workEvents: records_('workEvents'), maxIssuePhotos: 3, entryVersion: 3, deletedFamilyEventIds: deletedAbsences_() } });
+    if (input.action === 'list') return json_({ ok: true, data: { issues: records_('issues'), inspections: records_('inspections'), familyEvents: records_('familyEvents'), roomInspections: records_('roomInspections'), workEvents: records_('workEvents'), maxIssuePhotos: 3, entryVersion: 4, deletedFamilyEventIds: deletedAbsences_() } });
     if (input.action === 'photo') {
       const collection = input.collection === 'roomInspections' ? 'roomInspections' : 'issues';
       const issue = records_(collection).find(item => item.id === input.issueId);
@@ -69,12 +72,12 @@ function doPost(e) {
       return json_({ ok: true, data: { base64: Utilities.base64Encode(file.getBlob().getBytes()) } });
     }
     if (input.action === 'deleteEntry') {
-      if (input.collection !== 'familyEvents' || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(input.id || '')) throw new Error('Suppression invalide.');
+      if (input.collection !== 'familyEvents' || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(input.id || '')) throw requestError_('Suppression invalide.');
       lock = LockService.getScriptLock(); lock.waitLock(20000);
       const current = records_('familyEvents').find(record => record.id === input.id);
       const deleted = deletedAbsences_().includes(input.id);
       if (!current && !deleted) return json_({ ok: false, code: 404, error: 'Absence introuvable.' });
-      if (current && current.kind !== 'absence') throw new Error('Seules les absences peuvent être supprimées.');
+      if (current && current.kind !== 'absence') throw requestError_('Seules les absences peuvent être supprimées.');
       if (!deleted) {
         const tombstones = deletionTable_();
         tombstones.getRange(tombstones.getLastRow() + 1, 1, 1, 2).setValues([[input.id, new Date().toISOString()]]);
@@ -83,39 +86,50 @@ function doPost(e) {
       if (current) {
         const sheet = table_('familyEvents');
         const row = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().findIndex(row => row[0] === input.id);
-        if (row < 0) throw new Error('Absence introuvable.');
+        if (row < 0) throw requestError_('Absence introuvable.');
         sheet.deleteRow(row + 2);
         SpreadsheetApp.flush();
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (!['commit', 'commitIssueV2', 'commitIssueV3', 'commitEntry', 'commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitWorkEvent', 'commitCafardFollowupV2', 'commitLaundryCycle', 'commitLaundryCycleV2'].includes(input.action)) throw new Error('Action invalide.');
+    if (!['commit', 'commitIssueV2', 'commitIssueV3', 'commitIssueV4', 'commitEntry', 'commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitWorkEvent', 'commitWorkEventV2', 'commitCafardFollowupV2', 'commitCafardFollowupV3', 'commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action)) throw requestError_('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
-    const isLaundry = input.action === 'commitLaundryCycle' || input.action === 'commitLaundryCycleV2';
+    const isLaundry = ['commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action);
     const isRoom = input.action === 'commitRoomInspection' || input.action === 'commitRoomInspectionV2' || input.action === 'commitRoomInspectionV3';
-    const isCafard = input.action === 'commitCafardFollowupV2';
-    const isEntry = input.action === 'commitEntry' || isRoom || input.action === 'commitWorkEvent' || isCafard || isLaundry;
-    if (['commitIssueV2', 'commitIssueV3'].includes(input.action) && input.collection !== 'issues') throw new Error('Collection invalide.');
-    if (input.collection === 'issues' && input.record && input.record.problemType !== undefined && input.action !== 'commitIssueV3') throw new Error('Utilisez commitIssueV3.');
-    if (input.collection === 'roomInspections' && input.record && input.record.problemDetails !== undefined && input.action !== 'commitRoomInspectionV3') throw new Error('Utilisez commitRoomInspectionV3.');
-    if (isCafard && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'cafardFollowup')) throw new Error('Suivi des cafards invalide.');
-    if (input.collection === 'workEvents' && input.record && input.record.cafardObservationId !== undefined && !isCafard) throw new Error('Utilisez commitCafardFollowupV2.');
-    if (input.action === 'commitWorkEvent' && input.collection !== 'workEvents') throw new Error('Collection invalide.');
-    if (isLaundry && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'laundryCycle')) throw new Error('Cycle de lingerie invalide.');
-    if (input.collection === 'workEvents' && input.record && input.record.kind === 'laundryCycle' && !isLaundry) throw new Error('Utilisez commitLaundryCycleV2.');
+    const isCafard = ['commitCafardFollowupV2', 'commitCafardFollowupV3'].includes(input.action);
+    const isWork = ['commitWorkEvent', 'commitWorkEventV2'].includes(input.action);
+    const isEntry = input.action === 'commitEntry' || isRoom || isWork || isCafard || isLaundry;
+    if (['commitIssueV2', 'commitIssueV3', 'commitIssueV4'].includes(input.action) && input.collection !== 'issues') throw requestError_('Collection invalide.');
+    if (input.collection === 'issues' && input.record && input.record.problemType !== undefined && !['commitIssueV3', 'commitIssueV4'].includes(input.action)) throw requestError_('Utilisez commitIssueV4.');
+    if (input.collection === 'issues' && input.record && (input.operation || input.record.distinctFromIssueIds !== undefined || input.record.roomFindingsActive !== undefined || (input.record.roomFindings || []).some(item => item.status !== undefined)) && input.action !== 'commitIssueV4') throw requestError_('Utilisez commitIssueV4.');
+    if (input.operation && (!input.record || !/^[\da-f-]{36}$/i.test(input.operation.id || '') || !/^[a-f0-9]{64}$/.test(input.operation.hash || '') || !Array.isArray(input.record.history) || !input.record.history.some(event => event.commandId === input.operation.id && event.commandHash === input.operation.hash))) throw requestError_('Confirmation de commande invalide.');
+    if (input.collection === 'roomInspections' && input.record && input.record.problemDetails !== undefined && input.action !== 'commitRoomInspectionV3') throw requestError_('Utilisez commitRoomInspectionV3.');
+    if (isCafard && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'cafardFollowup')) throw requestError_('Suivi des cafards invalide.');
+    if (input.collection === 'workEvents' && input.record && input.record.cafardObservationId !== undefined && !isCafard) throw requestError_('Utilisez commitCafardFollowupV2.');
+    if (isWork && input.collection !== 'workEvents') throw requestError_('Collection invalide.');
+    if (input.collection === 'workEvents' && input.record && input.record.expectedPreviousEventId !== undefined && !['commitWorkEventV2', 'commitCafardFollowupV3', 'commitLaundryCycleV3'].includes(input.action)) throw requestError_('Utilisez la version protégée de cette action.');
+    if (isLaundry && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'laundryCycle')) throw requestError_('Cycle de lingerie invalide.');
+    if (input.collection === 'workEvents' && input.record && input.record.kind === 'laundryCycle' && !isLaundry) throw requestError_('Utilisez commitLaundryCycleV2.');
     // Old clients keep their original payloads, while plans and extensions must
     // use a versioned action that an old deployment rejects before writing.
-    if (input.action === 'commitLaundryCycle' && (input.record.laundryEndsAt !== undefined || input.record.laundryAddedMinutes !== undefined)) throw new Error('Utilisez commitLaundryCycleV2.');
-    if (isRoom && input.collection !== 'roomInspections') throw new Error('Collection invalide.');
-    if (isEntry && !['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Collection invalide.');
-    if (!isEntry && ['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw new Error('Utilisez commitEntry.');
-    if (isEntry && (input.expectedVersion !== 0 || !/^[a-f0-9]{64}$/.test(input.record && input.record.submissionHash))) throw new Error('Enregistrement invalide.');
+    if (input.action === 'commitLaundryCycle' && (input.record.laundryEndsAt !== undefined || input.record.laundryAddedMinutes !== undefined)) throw requestError_('Utilisez commitLaundryCycleV2.');
+    if (isRoom && input.collection !== 'roomInspections') throw requestError_('Collection invalide.');
+    if (isEntry && !['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw requestError_('Collection invalide.');
+    if (!isEntry && ['familyEvents', 'roomInspections', 'workEvents'].includes(input.collection)) throw requestError_('Utilisez commitEntry.');
+    if (isEntry && (input.expectedVersion !== 0 || !/^[a-f0-9]{64}$/.test(input.record && input.record.submissionHash))) throw requestError_('Enregistrement invalide.');
     const sheet = table_(input.collection);
     const record = input.record;
-    if (!record || !/^[\da-f-]{36}$/i.test(record.id) || !Number.isInteger(input.expectedVersion) || record.version !== input.expectedVersion + 1) throw new Error('Enregistrement invalide.');
+    if (!record || !/^[\da-f-]{36}$/i.test(record.id) || !Number.isInteger(input.expectedVersion) || record.version !== input.expectedVersion + 1) throw requestError_('Enregistrement invalide.');
     const records = records_(input.collection);
     const current = records.find(item => item.id === record.id);
+    if (input.action === 'commitIssueV4' && input.operation && current) {
+      const accepted = (current.history || []).find(event => event.commandId === input.operation.id);
+      if (accepted) {
+        if (accepted.commandHash !== input.operation.hash) return json_({ ok: false, code: 409, error: 'Cette demande existe avec un contenu différent. Actualisez la fiche.' });
+        return json_({ ok: true, data: { collection: 'issues', record: current } });
+      }
+    }
     if (input.collection === 'familyEvents' && deletedAbsences_().includes(record.id)) return json_({ ok: false, code: 409, error: 'Cette absence a été supprimée.' });
     if (isEntry && current && current.submissionHash === record.submissionHash) {
       if (input.collection === 'roomInspections') {
@@ -136,7 +150,11 @@ function doPost(e) {
       return json_({ ok: true, data: { collection: input.collection, record: current, issue: syncRoomIssue_(input, current) } });
     }
     if ((current ? current.version : 0) !== input.expectedVersion) return json_({ ok: false, code: 409, error: 'Modifié par un autre utilisateur. Actualisez avant de réessayer.' });
-    if (input.collection === 'inspections' && current && current.completed) throw new Error('Ronde déjà terminée.');
+    if (input.collection === 'inspections' && current && current.completed) throw requestError_('Ronde déjà terminée.');
+    if (input.collection === 'issues') {
+      const distinctionError = RoomIssueMatching.validateIssueDistinction(record, records, current);
+      if (distinctionError) return json_({ ok: false, code: 409, error: distinctionError });
+    }
     if (input.collection === 'issues' && RoomIssueMatching.shouldCheckIssueDuplicate(record, current)) {
       if (RoomIssueMatching.isCafardTechnicalReport(record) && (!current || current.status === 'resolu' || !RoomIssueMatching.isCafardTechnicalReport(current)))
         return json_({ ok: false, code: 409, error: RoomIssueMatching.cafardTechnicalReportMessage() });
@@ -145,7 +163,7 @@ function doPost(e) {
     }
     if (input.collection === 'workEvents') {
       const observations = record.kind === 'cafardFollowup' && record.cafardObservationId !== undefined ? records_('roomInspections') : [];
-      const conflict = WorkLogic.validateWorkEntry(record, records, records_('familyEvents'), deletedAbsences_(), observations);
+      const conflict = WorkLogic.validateWorkPredecessor(record, records, true) || WorkLogic.validateWorkEntry(record, records, records_('familyEvents'), deletedAbsences_(), observations);
       if (conflict) return json_({ ok: false, code: 409, error: conflict });
     }
     if (input.collection === 'roomInspections') {
@@ -157,14 +175,14 @@ function doPost(e) {
     if (input.collection === 'issues' || input.collection === 'roomInspections') {
       record.photoIds = current ? photoIds_(current) : [];
       const photos = (input.photoData ? [input.photoData] : []).concat(input.photosData || []);
-      if (photos.length > 3 || photos.some(photo => typeof photo !== 'string' || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(photo) || photo.length > 2800000)) throw new Error('Maximum 3 photos JPEG valides.');
+      if (photos.length > 3 || photos.some(photo => typeof photo !== 'string' || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(photo) || photo.length > 2800000)) throw requestError_('Maximum 3 photos JPEG valides.');
       if (photos.length) {
-        if (current) throw new Error('Photos déjà enregistrées.');
+        if (current) throw requestError_('Photos déjà enregistrées.');
         const folderId = PropertiesService.getScriptProperties().getProperty('PHOTO_FOLDER_ID');
         const folder = DriveApp.getFolderById(folderId);
         // Deterministic name reuses a file left by a timed-out save.
         record.photoIds = photos.map((photo, index) => {
-          const filename = record.id + '-' + (isEntry ? record.submissionHash + '-' : '') + index + '.jpg';
+          const filename = record.id + '-' + (isEntry ? record.submissionHash + '-' : input.operation ? input.operation.hash + '-' : '') + index + '.jpg';
           const files = folder.getFilesByName(filename);
           return files.hasNext() ? files.next().getId() : folder.createFile(Utilities.newBlob(Utilities.base64Decode(photo.split(',')[1]), 'image/jpeg', filename)).getId();
         });
@@ -176,8 +194,8 @@ function doPost(e) {
     }
     writeRecord_(input.collection, record, isEntry, current);
     const issue = syncRoomIssue_(input, record);
-    return json_({ ok: true, data: isEntry ? { collection: input.collection, record: record, issue: issue } : { id: record.id, version: record.version } });
-  } catch (error) { return json_({ ok: false, code: 400, error: String(error.message || error) }); }
+    return json_({ ok: true, data: isEntry ? { collection: input.collection, record: record, issue: issue } : input.action === 'commitIssueV4' ? { collection: 'issues', record: record } : { id: record.id, version: record.version } });
+  } catch (error) { return json_({ ok: false, code: error.code === 400 ? 400 : 503, error: String(error.message || error) }); }
   finally { if (lock && lock.hasLock()) lock.releaseLock(); }
 }
 // Called under the same script lock. A retry repairs a partial write and never
@@ -194,7 +212,7 @@ function syncRoomIssue_(input, record) {
 function writeRecord_(collection, record, isEntry, current) {
     const sheet = table_(collection);
     const serialized = JSON.stringify(record);
-    if (serialized.length > 420000) throw new Error('Historique trop volumineux.');
+    if (serialized.length > 420000) throw requestError_('Historique trop volumineux.');
     const chunks = Array.from({length: 12}, (_, i) => serialized.slice(i * 35000, (i + 1) * 35000));
     const safe = value => { const str = String(value == null ? '' : value); return /^[=+\-@]/.test(str) ? "'" + str : str; };
     let row = [record.id, record.version, record.date, record.location || record.area, record.title || record.inspector, record.status || (record.completed ? 'Terminée' : 'Brouillon'), record.priority || '', record.assignee || '', photoIds_(record).map(id => 'https://drive.google.com/file/d/' + id + '/view').join('\n'), record.updatedAt].map(safe).concat(chunks.map(chunk => 'j' + chunk));
@@ -291,19 +309,19 @@ function laundryPushSubscription_(input, id, now) {
   if (!input || !laundryPushEndpoint_(input.endpoint) || !/^[a-f0-9]{64}$/.test(id || '') || laundryPushHash_(input.endpoint) !== id
     || !input.keys || !/^[A-Za-z0-9_-]{87}$/.test(input.keys.p256dh || '') || !/^[A-Za-z0-9_-]{22}$/.test(input.keys.auth || '')
     || (input.expirationTime != null && (!Number.isFinite(input.expirationTime) || input.expirationTime <= now)))
-    throw new Error('Abonnement de notification invalide ou expiré.');
+    throw requestError_('Abonnement de notification invalide ou expiré.');
   return { endpoint: input.endpoint, expirationTime: input.expirationTime == null ? null : input.expirationTime,
     keys: { p256dh: input.keys.p256dh, auth: input.keys.auth } };
 }
 function laundryPushTime_(value) {
   const time = typeof value === 'string' ? Date.parse(value) : NaN;
-  if (!Number.isFinite(time) || new Date(time).toISOString() !== value) throw new Error('Date de notification invalide.');
+  if (!Number.isFinite(time) || new Date(time).toISOString() !== value) throw requestError_('Date de notification invalide.');
   return time;
 }
 function laundryPushRequest_(request) {
   if (!request || !/^[a-f0-9]{64}$/.test(request.id || '')
     || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(request.cycleId || '')
-    || !['soon', 'finished'].includes(request.stage)) throw new Error('Notification invalide.');
+    || !['soon', 'finished'].includes(request.stage)) throw requestError_('Notification invalide.');
   laundryPushTime_(request.expiresAt);
 }
 function laundryPushAction_(input) {
@@ -316,17 +334,17 @@ function laundryPushAction_(input) {
     } });
   }
   if (!['laundryPushSave', 'laundryPushDelete', 'laundryPushList', 'laundryPushClaim', 'laundryPushComplete'].includes(input.action))
-    throw new Error('Action invalide.');
+    throw requestError_('Action invalide.');
   const now = ['laundryPushClaim', 'laundryPushComplete'].includes(input.action) ? laundryPushTime_(input.now) : Date.now();
   const nowISO = new Date(now).toISOString();
   if (input.action === 'laundryPushClaim') {
-    if (!Array.isArray(input.requests) || input.requests.length > 300) throw new Error('Trop de notifications à traiter.');
+    if (!Array.isArray(input.requests) || input.requests.length > 300) throw requestError_('Trop de notifications à traiter.');
     input.requests.forEach(laundryPushRequest_);
   }
   if (input.action === 'laundryPushComplete') {
     if (!Array.isArray(input.results) || input.results.length > 50 || input.results.some(result => !result || !/^[a-f0-9]{64}$/.test(result.id || '')
       || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(result.leaseToken || '') || !['sent', 'retry'].includes(result.outcome)))
-      throw new Error('Résultat de notification invalide.');
+      throw requestError_('Résultat de notification invalide.');
   }
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -341,7 +359,7 @@ function laundryPushAction_(input) {
       if (index < 0) state.subscriptions.push(stored); else state.subscriptions[index] = stored;
       data = { id: input.id };
     } else if (input.action === 'laundryPushDelete') {
-      if (!laundryPushEndpoint_(input.endpoint)) throw new Error('Abonnement de notification invalide.');
+      if (!laundryPushEndpoint_(input.endpoint)) throw requestError_('Abonnement de notification invalide.');
       const id = laundryPushHash_(input.endpoint);
       state.subscriptions = state.subscriptions.filter(item => item.id !== id);
       data = { removed: true };
@@ -500,9 +518,89 @@ function problemPresetsForCheck(key) {
 
 return exports;
 })();
+var IssueFindings = (function () {
+var exports = {};
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.issueFindingStatus = issueFindingStatus;
+exports.issueFindingStates = issueFindingStates;
+exports.aggregateFindingStatus = aggregateFindingStatus;
+exports.issueFindingProgress = issueFindingProgress;
+exports.findingDetailsText = findingDetailsText;
+exports.issueMatchingSnapshot = issueMatchingSnapshot;
+exports.validateIssueFindingUpdate = validateIssueFindingUpdate;
+exports.updatedIssueFindings = updatedIssueFindings;
+function issueFindingStatus(issue, finding) {
+    // Older records have only a global status. A globally resolved legacy record
+    // must not reopen merely because one imported item has no individual state.
+    return issue.status === "resolu" ? "resolu" : finding.status || issue.status;
+}
+function issueFindingStates(issue) {
+    return (issue.roomFindings || []).map(finding => ({ key: finding.key, status: issueFindingStatus(issue, finding) }));
+}
+function aggregateFindingStatus(findings, fallback) {
+    if (!findings.length)
+        return fallback;
+    if (findings.every(finding => finding.status === "resolu"))
+        return "resolu";
+    return findings.some(finding => finding.status !== "ouvert") ? "en_cours" : "ouvert";
+}
+function issueFindingProgress(issue) {
+    const states = issueFindingStates(issue);
+    const resolved = states.filter(finding => finding.status === "resolu").length;
+    return { total: states.length, resolved, pending: states.length - resolved };
+}
+function findingDetailsText(findings) {
+    return findings.map(finding => [finding.label, finding.description && !finding.label.includes(finding.description) ? finding.description : ""].filter(Boolean).join(" : ")).join("\n");
+}
+/** Resolved items and superseded classifications cannot identify a new repair. */
+function issueMatchingSnapshot(issue) {
+    var _a, _b;
+    if (issue.roomFindingsActive === false) {
+        const partiallyResolved = (_a = issue.roomFindings) === null || _a === void 0 ? void 0 : _a.some(finding => finding.status === "resolu");
+        // Once the free text and the original item list diverge, a partial repair
+        // cannot safely tell which sentence still identifies an open fitting.
+        return { ...issue, roomFindings: undefined, ...(partiallyResolved ? { title: "", description: "", problemType: undefined } : {}) };
+    }
+    if (!((_b = issue.roomFindings) === null || _b === void 0 ? void 0 : _b.length))
+        return issue;
+    const findings = issue.roomFindings.filter(finding => issueFindingStatus({ status: issue.status || "ouvert" }, finding) !== "resolu");
+    if (findings.length === issue.roomFindings.length)
+        return issue;
+    return { ...issue, roomFindings: findings, title: "", description: findingDetailsText(findings), problemType: undefined };
+}
+function validateIssueFindingUpdate(current, requestedStatus, states, details) {
+    const findings = current.roomFindings || [];
+    const validKeys = new Set(findings.map(finding => finding.key));
+    for (const values of [states, details]) {
+        if (values === undefined)
+            continue;
+        if (values.length !== findings.length || new Set(values.map(value => value.key)).size !== values.length || values.some(value => !validKeys.has(value.key)))
+            return "La liste des problèmes a changé. Rechargez la fiche avant de modifier ses éléments.";
+    }
+    if ((states === null || states === void 0 ? void 0 : states.length) && requestedStatus === "resolu" && states.some(finding => finding.status !== "resolu"))
+        return "Terminez chaque problème avant de résoudre toute la fiche, ou conservez la fiche en cours.";
+    return undefined;
+}
+function updatedIssueFindings(current, requestedStatus, states, details) {
+    var _a;
+    if (!((_a = current.roomFindings) === null || _a === void 0 ? void 0 : _a.length))
+        return { roomFindings: current.roomFindings, status: requestedStatus };
+    const roomFindings = current.roomFindings.map(finding => {
+        var _a;
+        const detail = details === null || details === void 0 ? void 0 : details.find(value => value.key === finding.key);
+        const status = ((_a = states === null || states === void 0 ? void 0 : states.find(value => value.key === finding.key)) === null || _a === void 0 ? void 0 : _a.status) ||
+            (requestedStatus !== current.status ? requestedStatus : issueFindingStatus(current, finding));
+        return { ...(detail || finding), status };
+    });
+    return { roomFindings, status: aggregateFindingStatus(roomFindings, requestedStatus) };
+}
+
+return exports;
+})();
 var RoomIssueMatching = (function () {
 var exports = {};
-function require(name) { if (name === "./problemPresets") return ProblemPresets; throw new Error("Unknown shared module: " + name); }
+function require(name) { if (name === "./problemPresets") return ProblemPresets; if (name === "./issueFindings") return IssueFindings; throw new Error("Unknown shared module: " + name); }
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeIssueText = normalizeIssueText;
@@ -510,6 +608,7 @@ exports.issueRoom = issueRoom;
 exports.openRoomIssues = openRoomIssues;
 exports.matchesRoomFinding = matchesRoomFinding;
 exports.findDuplicateOpenIssue = findDuplicateOpenIssue;
+exports.validateIssueDistinction = validateIssueDistinction;
 exports.duplicateRoomIssueMessage = duplicateRoomIssueMessage;
 exports.isCafardTechnicalReport = isCafardTechnicalReport;
 exports.cafardTechnicalReportMessage = cafardTechnicalReportMessage;
@@ -518,6 +617,7 @@ exports.planRoomIssue = planRoomIssue;
 exports.validateRoomIssuePlan = validateRoomIssuePlan;
 exports.prepareRoomIssue = prepareRoomIssue;
 const problemPresets_1 = require("./problemPresets");
+const issueFindings_1 = require("./issueFindings");
 function normalizeIssueText(text) {
     return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
         .replace(/\b(?:chaffauge|cheffauge)\b/g, "chauffage")
@@ -622,6 +722,7 @@ function typedFindingMatches(issue, finding) {
 }
 function matchesRoomFinding(issue, finding) {
     var _a, _b, _c;
+    issue = (0, issueFindings_1.issueMatchingSnapshot)(issue);
     if (finding.problemType) {
         if ((_a = issue.roomFindings) === null || _a === void 0 ? void 0 : _a.length)
             return issue.roomFindings.some(item => {
@@ -670,7 +771,7 @@ const failureKinds = [
 ];
 function differentDetails(left, right) {
     const a = normalizeIssueText(left), b = normalizeIssueText(right);
-    for (const dimension of [["gauche", "droite"], ["haut", "bas"]]) {
+    for (const dimension of [["gauche", "droite"], ["haut", "bas"], ["nord", "sud"], ["est", "ouest"]]) {
         const sidesA = dimension.filter(side => new RegExp(`\\b${side}\\b`).test(a));
         const sidesB = dimension.filter(side => new RegExp(`\\b${side}\\b`).test(b));
         if (sidesA.length && sidesB.length && !sidesA.some(side => sidesB.includes(side)))
@@ -678,7 +779,11 @@ function differentDetails(left, right) {
     }
     // Named positions and components are evidence of different fittings; a
     // common "damage" key, preset or room number is never such evidence.
-    const positions = (text) => text.match(/\b(douche|lavabo|wc|entree|plafond|chevet|fenetre|television|lit|gauche|droite|bureau|evier)\b/g) || [];
+    const numbered = (text) => [...text.matchAll(/\b(prise|robinet|fenetre|lit|radiateur|lampe)\s*(?:n(?:o|umero)?\s*)?(\d+)\b/g)].map(match => `${match[1]}:${match[2]}`);
+    const numberedA = numbered(a), numberedB = numbered(b);
+    if (numberedA.length && numberedB.length && !numberedA.some(position => numberedB.includes(position)))
+        return true;
+    const positions = (text) => text.match(/\b(douche|lavabo|wc|entree|plafond|chevet|fenetre|television|lit|gauche|droite|bureau|evier|balcon|cuisine)\b/g) || [];
     const locationsA = positions(a), locationsB = positions(b);
     if (locationsA.length && locationsB.length && !locationsA.some(position => locationsB.includes(position)))
         return true;
@@ -704,7 +809,8 @@ function sameManualProblem(candidate, existing) {
     const leftFailures = failureKinds.filter(([, pattern]) => pattern.test(left)).map(([kind]) => kind);
     const rightFailures = failureKinds.filter(([, pattern]) => pattern.test(right)).map(([kind]) => kind);
     const description = meaningful(candidate.description), title = meaningful(candidate.title);
-    if ((description && description === meaningful(existing.description)) || (title && title === meaningful(existing.title)))
+    const presetTitle = problemPresets_1.problemPresets.some(preset => normalizeIssueText(preset.label) === title);
+    if ((description && description === meaningful(existing.description)) || (title && !presetTitle && title === meaningful(existing.title)))
         return true;
     if (!leftFailures.some(kind => rightFailures.includes(kind)))
         return false;
@@ -721,20 +827,39 @@ function findDuplicateOpenIssue(candidate, issues) {
     const room = issueRoom(candidate);
     if (!room)
         return undefined;
-    return openRoomIssues(issues, room).find(existing => {
-        var _a, _b;
+    const currentCandidate = (0, issueFindings_1.issueMatchingSnapshot)(candidate);
+    return openRoomIssues(issues, room).find(original => {
+        var _a, _b, _c, _d;
+        const existing = (0, issueFindings_1.issueMatchingSnapshot)(original);
         if (candidate.id === existing.id)
             return false;
+        if (((_a = candidate.distinctFromIssueIds) === null || _a === void 0 ? void 0 : _a.includes(existing.id)) || (candidate.id && ((_b = existing.distinctFromIssueIds) === null || _b === void 0 ? void 0 : _b.includes(candidate.id))))
+            return false;
         const identified = (finding) => finding.key !== "damage" || !!finding.problemType || !!meaningful(finding.description || "");
-        if ((_a = candidate.roomFindings) === null || _a === void 0 ? void 0 : _a.some(finding => identified(finding) && matchesRoomFinding(existing, finding)))
+        if ((_c = currentCandidate.roomFindings) === null || _c === void 0 ? void 0 : _c.some(finding => identified(finding) && matchesRoomFinding(existing, finding)))
             return true;
-        if ((_b = existing.roomFindings) === null || _b === void 0 ? void 0 : _b.some(finding => identified(finding) && matchesRoomFinding(candidate, finding)))
+        if ((_d = existing.roomFindings) === null || _d === void 0 ? void 0 : _d.some(finding => identified(finding) && matchesRoomFinding(currentCandidate, finding)))
             return true;
-        return sameManualProblem(candidate, existing);
+        return sameManualProblem(currentCandidate, existing);
     });
 }
+/** Explicit distinctions are evidence, not an implicit escape from duplicate checks. */
+function validateIssueDistinction(candidate, issues, current) {
+    const ids = candidate.distinctFromIssueIds || [];
+    const changed = ids.filter(id => { var _a; return !((_a = current === null || current === void 0 ? void 0 : current.distinctFromIssueIds) === null || _a === void 0 ? void 0 : _a.includes(id)); });
+    if (new Set(ids).size !== ids.length)
+        return "Choisissez chaque problème à distinguer une seule fois.";
+    if (!changed.length)
+        return undefined;
+    if (!meaningful(candidate.distinctReason || ""))
+        return "Précisez l’équipement ou l’emplacement différent avant de créer un autre suivi.";
+    const room = issueRoom(candidate);
+    if (!room || changed.some(id => id === candidate.id || !issues.some(issue => issue.id === id && issueRoom(issue) === room)))
+        return "Le problème à distinguer a été déplacé ou supprimé. Actualisez puis vérifiez la chambre.";
+    return undefined;
+}
 function duplicateRoomIssueMessage(issue) {
-    return `Un problème identique est déjà ouvert dans la chambre ${issueRoom(issue)} : ${issue.title}. Ouvrez ce signalement pour le mettre à jour.`;
+    return `Un problème similaire est déjà ouvert dans la chambre ${issueRoom(issue)} : ${issue.title}. Ouvrez ce signalement ou précisez qu’il s’agit d’un équipement différent.`;
 }
 /** Only an unambiguous pest report is routed away from technical repairs. */
 function isCafardTechnicalReport(candidate) {
@@ -770,12 +895,24 @@ function cafardTechnicalReportMessage() {
 }
 /** Existing duplicate history can still be progressed or resolved, never erased. */
 function shouldCheckIssueDuplicate(candidate, current) {
+    var _a;
+    const details = (issue) => (issue.roomFindings || []).map(({ key, label, problemType, description }) => ({ key, label, problemType, description }));
+    const reopenedFinding = current && ((_a = candidate.roomFindings) === null || _a === void 0 ? void 0 : _a.some(finding => {
+        var _a;
+        const before = (_a = current.roomFindings) === null || _a === void 0 ? void 0 : _a.find(item => item.key === finding.key);
+        return before && (0, issueFindings_1.issueFindingStatus)(current, before) === "resolu" && (0, issueFindings_1.issueFindingStatus)(candidate, finding) !== "resolu";
+    }));
     return candidate.status !== "resolu" && (!current || current.status === "resolu" ||
         issueRoom(candidate) !== issueRoom(current) || normalizeIssueText(candidate.title || "") !== normalizeIssueText(current.title || "") ||
-        normalizeIssueText(candidate.description || "") !== normalizeIssueText(current.description || "") || candidate.problemType !== current.problemType);
+        normalizeIssueText(candidate.description || "") !== normalizeIssueText(current.description || "") || candidate.problemType !== current.problemType ||
+        JSON.stringify(details(candidate)) !== JSON.stringify(details(current)) || reopenedFinding || (candidate.roomFindingsActive === false) !== (current.roomFindingsActive === false) ||
+        JSON.stringify(candidate.distinctFromIssueIds) !== JSON.stringify(current.distinctFromIssueIds));
 }
 function exactTypedDescription(issue, finding) {
     var _a;
+    if (issue.roomFindingsActive === false)
+        return false;
+    issue = (0, issueFindings_1.issueMatchingSnapshot)(issue);
     const detail = meaningful(finding.description || "");
     if (!detail)
         return false;
@@ -800,6 +937,14 @@ function planRoomIssue(candidate, record, issues) {
         const existing = issues.find(issue => issue.id === link.issueId);
         if (!existing || existing.status === "resolu" || issueRoom(existing) !== record.room)
             conflicts.push("Le problème associé a été résolu, déplacé ou supprimé. Actualisez puis choisissez un problème encore ouvert dans cette chambre.");
+        else {
+            const finding = findings.find(item => item.key === link.key);
+            const resolved = (existing.roomFindings || []).filter(item => (0, issueFindings_1.issueFindingStatus)(existing, item) === "resolu");
+            const resolvedMatch = resolved.some(item => matchesRoomFinding({ ...existing, status: "ouvert", roomFindingsActive: true,
+                roomFindings: [{ ...item, status: "ouvert" }], title: item.label, description: item.description || item.label }, finding));
+            if ((existing.roomFindingsActive === false && resolved.length) || (resolvedMatch && !matchesRoomFinding(existing, finding)))
+                conflicts.push("Cet équipement est déjà résolu dans la fiche choisie. Signalez la nouvelle panne ou demandez à la direction de rouvrir cet élément avant de l’associer.");
+        }
     }
     if (!candidate)
         return { issue: undefined, relatedIssueIds: [], conflicts, requiresChoice };
@@ -819,7 +964,7 @@ function planRoomIssue(candidate, record, issues) {
             return true; // A stale link must never silently create a replacement.
         }
         const matching = open.filter(issue => matchesRoomFinding(issue, finding));
-        if (matching.length > 1 || (matching.length === 1 && ((finding.problemType && !exactTypedDescription(matching[0], finding)) ||
+        if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && !exactTypedDescription(matching[0], finding)) ||
             (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
             requiresChoice.push(finding.key);
             conflicts.push(`Un problème similaire est déjà ouvert pour « ${((_b = (0, problemPresets_1.getProblemPreset)(finding.problemType)) === null || _b === void 0 ? void 0 : _b.label) || finding.label} ». Choisissez le signalement à réutiliser ou précisez un problème différent.`);
@@ -884,6 +1029,7 @@ exports.getLaundryMachine = getLaundryMachine;
 exports.getLaundryEndsAt = getLaundryEndsAt;
 exports.validateLaundryEntry = validateLaundryEntry;
 exports.latestWork = latestWork;
+exports.validateWorkPredecessor = validateWorkPredecessor;
 exports.latestCafardObservationId = latestCafardObservationId;
 exports.validateWorkEntry = validateWorkEntry;
 exports.roomAvailability = roomAvailability;
@@ -981,6 +1127,19 @@ function latestWork(events, kind) {
     }
     return latest;
 }
+/** Receipt replay happens before this check. Never guess a legacy request's
+ * predecessor from the current revision: it may belong to another device. */
+function validateWorkPredecessor(entry, events, requireIdentity = false) {
+    if (entry.expectedPreviousEventId === undefined) {
+        return requireIdentity && entry.expectedRevision > 0
+            ? "Cette ancienne demande doit être vérifiée avant son envoi. Ouvrez les envois à vérifier pour conserver vos informations et confirmer le suivi actuel."
+            : undefined;
+    }
+    const current = latestWork(events, entry.kind).get(entry.targetId);
+    if (((current === null || current === void 0 ? void 0 : current.id) || null) !== entry.expectedPreviousEventId)
+        return "Ce suivi a été modifié ailleurs. Vérifiez la demande et l’état actuel avant de confirmer une nouvelle modification.";
+    return undefined;
+}
 /** Include the observation identity, not only its day, in cafard form concurrency. */
 function latestCafardObservationId(inspections, room) {
     const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" });
@@ -1000,6 +1159,9 @@ function validateWorkEntry(entry, events, families, deletedFamilies = [], inspec
     const current = latestWork(events, entry.kind).get(entry.targetId);
     if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
         return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
+    const predecessorConflict = validateWorkPredecessor(entry, events);
+    if (predecessorConflict)
+        return predecessorConflict;
     if (current === null || current === void 0 ? void 0 : current.deleted)
         return "Cette tâche a déjà été supprimée.";
     if (entry.kind === "cafardFollowup" && entry.cafardObservationId !== undefined &&

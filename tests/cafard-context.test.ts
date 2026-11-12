@@ -19,7 +19,7 @@ function inspection(patch: Partial<RoomEntry> = {}): RoomEntry {
 }
 function followup(patch: Partial<WorkEntry> = {}): WorkEntry {
   return { type: "createWorkEvent", id: createId(), kind: "cafardFollowup", targetId: "114", room: "114",
-    expectedRevision: 0, date: "2026-11-05", occurredAt: "2026-11-05T12:00:00.000Z", actor: "Agent test", notes: "Vérification du suivi existant.",
+    expectedRevision: 0, expectedPreviousEventId: null, date: "2026-11-05", occurredAt: "2026-11-05T12:00:00.000Z", actor: "Agent test", notes: "Vérification du suivi existant.",
     cafardStatus: "traite", detectedOn: "2026-11-05", treatedOn: "2026-11-05", resolvedOn: null,
     product: "Gel test", cafardObservationId: null, ...patch };
 }
@@ -49,8 +49,10 @@ test("same-day detection changes are rejected by identity, not by the unchanged 
 test("old queued follow-ups preserve their canonical payload while the context field is specific to cafards", () => {
   const original = followup();
   delete original.cafardObservationId;
+  delete original.expectedPreviousEventId;
   const parsed = parseEntry(original);
   assert.equal("cafardObservationId" in parsed, false);
+  assert.equal("expectedPreviousEventId" in parsed, false);
   assert.deepEqual(parseEntry(parsed), parsed);
   assert.equal(validateWorkEntry(original, [], [], [], [inspection()]), undefined);
   assert.equal(workEntrySchema.safeParse({ ...followup(), kind: "roomAvailability", free: true }).success, false);
@@ -69,7 +71,7 @@ test("local storage rejects stale cafard context, keeps one room follow-up and r
   await executeEntry(first);
   const accepted = followup({ cafardObservationId: first.id });
   const receipt = await executeEntry(accepted);
-  const stale = followup({ expectedRevision: 1, cafardObservationId: first.id, cafardStatus: "resolu", resolvedOn: "2026-11-05" });
+  const stale = followup({ expectedRevision: 1, expectedPreviousEventId: accepted.id, cafardObservationId: first.id, cafardStatus: "resolu", resolvedOn: "2026-11-05" });
   await executeEntry(later);
   await assert.rejects(executeEntry(stale), { code: 409 });
   assert.deepEqual(await executeEntry(accepted), receipt);
@@ -96,7 +98,7 @@ test("Apps Script enforces the cafard context inside the lock and keeps retry re
   context.records_ = (collection: string) => { assert.equal(locked, true); return structuredClone(collection === "workEvents" ? events : collection === "roomInspections" ? observations : []); };
   context.deletedAbsences_ = () => [];
   context.writeRecord_ = (_collection: string, record: WorkEntry) => { assert.equal(locked, true); events.push(structuredClone(record)); };
-  const call = (entry: WorkEntry, action = "commitCafardFollowupV2") => context.doPost({ postData: { contents: JSON.stringify({
+  const call = (entry: WorkEntry, action = "commitCafardFollowupV3") => context.doPost({ postData: { contents: JSON.stringify({
     token: "test-token", action, collection: "workEvents", expectedVersion: 0,
     record: { ...entry, version: 1, submissionHash: entry.id.replaceAll("-", "").repeat(2) },
   }) } });
@@ -105,7 +107,7 @@ test("Apps Script enforces the cafard context inside the lock and keeps retry re
   const receipt = call(accepted);
   assert.equal(receipt.ok, true, receipt.error);
   observations.push(later);
-  const stale = followup({ expectedRevision: 1, cafardObservationId: first.id });
+  const stale = followup({ expectedRevision: 1, expectedPreviousEventId: accepted.id, cafardObservationId: first.id });
   assert.equal(call(stale).code, 409);
   assert.deepEqual(call(accepted), receipt);
   assert.equal(events.length, 1);

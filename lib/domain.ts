@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { Role } from "./roles";
-import { cafardTechnicalReportMessage, duplicateRoomIssueMessage, findDuplicateOpenIssue, isCafardTechnicalReport, issueRoom, shouldCheckIssueDuplicate } from "./roomIssueMatching";
+import { cafardTechnicalReportMessage, duplicateRoomIssueMessage, findDuplicateOpenIssue, isCafardTechnicalReport, issueRoom, shouldCheckIssueDuplicate, validateIssueDistinction } from "./roomIssueMatching";
 import { getProblemPreset } from "./problemPresets";
+import { issueFindingStates, updatedIssueFindings, validateIssueFindingUpdate } from "./issueFindings";
 
 export const MAX_ISSUE_PHOTOS = 3;
 
@@ -99,6 +100,14 @@ export const photoSchema = z
 const priority = z.enum(["critique", "haute", "normale"]);
 
 const status = z.enum(["ouvert", "en_cours", "resolu"]);
+const distinction = {
+  distinctFromIssueIds: z.array(id).max(100).optional(),
+  distinctReason: z.string().trim().max(1000).optional(),
+};
+const findingState = z.object({ key: z.string().min(1).max(80), status });
+const findingDetail = z.object({ key: z.string().min(1).max(80), label: z.string().trim().min(1).max(1400),
+  problemType: z.string().refine(value => !!getProblemPreset(value), "Choisissez un type de problème connu.").optional(),
+  description: z.string().trim().max(1000).optional() });
 
 const fields = z.object({
   title: text,
@@ -140,6 +149,7 @@ export const commandSchema = z.discriminatedUnion("type", [
     date: dateSchema,
     actor: text,
     fields,
+    ...distinction,
     photoData: photoSchema.optional(),
     photosData: z.array(photoSchema).max(MAX_ISSUE_PHOTOS).optional(),
   }),
@@ -147,11 +157,15 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("updateIssue"),
     id,
+    commandId: id.optional(),
     version: z.number().int().positive(),
     actor: text,
     note: note.min(1, "Décrivez l’intervention ou la modification."),
     status,
     fields,
+    ...distinction,
+    findingStates: z.array(findingState).max(30).optional(),
+    findingDetails: z.array(findingDetail).max(30).optional(),
   }),
 
   z.object({
@@ -173,11 +187,20 @@ export type Event = {
   status: Status;
   priority: Priority;
   assignee: string;
+  commandId?: string;
+  commandHash?: string;
+  findingStates?: { key: string; status: Status }[];
+  findingDetails?: { key: string; label: string; problemType?: string; description?: string }[];
 };
 
 export type Issue = IssueFields & {
   room?: string;
-  roomFindings?: { key: string; label: string; problemType?: string; description?: string }[];
+  roomFindings?: { key: string; label: string; problemType?: string; description?: string; status?: Status }[];
+  // A free-text correction preserves source findings for history but invalidates
+  // their old classification until the individual details are reviewed.
+  roomFindingsActive?: boolean;
+  distinctFromIssueIds?: string[];
+  distinctReason?: string;
   id: string;
   version: number;
   date: string;
@@ -360,6 +383,7 @@ export function applyCommand(
 
     const record: Issue = {
       ...command.fields,
+      ...(command.distinctFromIssueIds ? { distinctFromIssueIds: command.distinctFromIssueIds, distinctReason: command.distinctReason } : {}),
       assignee: command.actor,
       id: command.id,
       date: command.date,
@@ -382,6 +406,8 @@ export function applyCommand(
       ],
     };
 
+    const distinctionError = validateIssueDistinction(record, state.issues);
+    if (distinctionError) throw new DomainError(distinctionError, 409);
     if (isCafardTechnicalReport(record)) throw new DomainError(cafardTechnicalReportMessage(), 409);
     const duplicate = findDuplicateOpenIssue(record, state.issues);
     if (duplicate) throw new DomainError(duplicateRoomIssueMessage(duplicate), 409);
@@ -421,7 +447,16 @@ export function applyCommand(
 
     const responsible = issueResponsible(current);
 
-    const candidate = { ...current, ...command.fields, room: issueRoom(command.fields), status: command.status };
+    const findingError = validateIssueFindingUpdate(current, command.status, command.findingStates, command.findingDetails);
+    if (findingError) throw new DomainError(findingError, 409);
+    const individual = updatedIssueFindings(current, command.status, command.findingStates, command.findingDetails);
+    const textChanged = current.title !== command.fields.title || current.description !== command.fields.description;
+    const candidate: Issue = { ...current, ...command.fields, ...individual, room: issueRoom(command.fields),
+      ...(command.distinctFromIssueIds ? { distinctFromIssueIds: command.distinctFromIssueIds, distinctReason: command.distinctReason } : {}),
+      ...(command.findingDetails ? { roomFindingsActive: true } : textChanged && current.roomFindings?.length ? { roomFindingsActive: false } : {}),
+    };
+    const distinctionError = validateIssueDistinction(candidate, state.issues, current);
+    if (distinctionError) throw new DomainError(distinctionError, 409);
     if (shouldCheckIssueDuplicate(candidate, current)) {
       if (isCafardTechnicalReport(candidate) && (current.status === "resolu" || !isCafardTechnicalReport(current)))
         throw new DomainError(cafardTechnicalReportMessage(), 409);
@@ -433,11 +468,9 @@ export function applyCommand(
       collection: "issues",
       expectedVersion: command.version,
       record: {
-        ...current,
-        ...command.fields,
-        room: candidate.room,
+        ...candidate,
         assignee: responsible,
-        status: command.status,
+        status: candidate.status,
         version: current.version + 1,
         updatedAt: now,
         history: [
@@ -446,9 +479,12 @@ export function applyCommand(
             at: now,
             actor: command.actor,
             note: command.note,
-            status: command.status,
+            status: candidate.status,
             priority: command.fields.priority,
             assignee: responsible,
+            ...(command.commandId ? { commandId: command.commandId } : {}),
+            ...(candidate.roomFindings?.length ? { findingStates: issueFindingStates(candidate),
+              findingDetails: candidate.roomFindings.map(({ key, label, problemType, description }) => ({ key, label, ...(problemType ? { problemType } : {}), ...(description ? { description } : {}) })) } : {}),
           },
         ],
       },

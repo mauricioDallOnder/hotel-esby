@@ -1,12 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { RoomAvailabilityCheckbox } from "@/components/RoomAvailabilityCheckbox";
 import { roomGroups, rooms } from "@/lib/rooms";
 import { useRoomObservations } from "@/lib/useRoomObservations";
 import { useWorkEvents } from "@/lib/useWorkEvents";
-import { roomAvailability } from "@/lib/work";
+import { roomAvailabilityView } from "@/lib/roomAvailabilityView";
 
 const filters = { all: "Toutes", occupied: "Occupées", free: "Libres", unknown: "Non renseignées" };
 const filterColors = { all: "primary", occupied: "info", free: "success", unknown: "inherit" } as const;
@@ -17,7 +17,8 @@ export default function RoomOccupancyPage() {
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState("all");
   const [filter, setFilter] = useState<keyof typeof filters>("all");
-  const availability = new Map(rooms.map(room => [room, roomAvailability(room, events, latest.get(room)).free]));
+  const availabilityStates = useMemo(() => roomAvailabilityView(events, latest), [events, latest]);
+  const availability = useMemo(() => new Map([...availabilityStates].map(([room, state]) => [room, state.free])), [availabilityStates]);
   const scopedGroups = roomGroups.filter(g => group === "all" || group === g.label)
     .map(g => ({ ...g, rooms: g.rooms.filter(room => room.includes(search.trim())) }));
   const scopedRooms = scopedGroups.flatMap(g => g.rooms);
@@ -66,7 +67,7 @@ export default function RoomOccupancyPage() {
             const borderColor = availability.get(room) === false ? "info.main" : availability.get(room) === true ? "success.main" : "grey.400";
             return <Paper component="article" key={room} aria-label={`Chambre ${room}`} variant="outlined" sx={{ p: 1.5, minWidth: 0, borderColor: "divider", borderTop: "4px solid", borderTopColor: borderColor }}>
               <Typography variant="h4" component="h3" sx={{ mb: 1, fontSize: 36, lineHeight: 1.2, fontWeight: 800 }}>{room}</Typography>
-              <RoomAvailabilityCheckbox room={room} inspection={inspection} inspectionPending={!!inspection && pendingIds.has(inspection.id)} />
+              <RoomAvailabilityCheckbox room={room} availability={availabilityStates.get(room)!} inspection={inspection} inspectionPending={!!inspection && pendingIds.has(inspection.id)} />
             </Paper>;
           })}
         </Box>

@@ -3,13 +3,16 @@ import ts from "typescript";
 
 // Keep the deployable Code.gs self-contained without maintaining a second matcher.
 export function roomIssueBundle() {
+  const findings = ts.transpileModule(readFileSync("lib/issueFindings.ts", "utf8"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.CommonJS },
+  }).outputText;
   const presets = ts.transpileModule(readFileSync("lib/problemPresets.ts", "utf8"), {
     compilerOptions: { target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.CommonJS },
   }).outputText;
   const code = ts.transpileModule(readFileSync("lib/roomIssueMatching.ts", "utf8"), {
     compilerOptions: { target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.CommonJS },
   }).outputText;
-  return `// BEGIN GENERATED ROOM ISSUE MATCHING — npm run build:apps-script\nvar ProblemPresets = (function () {\nvar exports = {};\n${presets}\nreturn exports;\n})();\nvar RoomIssueMatching = (function () {\nvar exports = {};\nfunction require(name) { if (name === "./problemPresets") return ProblemPresets; throw new Error("Unknown shared module: " + name); }\n${code}\nreturn exports;\n})();\n// END GENERATED ROOM ISSUE MATCHING\n`;
+  return `// BEGIN GENERATED ROOM ISSUE MATCHING — npm run build:apps-script\nvar ProblemPresets = (function () {\nvar exports = {};\n${presets}\nreturn exports;\n})();\nvar IssueFindings = (function () {\nvar exports = {};\n${findings}\nreturn exports;\n})();\nvar RoomIssueMatching = (function () {\nvar exports = {};\nfunction require(name) { if (name === "./problemPresets") return ProblemPresets; if (name === "./issueFindings") return IssueFindings; throw new Error("Unknown shared module: " + name); }\n${code}\nreturn exports;\n})();\n// END GENERATED ROOM ISSUE MATCHING\n`;
 }
 function workBundle() {
   const code = ts.transpileModule(readFileSync("lib/work.ts", "utf8"), {

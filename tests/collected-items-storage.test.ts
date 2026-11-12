@@ -13,16 +13,16 @@ import { roomAvailability } from "../lib/work";
 
 // Fictitious examples: no guest or operational inventory is bundled in the app.
 const item = (patch: Partial<WorkEntry> = {}): WorkEntry => ({
-  type: "createWorkEvent", id: createId(), kind: "collectedItem", targetId: createId(), expectedRevision: 0,
+  type: "createWorkEvent", id: createId(), kind: "collectedItem", targetId: createId(), expectedRevision: 0, expectedPreviousEventId: null,
   room: "101", date: "2025-06-01", actor: "Agent exemple", notes: "Appareil non autorisé.",
   occurredAt: "2025-06-01T10:00:00.000Z", itemName: "Plaque de cuisson de démonstration",
   collectedOn: "2025-06-01", collectedBy: "Agent exemple", returnedOn: null, returnedBy: "", ...patch,
 });
 const next = (entry: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry => ({
-  ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1, ...patch,
+  ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1, expectedPreviousEventId: entry.id, ...patch,
 });
 const availability = (): WorkEntry => ({
-  type: "createWorkEvent", id: createId(), kind: "roomAvailability", targetId: "101", expectedRevision: 0,
+  type: "createWorkEvent", id: createId(), kind: "roomAvailability", targetId: "101", expectedRevision: 0, expectedPreviousEventId: null,
   room: "101", date: "2025-06-01", actor: "Agent exemple", notes: "", occurredAt: "2025-06-01T10:00:00.000Z", free: false,
 });
 
@@ -157,7 +157,7 @@ function googleFixture() {
   };
 }
 
-test("the unchanged Apps Script preserves unidentified items, returns and identification while rejecting stale updates", async t => {
+test("the protected Apps Script preserves unidentified items, returns and identification while rejecting stale updates", async t => {
   restoreEnvironment(t);
   sheets();
   const google = googleFixture();
@@ -187,7 +187,7 @@ test("the unchanged Apps Script preserves unidentified items, returns and identi
   assert.deepEqual(await executeEntry(returned), second);
   assert.deepEqual(await executeEntry(identified), third);
   await executeEntry(item({ room: "", roomUnidentified: true, notes: "", itemName: "Autre objet de démonstration" }));
-  assert.ok(requests.every(request => request.action === "commitWorkEvent" && request.expectedVersion === 0 && request.token === "test-token"));
+  assert.ok(requests.every(request => request.action === "commitWorkEventV2" && request.expectedVersion === 0 && request.token === "test-token"));
   const events = google.records();
   assert.equal(events.length, 4);
   assert.deepEqual(events.slice(0, 3), [first.record, second.record, third.record]);

@@ -4,7 +4,6 @@ import CssBaseline from "@mui/material/CssBaseline";
 import InitColorSchemeScript from "@mui/material/InitColorSchemeScript";
 import { ThemeRegistry } from "@/theme/ThemeRegistry";
 import { AppProvider } from "@/context/AppContext";
-import { VersionNotice } from "@/components/VersionNotice";
 import "./globals.css";
 
 // Revalidate the document on every opening, preserving immutable hashed assets.
@@ -27,7 +26,6 @@ export default function RootLayout({
         <AppRouterCacheProvider>
           <ThemeRegistry>
             <CssBaseline />
-            <VersionNotice />
             <AppProvider>
               {children}
             </AppProvider>

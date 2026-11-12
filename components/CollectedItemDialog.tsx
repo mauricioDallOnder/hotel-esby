@@ -48,7 +48,7 @@ export function CollectedItemDialog({ action, record, onClose, onSaved }: {
   function initial(): Draft {
     return {
       type: "createWorkEvent", kind: "collectedItem", id: createId(), targetId: record?.id || createId(),
-      expectedRevision: record?.revision || 0, room: record?.room || "", date: today(), occurredAt: new Date().toISOString(),
+      expectedRevision: record?.revision || 0, expectedPreviousEventId: record?.lastEventId || null, room: record?.room || "", date: today(), occurredAt: new Date().toISOString(),
       roomUnidentified: record?.roomUnidentified ? true : undefined,
       actor: action === "edit" ? profile : "", itemName: record?.itemName || "",
       collectedOn: record?.collectedOn || today(), collectedBy: record?.collectedBy || "", notes: record?.reason || "",

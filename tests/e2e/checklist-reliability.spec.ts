@@ -1,7 +1,8 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { today, type Issue, type State } from "../../lib/domain";
 import { cafardCases } from "../../lib/cafards";
-import { roomChecks, rooms, type RoomInspection, type WorkEntry, type WorkEvent } from "../../lib/rooms";
+import { roomChecks, rooms, type RoomInspection, type WorkEntry } from "../../lib/rooms";
+import { roomReceipt, workReceipt } from "./helpers/receipts";
 
 async function login(page: Page) {
   expect((await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } })).ok()).toBeTruthy();
@@ -17,7 +18,7 @@ test("bulk OK includes smoke, minibar presence stays consistent and a new detect
   await login(page);
   const treatment: WorkEntry = {
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "cafardFollowup", targetId: "125", room: "125",
-    expectedRevision: 0, date: today(), occurredAt: new Date().toISOString(), actor: "Test suivi existant",
+    expectedRevision: 0, expectedPreviousEventId: null, date: today(), occurredAt: new Date().toISOString(), actor: "Test suivi existant",
     cafardStatus: "traite", detectedOn: today(), treatedOn: today(), resolvedOn: null,
     product: "Gel fictif", notes: "Traitement de test à conserver.", cafardObservationId: null,
   };
@@ -55,7 +56,7 @@ test("bulk OK includes smoke, minibar presence stays consistent and a new detect
   await choose("État de la moquette", "OK");
   await choose("Micro-ondes présent ?", "Non");
   await dialog.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
-  await dialog.getByLabel("Inspecteur", { exact: true }).fill("Test minibar absent");
+  await dialog.getByLabel(/^Inspecteur\s*\*?$/).fill("Test minibar absent");
   await dialog.getByLabel("Observations et problèmes constatés", { exact: true }).fill("Nouvelle observation fictive dans la même chambre.");
   await expect(dialog.getByText("Cafards détectés : constat ajouté au suivi existant de cette chambre. Aucun doublon.", { exact: true })).toBeVisible();
   const saved = page.waitForResponse(response => response.url().endsWith("/api/entries") && response.request().method() === "POST");
@@ -87,34 +88,30 @@ test("room rotation cards keep equal dimensions on mobile and desktop and known 
   test.setTimeout(90000);
   await login(page);
   const date = today(new Date(Date.now() - 8 * 86_400_000));
-  const prior = (room: string): RoomInspection => ({
-    type: "createRoomInspection", schemaVersion: 5, id: crypto.randomUUID(), room, date,
-    inspectedAt: `${date}T08:00:00.000Z`, actor: "Test présentation", notes: "État fictif pour vérifier les cartes.",
-    condition: "mauvais", occupied: true, cleaning: null, carpet: "ok", carpetNotes: "",
+  const prior = (room: string, recordDate = date, condition: RoomInspection["condition"] = "mauvais"): RoomInspection => roomReceipt({
+    type: "createRoomInspection", schemaVersion: 5, id: crypto.randomUUID(), room, date: recordDate,
+    inspectedAt: `${recordDate}T08:00:00.000Z`, actor: "Test présentation", notes: "État fictif pour vérifier les cartes.",
+    condition, occupied: true, cleaning: null, carpet: "ok", carpetNotes: "",
     microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",
     checks: roomChecks.map(check => ({ key: check.key, result: "ok" })),
-    photoIds: [], photoId: null, updatedAt: `${date}T08:00:00.000Z`, version: 1, submissionHash: "a".repeat(64),
-  });
+    photosData: [],
+  }).record;
   const known: Issue = {
     id: crypto.randomUUID(), room: "107", title: "Détecteur de fumée en panne", description: "Détecteur déjà signalé.",
     location: "Chambre 107", category: "Équipements", status: "ouvert", priority: "normale", assignee: "Test",
     date, createdAt: `${date}T08:00:00.000Z`, updatedAt: `${date}T08:00:00.000Z`, version: 1,
     photoId: null, photoIds: [], reportedBy: "Test", history: [], roomFindings: [{ key: "smoke", label: "Détecteur de fumée fonctionnel : Problème" }],
   };
-  const treatment: WorkEvent = {
+  const treatment = workReceipt({
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "cafardFollowup", targetId: "107", room: "107",
-    expectedRevision: 0, date, occurredAt: `${date}T08:00:00.000Z`, actor: "Test suivi existant", notes: "Traitement fictif.",
+    expectedRevision: 0, expectedPreviousEventId: null, date, occurredAt: `${date}T08:00:00.000Z`, actor: "Test suivi existant", notes: "Traitement fictif.",
     cafardStatus: "traite", detectedOn: date, treatedOn: date, resolvedOn: null, product: "Gel test",
-    updatedAt: `${date}T08:00:00.000Z`, version: 1, submissionHash: "b".repeat(64),
-  };
+  });
   const recent = today(new Date(Date.now() - 86_400_000));
   // Twelve incomplete rooms and three mature poor-condition follow-ups produce
   // mixed card labels under the new fair ordering, instead of fifteen identical
   // never-completed cards masking a layout regression.
-  const records = [prior("101"), prior("102"), prior("103"), ...rooms.slice(15).map(room => ({
-    ...prior(room), date: recent, condition: "bon" as const,
-    inspectedAt: `${recent}T08:00:00.000Z`, updatedAt: `${recent}T08:00:00.000Z`,
-  }))];
+  const records = [prior("101"), prior("102"), prior("103"), ...rooms.slice(15).map(room => prior(room, recent, "bon"))];
   await page.route("**/api/hotel*", async route => {
     if (route.request().method() !== "GET") return route.continue();
     await route.fulfill({ json: { mode: "local", issues: [known], inspections: [], roomInspections: records, workEvents: [treatment] } });

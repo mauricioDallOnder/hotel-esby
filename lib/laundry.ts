@@ -85,6 +85,7 @@ export type LaundryMachineState = {
   machine: LaundryMachine;
   cycle?: LaundryCycle;
   revision: number;
+  lastEventId?: string;
   phase: "available" | LaundryPhase;
   remainingMs: number;
   totalMs: number;
@@ -92,15 +93,35 @@ export type LaundryMachineState = {
   endsAt: string | null;
 };
 
-export function laundryMachineStates(events: Work[], now = Date.now()): LaundryMachineState[] {
+export type LaundryMachineSnapshot = Pick<LaundryMachineState, "machine" | "cycle" | "revision" | "lastEventId">;
+
+/** Project immutable history once; clock updates only need the six snapshots. */
+export function projectLaundry(events: Work[]) {
   const latest = latestWork(events, "laundryCycle");
-  const cycles = new Map(laundryCycles(events).map(cycle => [cycle.cycleId, cycle]));
-  return laundryMachines.map(machine => {
+  const cycles = laundryCycles(events);
+  const byId = new Map(cycles.map(cycle => [cycle.cycleId, cycle]));
+  const machines: LaundryMachineSnapshot[] = laundryMachines.map(machine => {
     const current = latest.get(machine.id);
-    const cycle = current?.laundryStatus === "en_cours" ? cycles.get(current.laundryCycleId!) : undefined;
-    return { machine, cycle, revision: current ? current.expectedRevision + 1 : 0,
+    const cycle = current?.laundryStatus === "en_cours" ? byId.get(current.laundryCycleId!) : undefined;
+    return { machine, cycle, revision: current ? current.expectedRevision + 1 : 0, lastEventId: current?.id };
+  });
+  return { cycles, machines };
+}
+
+export function laundryStatesAt(machines: readonly LaundryMachineSnapshot[], now = Date.now()): LaundryMachineState[] {
+  return machines.map(({ machine, cycle, revision, lastEventId }) => ({ machine, cycle, revision, lastEventId,
       phase: cycle ? laundryPhase(cycle, now) : "available",
       ...(cycle ? laundryTiming(cycle, now) : { remainingMs: 0, totalMs: machine.durationMinutes * 60_000, progress: 0, endsAt: null }),
-    };
-  });
+  }));
+}
+
+export function laundryMachineStates(events: Work[], now = Date.now()): LaundryMachineState[] {
+  return laundryStatesAt(projectLaundry(events).machines, now);
+}
+
+/** History only changes phase at these boundaries, not every countdown second. */
+export function nextLaundryPhaseAt(machines: readonly LaundryMachineSnapshot[], now = Date.now()): number | null {
+  const times = machines.flatMap(({ cycle }) => cycle ? [Date.parse(cycle.endsAt) - 10 * 60_000, Date.parse(cycle.endsAt)] : [])
+    .filter(time => Number.isFinite(time) && time > now);
+  return times.length ? Math.min(...times) : null;
 }

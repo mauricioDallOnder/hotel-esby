@@ -4,6 +4,7 @@ import { displayDate, today } from "./domain";
 import {
   applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels,
   latestRoomRecords, roomCheckResultLabel, roomChecks, rooms,
+  roomFindings,
   type RoomEntry, type RoomInspection,
 } from "./rooms";
 
@@ -162,7 +163,13 @@ export function buildRoomChecklist(options: Options) {
     });
     y = section("3. Observations et problèmes constatés", endY() + 7, room) + 2;
     if (record) {
-      const notes = [record.carpetNotes.trim() ? `Moquette : ${record.carpetNotes.trim()}` : "", record.notes.trim()].filter(Boolean).join("\n\n") || "Aucune observation saisie.";
+      const findings = roomFindings(record);
+      const technicalDetails = findings.map(finding => {
+        const check = roomChecks.find(item => item.key === finding.key)?.label || finding.key;
+        return `${check} : ${finding.label}${finding.description && !finding.label.includes(finding.description) ? ` - ${finding.description}` : ""}`;
+      }).join("\n");
+      const notes = [technicalDetails ? `Problèmes techniques constatés\n${technicalDetails}` : "",
+        record.carpetNotes.trim() ? `Moquette : ${record.carpetNotes.trim()}` : "", record.notes.trim()].filter(Boolean).join("\n\n") || "Aucune observation saisie.";
       doc.setFont("helvetica", "normal"); doc.setFontSize(10);
       const lines = doc.splitTextToSize(notes, width) as string[];
       for (const line of lines) {

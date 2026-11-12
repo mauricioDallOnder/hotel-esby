@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import type { State } from "../../lib/domain";
 import { getLaundryMachine } from "../../lib/laundry";
-import { workEntrySchema, type WorkEntry, type WorkEvent } from "../../lib/rooms";
+import { workEntrySchema, type WorkEvent } from "../../lib/rooms";
+import { workReceipt as receipt } from "./helpers/receipts";
 
 async function login(page: Page) {
   expect((await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } })).ok()).toBeTruthy();
@@ -13,16 +13,11 @@ async function machineEvents(page: Page, machine: string) {
   return state.workEvents?.filter(event => event.kind === "laundryCycle" && event.targetId === machine) || [];
 }
 
-function receipt(entry: WorkEntry): WorkEvent {
-  return { ...entry, version: 1, updatedAt: entry.occurredAt,
-    submissionHash: createHash("sha256").update(JSON.stringify(entry)).digest("hex") };
-}
-
 function runningCycle(machineId: string, room: string, startedAt: string): WorkEvent {
   const machine = getLaundryMachine(machineId)!;
   return receipt(workEntrySchema.parse({
     type: "createWorkEvent", kind: "laundryCycle", id: crypto.randomUUID(), targetId: machineId,
-    expectedRevision: 0, room, date: startedAt.slice(0, 10), occurredAt: startedAt,
+    expectedRevision: 0, expectedPreviousEventId: null, room, date: startedAt.slice(0, 10), occurredAt: startedAt,
     actor: "Agent de démonstration", notes: "", laundryCycleId: crypto.randomUUID(),
     laundryOwner: "Repère fictif " + room, laundryStartedAt: startedAt, laundryStatus: "en_cours",
     laundryEndsAt: new Date(Date.parse(startedAt) + machine.durationMinutes * 60_000).toISOString(),

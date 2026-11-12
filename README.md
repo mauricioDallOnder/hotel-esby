@@ -1,5 +1,88 @@
 # Hôtel Contrôle
 
+## Confiabilidade, recuperação e desempenho — novembro de 2026
+
+### 1. Preservar o trabalho e resolver envios pendentes
+
+- As novas alterações operacionais identificam o evento anterior, além da revisão.
+  Se dois aparelhos alterarem o mesmo acompanhamento, a recusa de uma ação também
+  suspende suas dependentes. Cancelar a primeira não libera silenciosamente as demais.
+- A faixa de conexão apresenta um resumo compacto. **Voir tous les envois** abre as
+  solicitações com seu conteúdo e as ações disponíveis. A conferência consulta o
+  servidor; não considera uma cópia antiga do aparelho como confirmação.
+- **Corriger le contrôle** recupera respostas, notas, fotos e data de um checklist
+  recusado. O vínculo ao problema técnico pode ser corrigido sem repetir a visita.
+  A troca pela nova solicitação é atômica no armazenamento local. Um recibo já
+  confirmado apenas retira a cópia pendente; uma gravação parcial é concluída pelo
+  reenvio original, sem criar outro controle.
+- As ações dependentes de um evento familiar recusado também aguardam conferência.
+  A interface distingue envios em espera, envios a corrigir/conferir e registros
+  confirmados no servidor.
+- Problemas técnicos e intervenções conservam rascunhos com texto, fotos, ID e versão.
+  **Reprendre le brouillon** permite retomá-los após recarregar. Se o resultado de um
+  envio for incerto, seu conteúdo fica congelado até confirmar o recibo por reenvio.
+  A sessão expirada abre uma janela de reconexão mantendo o formulário montado.
+- Gravações manuais devolvem um recibo direto. Uma falha de leitura posterior não
+  transforma um salvamento aceito em erro. Repetir uma operação confirmada não
+  duplica a intervenção, mesmo que outra atualização tenha ocorrido depois.
+- Indisponibilidade de Sheets/Drive ou timeout do lock mantém a solicitação
+  recuperável. Erros de validação e conflitos exigem a decisão correspondente.
+
+### 2. Identidade do defeito e reparação parcial
+
+- A correção livre de uma ficha conserva os constats de origem, mas invalida sua
+  classificação antiga para associações automáticas. Os detalhes de cada item de
+  uma ficha agrupada podem ser corrigidos explicitamente pela direção.
+- Equipamentos diferentes podem ser distinguidos pelo local ou repère. Quando a
+  sugestão de duplicata continuar ambígua, **Il s’agit d’un autre équipement** pede
+  uma precisão que fica registrada com a relação entre as fichas.
+- Cada problema de uma ficha agrupada tem seu estado. A ficha só fica resolvida
+  quando todos os itens estão resolvidos; reparações parciais permanecem em curso.
+  Um item resolvido não atrai automaticamente um novo defeito nem aceita um vínculo
+  explícito contraditório pelo checklist. Os eventos preservam o estado e os detalhes
+  registrados em cada intervenção.
+- O PDF do checklist inclui o tipo e a descrição de cada defeito, mesmo quando a
+  observação geral estiver vazia.
+
+### 3. Uso diário e desempenho
+
+A lavanderia projeta o histórico quando os eventos mudam; a atualização por segundo
+fica restrita às máquinas ativas. Os avisos são avaliados nos próximos limiares de
+tempo. Históricos de lavanderia, objetos e controles carregam resultados por etapas,
+com pesquisa sobre todos os registros. Atualizações automáticas aproveitam o cache;
+o botão **Actualiser** continua solicitando a leitura atual.
+
+As gravações de rascunho agrupam versões ainda não iniciadas e mantêm o indicador
+ativo até a última escrita. Ocupação reutiliza um índice único por atualização.
+As fotos podem ser ampliadas, as escolhas rápidas respondem às setas do teclado,
+as buscas vazias têm mensagem explícita e o aviso de nova versão aparece dentro da
+área de conteúdo. A navegação dispõe de um estado de carregamento.
+
+### Publicação e compatibilidade
+
+1. Atualize `google-apps-script/Code.gs` e publique uma nova versão da **mesma**
+   implantação Apps Script. Preserve token, URL, planilha, fotos e gatilhos.
+2. Publique o app a partir da branch aprovada. As novas ações protegidas são
+   `commitIssueV4`, `commitWorkEventV2`, `commitCafardFollowupV3` e `commitLaundryCycleV3`.
+   Um script antigo recusa essas ações antes da gravação; as solicitações permanecem
+   disponíveis para nova tentativa após a atualização.
+3. Em aparelhos com solicitações antigas, use **Voir tous les envois** e
+   **Vérifier et résoudre**. Recibos antigos
+   continuam reconhecidos pelo conteúdo original. Uma edição antiga ainda não salva,
+   sem identidade do predecessor, exige conferência explícita: o programa não inventa
+   essa informação nem altera o hash de uma solicitação já enviada.
+
+Esta atualização não cria abas nem migra/apaga os registros existentes. Os campos
+adicionais ficam nos dados estruturados das mesmas linhas. A publicação no GitHub ou
+Vercel não atualiza o Apps Script automaticamente.
+
+O workflow `.github/workflows/quality.yml` verifica tipos, lint, testes de domínio,
+paridade do Apps Script, build e percursos Playwright a cada pull request para `main`.
+Os testes usam armazenamento local temporário ou serviços Google simulados, sem
+consultar a planilha de produção. Cada cenário e nova tentativa começam com dados
+fictícios vazios, em um diretório identificado e validado pelo próprio teste.
+Os percursos incluem formatos de celular e desktop.
+
 ## Problemas frequentes e associação ao acompanhamento existente
 
 O formulário **Nouveau problème technique** e os equipamentos do checklist marcados
@@ -38,10 +121,11 @@ O tipo manual **Réfrigérateur en panne** não muda essa regra do checklist.
 
 Atualize **`google-apps-script/Code.gs`** e publique uma nova versão da implantação
 existente **antes de publicar o app**. Preserve a URL, o token, a planilha, as fotos
-e os gatilhos. As ações **`commitIssueV3`** e **`commitRoomInspectionV3`** exigem o
-script atualizado; um script antigo recusa essas operações com uma instrução de
-atualização, conservando os controles pendentes no aparelho. O script atualizado
-continua aceitando as ações anteriores e os recibos de envios já confirmados.
+e os gatilhos. A escrita manual usa agora **`commitIssueV4`** e os controles usam
+**`commitRoomInspectionV3`**; um script antigo recusa essas operações com uma instrução
+de atualização, conservando os controles pendentes no aparelho. Os recibos de envios
+já confirmados permanecem aceitos. Edições operacionais antigas sem identidade do
+predecessor seguem a conferência explícita descrita acima.
 
 Não há nova aba nem limpeza automática do histórico: problemas continuam em
 **Anomalies**, inspeções em **Contrôles chambres** e acompanhamentos de cafards em
@@ -818,8 +902,10 @@ colunas. A aba **Chambres** é uma referência dos quartos fixos do aplicativo.
 - Os rascunhos e a fila ficam neste navegador/aparelho. Não limpe os dados do
   navegador nem use modo privado para registros ainda não enviados. Falhas de
   armazenamento são mostradas; elas não são tratadas como envio bem-sucedido.
-- O modo offline com fila se aplica aos novos controles e eventos de famílias;
-  as rondas e anomalias antigas mantêm seu fluxo de gravação existente.
+- A fila offline cobre controles, eventos de famílias e ações operacionais.
+  Problemas técnicos e intervenções conservam rascunhos e a tentativa original;
+  seu envio exige conexão e pode ser repetido para recuperar uma confirmação.
+  As rondas mantêm seu fluxo de gravação existente.
 
 ### Verificação
 
@@ -861,7 +947,7 @@ The photo column will contain the links to all attached photos.
 
 Google reads now share concurrent requests and cache the hotel data for 15 seconds
 and photo bytes for 15 minutes (up to 32 MiB per server process). The **Actualiser**
-button bypasses the data cache; saves invalidate it. Read requests retry once on
+button bypasses the data cache; saves invalidate it. Read requests retry up to three times on
 transient network errors or temporary Google failures. Legacy anomaly and round writes are never retried
 automatically. New room inspections and family events use the durable, idempotent
 queue described below. Photos remain authenticated, and failed images offer a retry button.

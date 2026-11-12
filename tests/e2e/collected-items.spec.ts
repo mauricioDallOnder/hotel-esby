@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { displayDate, today, type State } from "../../lib/domain";
 import type { WorkEntry } from "../../lib/rooms";
 
@@ -260,7 +260,7 @@ test("a concurrent item return is refused with useful details and never replaces
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   const original: WorkEntry = {
-    type: "createWorkEvent", id: crypto.randomUUID(), kind: "collectedItem", targetId: crypto.randomUUID(), expectedRevision: 0,
+    type: "createWorkEvent", id: crypto.randomUUID(), kind: "collectedItem", targetId: crypto.randomUUID(), expectedRevision: 0, expectedPreviousEventId: null,
     room: "303", date: today(), occurredAt: new Date().toISOString(), actor: "Agent collecte test", notes: "",
     itemName: "Multiprise de conflit", collectedOn: today(), collectedBy: "Agent collecte test", returnedOn: null, returnedBy: "",
   };
@@ -272,7 +272,7 @@ test("a concurrent item return is refused with useful details and never replaces
   const giveBack = page.getByRole("dialog", { name: "Restituer l’objet", exact: true });
   await giveBack.getByLabel(/^Restitué par/).fill("Agent restitution en retard");
   const colleague: WorkEntry = {
-    ...original, id: crypto.randomUUID(), expectedRevision: 1, occurredAt: new Date().toISOString(),
+    ...original, id: crypto.randomUUID(), expectedRevision: 1, expectedPreviousEventId: original.id, occurredAt: new Date().toISOString(),
     actor: "Collègue exemple", returnedOn: today(), returnedBy: "Collègue exemple",
   };
   await send(page, colleague);
@@ -281,19 +281,30 @@ test("a concurrent item return is refused with useful details and never replaces
   expect((await response).status()).toBe(409);
   await expect(giveBack).toHaveCount(0);
   const connection = page.getByRole("region", { name: "État des enregistrements", exact: true });
-  await expect(connection.getByRole("alert")).toContainText("Ces modifications nécessitent votre attention.");
-  await expect(connection.getByRole("alert")).toContainText("Ch. 303");
-  await expect(connection.getByRole("alert")).toContainText("Multiprise de conflit");
-  await expect(connection.getByRole("alert")).toContainText("Agent collecte test");
-  await expect(connection.getByRole("alert")).toContainText("Restitution demandée");
-  await expect(connection.getByRole("alert")).toContainText("Agent restitution en retard");
+  await expect(connection.getByRole("alert")).toContainText("1 envoi(s) à vérifier");
   await connection.getByRole("button", { name: "Actualiser", exact: true }).click();
   await page.getByRole("button", { name: /^Restitués :/ }).click();
   await expect(card).toContainText("Collègue exemple");
   await expect(card).not.toContainText("Agent restitution en retard");
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
   expect((await savedItems(page, "303")).map(event => event.id)).toEqual([original.id, colleague.id]);
-  await connection.getByRole("button", { name: "Annuler cette modification en attente", exact: true }).click();
+  await connection.getByRole("button", { name: "Voir tous les envois (1)", exact: true }).click();
+  const pending = page.getByRole("dialog", { name: "Envois de cet appareil · 1", exact: true });
+  await expect(pending).toContainText("Ch. 303");
+  await expect(pending).toContainText("Multiprise de conflit");
+  await pending.getByRole("button", { name: "Vérifier et résoudre", exact: true }).click();
+  const review = page.getByRole("dialog", { name: /^Vérifier l’envoi · Objet récupéré/ });
+  await expect(review).toContainText("Votre demande conservée");
+  await expect(review).toContainText("Agent collecte test");
+  await expect(review).toContainText("Agent restitution en retard");
+  await expect(review).toContainText("État actuellement enregistré");
+  await expect(review).toContainText("Collègue exemple");
+  await review.getByRole("button", { name: "Annuler cette demande en attente", exact: true }).click();
+  const discard = review.getByRole("button", { name: "Confirmer l’annulation", exact: true });
+  await expect(discard).toBeDisabled();
+  await review.getByRole("checkbox", { name: "Je confirme l’annulation de cette demande.", exact: true }).check();
+  await discard.click();
+  await expect(review).toHaveCount(0);
   await expect(connection.getByRole("alert")).toHaveCount(0);
   await expect(card).toContainText("Collègue exemple");
   expect((await savedItems(page, "303")).length).toBe(2);

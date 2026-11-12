@@ -1,6 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { today, type State } from "../../lib/domain";
 import { rooms, type WorkEvent } from "../../lib/rooms";
+import { workReceipt } from "./helpers/receipts";
 
 async function login(page: Page) {
   const response = await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
@@ -81,10 +82,10 @@ test("an unknown room can be marked free directly without recording a temporary 
 
 test("occupancy filter counts follow search and floor independently of the selected status, and reset restores all rooms", async ({ page }) => {
   await login(page);
-  const availability = (room: string, free: boolean): WorkEvent => ({
+  const availability = (room: string, free: boolean, previous?: WorkEvent): WorkEvent => workReceipt({
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "roomAvailability", targetId: room, room,
-    expectedRevision: 0, date: today(), actor: "Test occupation", notes: "", free,
-    occurredAt: `${today()}T08:00:00.000Z`, updatedAt: `${today()}T08:00:00.000Z`, version: 1, submissionHash: "a".repeat(64),
+    expectedRevision: previous ? previous.expectedRevision + 1 : 0, expectedPreviousEventId: previous?.id || null,
+    date: today(), actor: "Test occupation", notes: "", free, occurredAt: `${today()}T08:00:00.000Z`,
   });
   const data = { mode: "local", issues: [], inspections: [], roomInspections: [], workEvents: [
     availability("101", false), availability("102", true), availability("201", false), availability("202", true), availability("302", true),
@@ -148,9 +149,7 @@ test("occupancy filter counts follow search and floor independently of the selec
     await expect(reset).toBeDisabled();
   }
 
-  data.workEvents = [...data.workEvents, ...rooms.map(room => ({
-    ...availability(room, true), expectedRevision: data.workEvents.some(event => event.room === room) ? 1 : 0,
-  }))];
+  data.workEvents = [...data.workEvents, ...rooms.map(room => availability(room, true, data.workEvents.find(event => event.room === room)))];
   await page.reload();
   await expect(page.getByText("Toutes les chambres sont marquées libres. Aucune tournée à prévoir.", { exact: true })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(0);

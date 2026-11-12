@@ -25,7 +25,8 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
   const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const freshDraft = (): Draft => ({
     type: "createWorkEvent", id: createId(), kind: "cafardFollowup", targetId: record.room, room: record.room,
-    expectedRevision: record.revision, date: today(), occurredAt: new Date().toISOString(), actor,
+    expectedRevision: record.revision, expectedPreviousEventId: record.revision ? record.lastEventId : null,
+    date: today(), occurredAt: new Date().toISOString(), actor,
     cafardStatus: record.status, detectedOn: record.detectedOn, treatedOn: record.treatedOn,
     resolvedOn: record.resolvedOn, product: record.product, notes: "",
     cafardObservationId: record.observationId ?? null,
@@ -35,7 +36,7 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
     ["draft:cafard:" + record.room + ":" + record.revision]);
   const value = draft.value;
   const stale = !!value && !events.some(event => event.id === value.id) &&
-    (value.cafardObservationId === undefined || !!validateWorkEntry(value, events, [], [], history));
+    (value.cafardObservationId === undefined || value.expectedPreviousEventId === undefined || !!validateWorkEntry(value, events, [], [], history));
   const reminder = value ? cafardTreatmentReminder({ status: value.cafardStatus, treatedOn: value.treatedOn }) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -49,7 +50,8 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
   function useCurrentFollowup() {
     if (!value || busy) return;
     const current = cafardCases(history, events, cafardSeedsFromIssues(issues)).find(item => item.room === record.room) || record;
-    draft.update({ ...value, id: createId(), expectedRevision: current.revision, cafardObservationId: current.observationId ?? null,
+    draft.update({ ...value, id: createId(), expectedRevision: current.revision, expectedPreviousEventId: current.revision ? current.lastEventId : null,
+      cafardObservationId: current.observationId ?? null,
       date: today(), occurredAt: new Date().toISOString(), cafardStatus: current.status,
       detectedOn: current.detectedOn, treatedOn: current.treatedOn, resolvedOn: current.resolvedOn, product: current.product });
     setError("");

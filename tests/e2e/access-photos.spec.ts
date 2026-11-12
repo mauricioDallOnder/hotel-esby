@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { today, type Issue } from "../../lib/domain";
 
 test("employee reports three photos; only direction changes the status", async ({ page, request }) => {
@@ -145,5 +145,26 @@ test("photo galleries load on demand, reserve their space and recover a failed a
   await expect(card.getByRole("img", { name: "Galerie photo test · photo 3", exact: true })).toHaveJSProperty("naturalWidth", 2);
   await expect(retry).toHaveCount(0);
   expect(requests.filter(index => index === 0)).toHaveLength(1);
+  await card.getByRole("button", { name: "Agrandir : Galerie photo test · photo 1", exact: true }).click();
+  const enlarged = page.getByRole("dialog", { name: /^Galerie photo test · photo / });
+  await expect(enlarged.getByRole("img", { name: "Galerie photo test · photo 1", exact: true })).toHaveJSProperty("naturalWidth", 2);
+  await expect(enlarged.getByRole("button", { name: "Photo précédente", exact: true })).toBeDisabled();
+  await enlarged.getByRole("button", { name: "Photo suivante", exact: true }).click();
+  await expect(enlarged.getByRole("status").filter({ hasText: "Photo 2 sur 3" })).toBeVisible();
+  await expect(enlarged.getByRole("img", { name: "Galerie photo test · photo 2", exact: true })).toHaveJSProperty("naturalWidth", 2);
+  await page.keyboard.press("ArrowRight");
+  await expect(enlarged.getByRole("img", { name: "Galerie photo test · photo 3", exact: true })).toHaveJSProperty("naturalWidth", 2);
+  await expect(enlarged.getByRole("button", { name: "Photo suivante", exact: true })).toBeDisabled();
+  await expect(enlarged.getByRole("group", { name: "Navigation des photos", exact: true })).toBeFocused();
+  await expect(enlarged.getByRole("link", { name: "Ouvrir en taille originale", exact: true })).toHaveAttribute("href", /\/api\/photos\/.*[?&]index=2(?:&|$)/);
+  await page.keyboard.press("ArrowLeft");
+  await expect(enlarged.getByRole("status").filter({ hasText: "Photo 2 sur 3" })).toBeVisible();
+  await page.keyboard.press("ArrowLeft");
+  await expect(enlarged.getByRole("button", { name: "Photo précédente", exact: true })).toBeDisabled();
+  await expect(enlarged.getByRole("group", { name: "Navigation des photos", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(enlarged.getByRole("status").filter({ hasText: "Photo 2 sur 3" })).toBeVisible();
+  await enlarged.getByRole("button", { name: "Fermer", exact: true }).click();
+  await expect(enlarged).toHaveCount(0);
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
 });

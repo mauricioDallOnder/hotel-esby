@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { displayDate, today, type Issue, type State } from "../../lib/domain";
 
 async function login(page: Page) {

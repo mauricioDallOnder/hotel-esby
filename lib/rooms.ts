@@ -191,8 +191,14 @@ export const workEntrySchema = z.object({
   laundryEndsAt: z.iso.datetime().optional(),
   laundryAddedMinutes: z.number().int().min(1).max(120).optional(),
   cafardObservationId: z.string().uuid().nullable().optional(),
+  // Optional only for previously queued payloads: adding a default would change
+  // their receipt hash. New edits capture the exact event they were based on.
+  expectedPreviousEventId: z.string().uuid().nullable().optional(),
 }).superRefine((v, ctx) => {
   const invalid = (field: string, message: string) => ctx.addIssue({ code: "custom", path: [field], message });
+  if (v.expectedPreviousEventId !== undefined &&
+    (v.expectedRevision === 0 ? v.expectedPreviousEventId !== null : !v.expectedPreviousEventId || v.expectedPreviousEventId === v.id))
+    invalid("expectedPreviousEventId", "Vérifiez la version du suivi avant de préparer cette modification.");
   if (v.kind === "roomAvailability") {
     if (!v.room || v.targetId !== v.room || typeof v.free !== "boolean") invalid("free", "Choisissez la disponibilité d’une chambre connue.");
   } else if (v.kind === "cafardFollowup") {

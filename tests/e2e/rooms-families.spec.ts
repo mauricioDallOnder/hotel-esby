@@ -1,8 +1,8 @@
-import { expect, test, type Page } from "@playwright/test";
-import { roomChecks } from "../../lib/rooms";
+import { expect, test, type Page } from "./fixtures";
+import { roomChecks, type EntryChange } from "../../lib/rooms";
 async function login(page: Page) { await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } }); }
 async function select(page: Page, label: string, option: string) {
-  await page.getByRole("combobox", { name: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?: ?\\*)?$") }).click();
+  await page.getByRole("combobox", { name: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\*?$") }).click();
   await page.getByRole("option", { name: option, exact: true }).click();
 }
 test("mobile room checklist opens cleaning for free rooms, exports PDF and shares problems and photos with anomalies", async ({ page }) => {
@@ -72,6 +72,11 @@ test("radiator Libre stays in the checklist while Caché creates one technical p
     await page.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK", exact: true }).click();
     await expect(radiator.getByRole("radio", { name: answer, exact: true })).toHaveAttribute("aria-checked", "true");
     await choose("Détecteur de fumée fonctionnel", "OK");
+    if (repeated) {
+      // An existing technical fault also leaves the general damage check for an individual answer.
+      await expect(page.getByRole("radiogroup", { name: "Rien de cassé", exact: true }).getByRole("radio", { checked: true })).toHaveCount(0);
+      await choose("Rien de cassé", "OK");
+    }
     if (answer === "Caché" && !repeated) {
       await radiator.scrollIntoViewIfNeeded();
       await expect(radiator.getByText(/Problèmes techniques/)).toBeVisible();
@@ -151,18 +156,43 @@ test("family drafts survive reload and offline entries synchronize without losin
 });
 test("a lost save receipt can be retried without duplicating a family departure", async ({ page }) => {
   await login(page); await page.goto("/familles");
-  await page.route("**/api/entries", async route => { await route.fetch(); await route.abort("failed"); }, { times: 1 });
+  const submissions: { body: string | null; protocol: string | undefined }[] = [];
+  const receipts: { status: number; data: EntryChange }[] = [];
+  await page.route("**/api/entries", async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    submissions.push({ body: route.request().postData(), protocol: route.request().headers()["x-entry-schema"] });
+    const response = await route.fetch();
+    receipts.push({ status: response.status(), data: await response.json() });
+    if (submissions.length === 1) return route.abort("failed");
+    return route.fulfill({ response });
+  });
   await page.getByLabel(/^Chambre/).selectOption("201");
   await page.getByLabel(/^Famille/).fill("Famille reçu perdu");
   await page.getByLabel("Signalé par").fill("Marie");
   await select(page, "Événement", "Départ définitif");
   await expect(page.getByLabel("Retour prévu (facultatif)")).toHaveCount(0);
   await page.getByRole("button", { name: "Enregistrer l’événement" }).click();
-  await expect(page.getByText(/Connexion interrompue ou lente/)).toBeVisible();
+  await expect.poll(() => receipts.length).toBe(1);
+  expect(receipts[0]).toMatchObject({ status: 200, data: { collection: "familyEvents" } });
+  expect(submissions[0].protocol).toBe("2");
+  await expect(page.getByText("En attente d’envoi", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Voir tous les envois (1)", exact: true }).click();
+  const pending = page.getByRole("dialog", { name: "Envois de cet appareil · 1", exact: true });
+  await expect(pending).toContainText("Connexion interrompue ou lente. Enregistrement conservé sur cet appareil.");
+  await pending.getByRole("button", { name: "Fermer", exact: true }).click();
+  const beforeRetry = await (await page.request.get("/api/hotel?fresh=1")).json();
+  const savedBeforeRetry = beforeRetry.familyEvents.filter((record: { family: string }) => record.family === "Famille reçu perdu");
+  expect(savedBeforeRetry).toHaveLength(1);
+  expect(savedBeforeRetry[0].id).toBe(JSON.parse(submissions[0].body!).id);
   await page.getByRole("button", { name: "Réessayer l’envoi", exact: true }).click();
+  await expect(page.getByText("Enregistré sur le serveur", { exact: true })).toBeVisible();
   await expect(page.getByText("En attente d’envoi", { exact: true })).toHaveCount(0);
-  const state = await (await page.request.get("/api/hotel")).json();
-  expect(state.familyEvents.filter((r: { family: string }) => r.family === "Famille reçu perdu")).toHaveLength(1);
+  expect(submissions).toHaveLength(2);
+  expect(submissions[1]).toEqual(submissions[0]);
+  expect(receipts).toHaveLength(2);
+  expect(receipts[1]).toEqual(receipts[0]);
+  const state = await (await page.request.get("/api/hotel?fresh=1")).json();
+  expect(state.familyEvents.filter((record: { family: string }) => record.family === "Famille reçu perdu")).toEqual(savedBeforeRetry);
 });
 
 test("quick controls include the smoke detector, preserve known faults and reuse an existing anomaly", async ({ page }) => {
@@ -179,6 +209,8 @@ test("quick controls include the smoke detector, preserve known faults and reuse
   await expect(page.getByRole("dialog").getByRole("combobox")).toHaveCount(0);
   await expect(page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "OK", exact: true })).toHaveAttribute("aria-checked", "true");
   await choose(roomChecks.find(c => c.key === "taps")!.label, "Problème");
+  await expect(page.getByRole("radiogroup", { name: "Rien de cassé", exact: true }).getByRole("radio", { checked: true })).toHaveCount(0);
+  await choose("Rien de cassé", "OK");
   await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("Chambre occupée", "Occupée"); await choose("État général de la chambre", "À revoir");
   await choose("Présence de cafards ou nuisibles", "Aucun"); await choose("État de la moquette", "OK");

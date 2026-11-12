@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Paper, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
 import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import CancelRounded from "@mui/icons-material/CancelRounded";
@@ -9,6 +9,7 @@ import { displayDate, issuePhotoIds, statuses, type Issue } from "@/lib/domain";
 import { applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels, roomCheckResultLabel, roomChecks, roomProblems, roomRecordTime, type RoomEntry, type RoomInspection } from "@/lib/rooms";
 import { openRoomIssues } from "@/lib/roomIssueMatching";
 import { completeRoomInspection } from "@/lib/roomRotation";
+import { useEntries } from "@/context/EntriesContext";
 
 type Record = RoomEntry | RoomInspection;
 function Result({ label, text, status }: { label: string; text: string; status: "ok" | "bad" | "neutral" }) {
@@ -20,9 +21,12 @@ function Result({ label, text, status }: { label: string; text: string; status: 
 }
 function dateLabel(record: Record) {
   const time = roomRecordTime(record);
-  return `${displayDate(record.date)}${Number.isFinite(Date.parse(time)) ? ` · ${new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" }).format(new Date(time))}` : ""}`;
+  return `${displayDate(record.date)}${Number.isFinite(Date.parse(time)) ? ` · ${timeFormat.format(new Date(time))}` : ""}`;
 }
+const timeFormat = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
 export function RoomHistoryDialog({ room, history, issues = [], onClose }: { room?: string; history: Record[]; issues?: Issue[]; onClose: () => void }) {
+  const { pending, reviewPending } = useEntries();
+  const blockedIds = useMemo(() => new Set(pending.filter(item => item.blocked).map(item => item.entry.id)), [pending]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -30,14 +34,16 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
   const [end, setEnd] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [photos, setPhotos] = useState(false);
+  const [limit, setLimit] = useState(30);
   const mobile = useMediaQuery(useTheme().breakpoints.down("sm"));
-  const records = [...new Map(history.filter(r => !room || r.room === room).map(r => [r.id, r])).values()]
-    .sort((a, b) => b.date.localeCompare(a.date) || roomRecordTime(b).localeCompare(roomRecordTime(a)) || a.id.localeCompare(b.id));
+  const records = useMemo(() => [...new Map(history.filter(r => !room || r.room === room).map(r => [r.id, r])).values()]
+    .sort((a, b) => b.date.localeCompare(a.date) || roomRecordTime(b).localeCompare(roomRecordTime(a)) || a.id.localeCompare(b.id)), [history, room]);
   const record = records.find(r => r.id === selectedId);
   const previous = record ? records.slice(records.indexOf(record) + 1).find(r => r.room === record.room) : undefined;
   const visible = records.filter(r => (!start || r.date >= start) && (!end || r.date <= end) &&
     `${r.room} ${r.actor} ${r.notes} ${roomProblems(r).join(" ")}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr")) &&
-    (filter === "all" || (filter === "problems" ? roomProblems(r).length > 0 : !("updatedAt" in r))));
+    (filter === "all" || (filter === "problems" ? roomProblems(r).length > 0 : filter === "blocked" ? blockedIds.has(r.id) : !("updatedAt" in r) && !blockedIds.has(r.id))));
+  const syncLabel = (record: Record) => blockedIds.has(record.id) ? "À vérifier · envoi suspendu" : "updatedAt" in record ? "Enregistré sur le serveur" : "En attente d’envoi";
   const open = room ? openRoomIssues(issues, room) : [];
   const linked = record && "relatedIssueIds" in record ? issues.filter(i => record.relatedIssueIds?.includes(i.id) || (record.createdIssue && i.id === record.id)) : [];
   const changes = record && previous ? roomChecks.flatMap(check => {
@@ -50,11 +56,12 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
       {!record ? <Stack spacing={2}>
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}><Chip label={`${records.length} contrôle(s)`} />{room && <Chip label={`${open.length} anomalie(s) ouverte(s)`} color={open.length ? "warning" : "default"} />}</Stack>
         {open.length > 0 && <details><summary style={{ cursor: "pointer" }}>Anomalies à suivre actuellement</summary><Stack spacing={1} sx={{ mt: 1 }}>{open.map(i => <Alert severity="warning" key={i.id}><strong>{i.title}</strong> · {statuses[i.status]}<Typography variant="body2">{i.description}</Typography></Alert>)}</Stack></details>}
-        <TextField label="Rechercher dans l’historique" placeholder="Chambre, inspecteur, observation…" value={query} onChange={e => setQuery(e.target.value)} />
-        <Stack direction="row" spacing={1}><TextField fullWidth label="Du" type="date" value={start} onChange={e => setStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} /><TextField fullWidth label="Au" type="date" value={end} onChange={e => setEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} /></Stack>
-        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{[["all", "Tous"], ["problems", "Avec constats"], ["pending", "En attente d’envoi"]].map(([key, label]) => <Chip key={key} label={label} onClick={() => setFilter(key)} color={filter === key ? "primary" : "default"} />)}</Stack>
+        <TextField label="Rechercher dans l’historique" placeholder="Chambre, inspecteur, observation…" value={query} onChange={e => { setQuery(e.target.value); setLimit(30); }} />
+        <Stack direction="row" spacing={1}><TextField fullWidth label="Du" type="date" value={start} onChange={e => { setStart(e.target.value); setLimit(30); }} slotProps={{ inputLabel: { shrink: true } }} /><TextField fullWidth label="Au" type="date" value={end} onChange={e => { setEnd(e.target.value); setLimit(30); }} slotProps={{ inputLabel: { shrink: true } }} /></Stack>
+        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>{[["all", "Tous"], ["problems", "Avec constats"], ["pending", "En attente d’envoi"], ["blocked", "À vérifier"]].map(([key, label]) => <Chip key={key} label={label} onClick={() => { setFilter(key); setLimit(30); }} aria-pressed={filter === key} color={filter === key ? "primary" : "default"} />)}</Stack>
+        <Typography variant="caption" color="text.secondary" role="status">{Math.min(limit, visible.length)} sur {visible.length} contrôle(s) affiché(s)</Typography>
         {!visible.length && <Typography>Aucun contrôle ne correspond à cette recherche.</Typography>}
-        {visible.map(r => {
+        {visible.slice(0, limit).map(r => {
           const problems = roomProblems(r), partial = !completeRoomInspection(r);
           return <Paper key={r.id} variant="outlined" sx={{ borderLeft: "4px solid", borderLeftColor: problems.length ? "warning.main" : partial ? "grey.400" : "success.main" }}>
             <Button onClick={() => { setSelectedId(r.id); setShowAll(false); setPhotos(false); }} sx={{ display: "block", width: "100%", textAlign: "left", p: 2, color: "text.primary" }}>
@@ -62,14 +69,16 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
               <Typography component="span" variant="body2" sx={{ display: "block" }}>{r.actor} · {conditionLabels[r.condition]} · {r.occupied === false ? "Libre" : r.occupied === true ? "Occupée" : "Occupation inconnue"}</Typography>
               <Typography component="span" variant="body2" sx={{ display: "block", mt: 1 }}>{problems.length ? `${problems.length} constat(s) · ${problems.slice(0, 2).join(" · ")}` : partial ? "Contrôle partiel" : "Aucun problème signalé"}</Typography>
               {r.notes && <Typography component="span" variant="body2" color="text.secondary" sx={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", mt: 0.5 }}>{r.notes}</Typography>}
-              <Typography component="span" variant="caption" color={"updatedAt" in r ? "text.secondary" : "warning.main"} sx={{ display: "block", mt: 1 }}>{"updatedAt" in r ? "Enregistré sur le serveur" : "En attente d’envoi"} · {"photoIds" in r ? issuePhotoIds(r).length : r.photosData.length} photo(s)</Typography>
+              <Typography component="span" variant="caption" color={blockedIds.has(r.id) ? "error.main" : "updatedAt" in r ? "text.secondary" : "warning.main"} sx={{ display: "block", mt: 1 }}>{syncLabel(r)} · {"photoIds" in r ? issuePhotoIds(r).length : r.photosData.length} photo(s)</Typography>
             </Button>
           </Paper>;
         })}
+        {visible.length > limit && <Button onClick={() => setLimit(value => value + 30)}>Afficher 30 contrôles de plus</Button>}
       </Stack> : <Stack key={record.id} spacing={2}>
         <Typography variant="h6">Chambre {record.room} · {dateLabel(record)}</Typography>
         <Typography>Inspecteur : {record.actor}</Typography>
-        <Chip sx={{ alignSelf: "flex-start" }} label={"updatedAt" in record ? "Enregistré sur le serveur" : "En attente d’envoi"} color={"updatedAt" in record ? "success" : "warning"} variant="outlined" />
+        <Chip sx={{ alignSelf: "flex-start" }} label={syncLabel(record)} color={blockedIds.has(record.id) ? "error" : "updatedAt" in record ? "success" : "warning"} variant="outlined" />
+        {blockedIds.has(record.id) && <Alert severity="warning" action={<Button color="inherit" onClick={() => { reviewPending(record.id); onClose(); }}>Vérifier l’envoi</Button>}>Ce contrôle reste conservé sur cet appareil. Son envoi attend votre vérification.</Alert>}
         <Result label="Chambre occupée" text={record.occupied === true ? "Oui" : record.occupied === false ? "Non" : "Non renseignée"} status="neutral" />
         <Result label="État général" text={conditionLabels[record.condition]} status={record.condition === "bon" ? "ok" : "bad"} />
         <Result label="Ménage" text={cleaningText(record)} status={record.occupied === true || !record.cleaning ? "neutral" : record.cleaning === "faite" ? "ok" : "bad"} />
@@ -92,7 +101,7 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
         </Stack>}
         <Typography variant="h6">Observations</Typography><Typography sx={{ whiteSpace: "pre-wrap" }}>{record.notes || "Aucune observation"}</Typography>
         <Button variant="outlined" onClick={() => setPhotos(!photos)} aria-expanded={photos}>{photos ? "Masquer les photos" : "Afficher les photos"}</Button>
-        {photos && ("photoIds" in record ? (issuePhotoIds(record).length ? issuePhotoIds(record).map((_, index) => <IssuePhoto key={`${record.id}:${index}`} issueId={record.id} index={index} collection="roomInspections" alt={`Chambre ${record.room} · photo ${index + 1}`} />) : <Typography>Aucune photo</Typography>) : (record.photosData.length ? record.photosData.map((src, index) => <Box component="img" key={`${record.id}:${index}`} src={src} alt={`Photo ${index + 1}`} sx={{ width: "100%", objectFit: "contain" }} />) : <Typography>Aucune photo</Typography>))}
+        {photos && ("photoIds" in record ? (issuePhotoIds(record).length ? issuePhotoIds(record).map((_, index) => <IssuePhoto key={`${record.id}:${index}`} issueId={record.id} index={index} photoCount={issuePhotoIds(record).length} collection="roomInspections" alt={`Chambre ${record.room} · photo ${index + 1}`} />) : <Typography>Aucune photo</Typography>) : (record.photosData.length ? record.photosData.map((src, index) => <Box component="img" key={`${record.id}:${index}`} src={src} alt={`Photo ${index + 1}`} sx={{ width: "100%", objectFit: "contain" }} />) : <Typography>Aucune photo</Typography>))}
       </Stack>}
     </DialogContent>
     <DialogActions>{record && <Button onClick={() => setSelectedId(null)}>← Retour à l’historique</Button>}<Button onClick={onClose}>Fermer</Button></DialogActions>

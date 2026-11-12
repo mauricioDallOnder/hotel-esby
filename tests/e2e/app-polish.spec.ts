@@ -1,6 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
-import { today, type Issue } from "../../lib/domain";
-import type { WorkEvent } from "../../lib/rooms";
+import { expect, test, type Page } from "./fixtures";
+import { applyCommand, today, type Command, type Issue } from "../../lib/domain";
+import { commandOperation, isCommandReplay, stampCommandReceipt } from "../../lib/commandReceipt";
+import { workReceipt } from "./helpers/receipts";
 
 const sample = (): Issue => ({
   id: "bcdbf707-567b-44f8-8151-c08b51994394", version: 1,
@@ -59,17 +60,17 @@ test("a duplicate room fault is blocked before sending and opens the existing fo
   await page.goto("/anomalies");
   await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Signaler une anomalie", exact: true });
-  await dialog.getByLabel("Titre", { exact: false }).fill("Robinet du lavabo bloqué");
-  await dialog.getByLabel("Lieu précis").fill("Chambre n°114");
-  await dialog.getByLabel("Description du problème").fill("Le robinet du lavabo ne ferme plus.");
-  await dialog.getByLabel("Signalé par").fill("Test");
-  await expect(dialog.getByRole("alert").filter({ hasText: "Un problème identique" })).toBeVisible();
+  await dialog.getByLabel(/^Titre\s*\*?$/).fill("Robinet du lavabo bloqué");
+  await dialog.getByLabel(/^Lieu précis\s*\*?$/).fill("Chambre n°114");
+  await dialog.getByLabel(/^Description du problème\s*\*?$/).fill("Le robinet du lavabo ne ferme plus.");
+  await dialog.getByLabel(/^Signalé par\s*\*?$/).fill("Test");
+  await expect(dialog.getByRole("alert").filter({ hasText: "Un problème similaire" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true })).toBeDisabled();
   await dialog.getByRole("button", { name: "Ouvrir le signalement existant", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "Ouvrir le suivi existant ?", exact: true });
   await expect(confirm).toContainText("Le texte et les photos");
   await confirm.getByRole("button", { name: "Continuer la saisie", exact: true }).click();
-  await expect(dialog.getByLabel("Description du problème")).toHaveValue(existing.description);
+  await expect(dialog.getByLabel(/^Description du problème\s*\*?$/)).toHaveValue(existing.description);
   await dialog.getByRole("button", { name: "Ouvrir le signalement existant", exact: true }).click();
   await confirm.getByRole("button", { name: "Abandonner les modifications", exact: true }).click();
   await expect(page.getByRole("dialog", { name: /^Suivi de l’anomalie/ })).toBeVisible();
@@ -80,11 +81,11 @@ test("a duplicate room fault is blocked before sending and opens the existing fo
   existing.version = 2;
   await page.reload();
   await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();
-  await dialog.getByLabel("Titre", { exact: false }).fill(existing.title);
-  await dialog.getByLabel("Lieu précis").fill("114");
-  await dialog.getByLabel("Description du problème").fill(existing.description);
-  await dialog.getByLabel("Signalé par").fill("Test");
-  await expect(dialog.getByText(/Un problème identique/)).toHaveCount(0);
+  await dialog.getByLabel(/^Titre\s*\*?$/).fill(existing.title);
+  await dialog.getByLabel(/^Lieu précis\s*\*?$/).fill("114");
+  await dialog.getByLabel(/^Description du problème\s*\*?$/).fill(existing.description);
+  await dialog.getByLabel(/^Signalé par\s*\*?$/).fill("Test");
+  await expect(dialog.getByText(/Un problème similaire/)).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Enregistrer l’anomalie", exact: true })).toBeEnabled();
 });
 
@@ -96,7 +97,15 @@ test("a background refresh does not block an intervention or restore its old unr
   await page.route("**/api/hotel*", async route => {
     if (route.request().method() === "PATCH") {
       writes++;
-      existing = { ...existing, version: 2, status: "resolu", updatedAt: new Date().toISOString() };
+      const state = { issues: [existing], inspections: [] };
+      const command = route.request().postDataJSON() as Command;
+      const operation = commandOperation(command);
+      if (!isCommandReplay(state, command, operation)) {
+        const change = applyCommand(state, command, new Date().toISOString());
+        stampCommandReceipt(change, operation);
+        expect(change.collection).toBe("issues");
+        if (change.collection === "issues") existing = change.record;
+      }
       return route.fulfill({ json: { mode: "local", issues: [existing], inspections: [] } });
     }
     const snapshot = structuredClone(existing);
@@ -111,8 +120,8 @@ test("a background refresh does not block an intervention or restore its old unr
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /^Suivi de l’anomalie/ });
   await dialog.getByRole("radiogroup", { name: "État de résolution", exact: true }).getByRole("radio", { name: "Résolu", exact: true }).click();
-  await dialog.getByLabel("Intervention saisie par").fill("Test intervention");
-  await dialog.getByLabel("Travaux effectués / résolution").fill("Robinet réparé et vérifié.");
+  await dialog.getByLabel(/^Intervention saisie par\s*\*?$/).fill("Test intervention");
+  await dialog.getByLabel(/^Travaux effectués \/ résolution\s*\*?$/).fill("Robinet réparé et vérifié.");
   holdRead = true;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => held).toBe(true);
@@ -135,12 +144,11 @@ test("a background refresh does not block an intervention or restore its old unr
 
 test("a legacy cafard draft and its notes survive a newer follow-up and an explicit reload", async ({ page }) => {
   await login(page);
-  const followup: WorkEvent = {
+  const followup = workReceipt({
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "cafardFollowup", targetId: "125", room: "125",
-    expectedRevision: 0, date: today(), occurredAt: new Date().toISOString(), actor: "Test suivi",
+    expectedRevision: 0, expectedPreviousEventId: null, date: today(), occurredAt: new Date().toISOString(), actor: "Test suivi",
     cafardStatus: "traite", detectedOn: today(), treatedOn: today(), resolvedOn: null, product: "Gel test", notes: "Application fictive.",
-    updatedAt: new Date().toISOString(), version: 1, submissionHash: "a".repeat(64),
-  };
+  });
   const data = { mode: "local", issues: [], inspections: [], roomInspections: [], workEvents: [followup] };
   await page.route("**/api/hotel*", route => route.fulfill({ json: data }));
   await page.goto("/cafards");
@@ -155,7 +163,9 @@ test("a legacy cafard draft and its notes survive a newer follow-up and an expli
     try {
       await new Promise<void>((resolve, reject) => {
         const transaction = db.transaction("records", "readwrite");
-        transaction.objectStore("records").put({ ...entry, id: crypto.randomUUID(), expectedRevision: 1, cafardStatus: "resolu", resolvedOn: entry.date, notes }, "draft:cafard:125:1");
+        const legacy = { ...entry };
+        delete legacy.expectedPreviousEventId;
+        transaction.objectStore("records").put({ ...legacy, id: crypto.randomUUID(), expectedRevision: 1, cafardStatus: "resolu", resolvedOn: entry.date, notes }, "draft:cafard:125:1");
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
       });
@@ -171,7 +181,8 @@ test("a legacy cafard draft and its notes survive a newer follow-up and an expli
   await expect(dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true })).toBeEnabled();
   await dialog.getByRole("button", { name: "Fermer", exact: true }).click();
 
-  data.workEvents.push({ ...followup, id: crypto.randomUUID(), expectedRevision: 1, cafardStatus: "signale", notes: "Mise à jour par un autre collègue." });
+  data.workEvents.push(workReceipt({ ...followup, id: crypto.randomUUID(), expectedRevision: 1, expectedPreviousEventId: followup.id,
+    cafardStatus: "signale", notes: "Mise à jour par un autre collègue." }));
   await page.reload();
   await page.getByRole("article", { name: "Chambre 125", exact: true }).getByRole("button", { name: "Mettre à jour", exact: true }).click();
   await expect(dialog.getByLabel("Observations", { exact: true })).toHaveValue(notes);

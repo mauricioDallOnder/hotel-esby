@@ -130,5 +130,5 @@ test("an outdated Apps Script cannot accept a manual write without the new uniqu
     return Response.json(input.action === "list" ? { ok: true, data: { issues: [], inspections: [] } } : { ok: false, error: "Action invalide.", code: 400 });
   });
   await assert.rejects(execute({ type: "createIssue", id: createId(), date: today(), actor: "Agent test", fields }), { code: 503 });
-  assert.deepEqual(actions, ["list", "commitIssueV3"]);
+  assert.deepEqual(actions, ["list", "commitIssueV4"]);
 });

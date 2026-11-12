@@ -1,6 +1,6 @@
 import type { PendingEntry } from "./entryQueue";
 import { workEntrySchema, type WorkEntry, type WorkEvent } from "./rooms";
-import { getLaundryEndsAt, latestWork, validateWorkEntry } from "./work";
+import { getLaundryEndsAt, latestWork, validateWorkEntry, validateWorkPredecessor } from "./work";
 
 export type LaundryRecoveryReview = {
   kind: "saved" | "completed" | "retry" | "reconfirm" | "review";
@@ -120,12 +120,12 @@ export function inspectLaundryRecovery(
   if (otherPending)
     return result("review", "D’autres demandes en attente concernent cette machine. Vérifiez ces demandes et l’historique avant de recommencer, pour conserver leur ordre.", details);
 
-  const conflict = validateWorkEntry(parsed, [...events], []);
+  const conflict = validateWorkPredecessor(parsed, [...events], true) || validateWorkEntry(parsed, [...events], []);
   if (!conflict)
     return result("retry", "L’état actuel permet d’envoyer la demande d’origine. Ses informations et son heure seront conservées.", details);
 
   if (isTerminal(entry) && current?.laundryStatus === "en_cours" && sameCycle(entry, current) &&
-    entry.expectedRevision < current.expectedRevision + 1) {
+    (entry.expectedRevision < current.expectedRevision + 1 || entry.expectedPreviousEventId === undefined && entry.expectedRevision === current.expectedRevision + 1)) {
     // A stale action must have been valid against its original revision. This
     // rejects damaged payloads rather than silently repairing custody details.
     const originalHistory = events.filter(event => event.kind !== "laundryCycle" || event.targetId !== entry.targetId ||
@@ -149,13 +149,13 @@ export function buildRecoveredLaundryEntry(
   const original = canonicalLaundryEntry(review.original), current = review.current;
   if (review.kind !== "reconfirm" || !original || !current || !isSavedLaundryEvent(current) ||
     !isTerminal(original) || current.laundryStatus !== "en_cours" || !sameCycle(original, current) ||
-    original.expectedRevision >= current.expectedRevision + 1)
+    (original.expectedRevision > current.expectedRevision + 1 || original.expectedPreviousEventId !== undefined && original.expectedRevision === current.expectedRevision + 1))
     throw new Error("Vérifiez à nouveau l’état du cycle avant de confirmer cette demande.");
   if (id === original.id || id === current.id || review.savedEventIds?.includes(id))
     throw new Error("La nouvelle confirmation doit avoir un nouvel identifiant.");
 
   const replacement: WorkEntry = {
-    ...original, id, expectedRevision: current.expectedRevision + 1,
+    ...original, id, expectedRevision: current.expectedRevision + 1, expectedPreviousEventId: current.id,
     date, occurredAt: at, laundryEndsAt: getLaundryEndsAt(current),
     laundryCollectedAt: original.laundryStatus === "recupere" ? at : null,
     laundryCollectedBy: original.laundryStatus === "recupere" ? original.actor : "",

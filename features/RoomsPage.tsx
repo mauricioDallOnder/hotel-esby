@@ -15,7 +15,7 @@ import { completeRoomInspection, daysSince, roomRotation } from "@/lib/roomRotat
 import { openRoomIssues } from "@/lib/roomIssueMatching";
 import { RoomAvailabilityCheckbox } from "@/components/RoomAvailabilityCheckbox";
 import { useWorkEvents } from "@/lib/useWorkEvents";
-import { roomAvailability } from "@/lib/work";
+import { roomAvailabilityView } from "@/lib/roomAvailabilityView";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 type Preferences = { dailyGoal: number; intervalDays: number; deferredDay: string; deferred: string[]; extendedDay?: string; extendedGoal?: number };
@@ -57,7 +57,8 @@ export default function RoomsPage() {
     return [...queued, ...roomInspections.filter(record => !queuedIds.has(record.id))];
   }, [queued, roomInspections]);
   const { latest, history: currentHistory, pendingIds } = useMemo(() => roomObservations(roomInspections, pending, day), [roomInspections, pending, day]);
-  const availability = useMemo(() => new Map(rooms.map(n => [n, roomAvailability(n, workEvents, latest.get(n)).free])), [workEvents, latest]);
+  const availabilityStates = useMemo(() => roomAvailabilityView(workEvents, latest), [workEvents, latest]);
+  const availability = useMemo(() => new Map([...availabilityStates].map(([room, state]) => [room, state.free])), [availabilityStates]);
   const eligibleRooms = useMemo(() => rooms.filter(n => availability.get(n) !== true), [availability]);
   const eligible = new Set(eligibleRooms);
   const rotation = useMemo(() => roomRotation(currentHistory, day, dailyTarget, config?.intervalDays, deferred, eligibleRooms), [currentHistory, day, dailyTarget, config?.intervalDays, deferred, eligibleRooms]);
@@ -218,7 +219,7 @@ export default function RoomsPage() {
                 {priority && <Typography variant="caption" color="warning.main" sx={{ fontWeight: 700 }}>Mauvais état · suivi à faire</Typography>}
                 {detail.waitingUntil && <Typography variant="caption" color="text.secondary">Mauvais état · suivi le {displayDate(detail.waitingUntil)}</Typography>}
                 {detail.reason === "scheduled" && detail.dueOn && !detail.waitingUntil && <Typography variant="caption" color="text.secondary">Prochain contrôle : {displayDate(detail.dueOn)}</Typography>}
-                <RoomAvailabilityCheckbox room={n} inspection={record} inspectionPending={!!record && pendingIds.has(record.id)} />
+                <RoomAvailabilityCheckbox room={n} availability={availabilityStates.get(n)!} inspection={record} inspectionPending={!!record && pendingIds.has(record.id)} />
                 {record?.occupied === false && <Typography variant="caption">Dernier contrôle · Ménage {cleaningText(record).toLowerCase()}</Typography>}
                 {open.length > 0 && <Chip label={`${open.length} problème${open.length > 1 ? "s" : ""} technique${open.length > 1 ? "s" : ""}`} color="warning" size="small" variant="outlined" sx={{ maxWidth: "100%", height: "auto", minHeight: 24, "& .MuiChip-label": { whiteSpace: "normal", lineHeight: 1.4, py: 0.25 } }} />}
                 {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">Contrôle en attente d’envoi</Typography>}

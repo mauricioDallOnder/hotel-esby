@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { today, type State } from "../../lib/domain";
 import { roomChecks, type RoomEntry } from "../../lib/rooms";
 
@@ -41,7 +41,7 @@ test("a room marked free in Occupation leaves every checklist view and returns w
   await expect(page.getByRole("button", { name: "Toutes : 84", exact: true })).toBeVisible();
   await expect(page.getByRole("article", { name: "Chambre 107", exact: true }).getByRole("checkbox")).toHaveAttribute("aria-checked", "mixed");
   await expect(page.getByRole("button", { name: /^Libres :/ })).toHaveCount(0);
-  for (const filter of ["Tournée du jour", "À contrôler", "Anomalies ouvertes"]) {
+  for (const filter of ["Tournée du jour", "À contrôler", "Problèmes techniques"]) {
     await page.getByRole("group", { name: "Filtrer les contrôles", exact: true }).getByRole("button", { name: filter, exact: true }).click();
     await expect(hidden).toHaveCount(0);
   }
@@ -104,13 +104,19 @@ test("an accepted offline free change hides the room immediately while a blocked
   await rejected;
   await expect(blockedRoom).toBeVisible();
   await expect(blockedRoom.getByRole("checkbox")).toHaveAttribute("aria-checked", "mixed");
-  await expect(page.getByText("Ch. 108 : Conflit simulé pour ce test.", { exact: true })).toBeVisible();
+  await expect(blockedRoom.getByRole("button", { name: "Vérifier la modification", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Voir tous les envois (1)", exact: true }).click();
+  const pending = page.getByRole("dialog", { name: "Envois de cet appareil · 1", exact: true });
+  await expect(pending).toContainText("Occupation · Ch. 108");
+  await expect(pending).toContainText("Conflit simulé pour ce test.");
+  await pending.getByRole("button", { name: "Fermer", exact: true }).click();
   await expect(page.getByRole("button", { name: "Toutes : 84", exact: true })).toBeVisible();
   expect((await state(page)).workEvents?.filter(event => event.kind === "roomAvailability" && event.room === "108") || []).toEqual([]);
 
   // The E2E server is shared across tests; restore eligibility for later flows.
+  const previous = (await state(page)).workEvents!.find(event => event.kind === "roomAvailability" && event.room === "107")!;
   expect((await page.request.post("/api/entries", { headers: { "X-Entry-Schema": "2" }, data: {
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "roomAvailability", targetId: "107", room: "107",
-    expectedRevision: 1, date: today(), actor: "Test occupation", notes: "", free: false, occurredAt: new Date().toISOString(),
+    expectedRevision: 1, expectedPreviousEventId: previous.id, date: today(), actor: "Test occupation", notes: "", free: false, occurredAt: new Date().toISOString(),
   } })).ok()).toBeTruthy();
 });

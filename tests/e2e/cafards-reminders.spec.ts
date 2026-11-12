@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { workEntrySchema, type WorkEntry, type WorkEvent } from "../../lib/rooms";
+import { validateWorkEntry, validateWorkPredecessor } from "../../lib/work";
+import { workReceipt as receipt } from "./helpers/receipts";
 
 // Deliberately use another device timezone: follow-ups belong to the hotel's
 // calendar day in Paris, including while a page remains open over midnight.
@@ -13,37 +14,35 @@ async function login(page: Page) {
 function followup(room: string, status: WorkEntry["cafardStatus"], treatedOn: string | null): WorkEvent {
   const entry = workEntrySchema.parse({
     type: "createWorkEvent", id: crypto.randomUUID(), kind: "cafardFollowup", targetId: room, room,
-    expectedRevision: 0, date: "2025-06-04", actor: "Agent fictif", notes: "Suivi de démonstration.",
+    expectedRevision: 0, expectedPreviousEventId: null, date: "2025-06-04", actor: "Agent fictif", notes: "Suivi de démonstration.",
     occurredAt: "2025-06-04T09:00:00.000Z", cafardStatus: status, detectedOn: "2025-05-15",
     treatedOn, resolvedOn: status === "resolu" ? "2025-06-04" : null, product: treatedOn ? "Produit fictif" : "",
   });
   return receipt(entry);
 }
 
-function receipt(entry: WorkEntry): WorkEvent {
-  return { ...entry, version: 1, updatedAt: entry.occurredAt,
-    submissionHash: createHash("sha256").update(JSON.stringify(entry)).digest("hex") };
-}
-
 async function mockFollowups(page: Page, initial: WorkEvent[]) {
   const workEvents = [...initial];
   const submitted: WorkEntry[] = [];
-  let reads = 0;
+  let reads = 0, freshReads = 0;
   await page.route("**/api/hotel*", async route => {
     if (route.request().method() !== "GET") return route.continue();
     reads++;
+    if (new URL(route.request().url()).searchParams.get("fresh") === "1") freshReads++;
     await route.fulfill({ json: { mode: "local", issues: [], inspections: [], roomInspections: [], familyEvents: [], workEvents } });
   });
   await page.route("**/api/entries", async route => {
     if (route.request().method() !== "POST") return route.continue();
     const entry = workEntrySchema.parse(route.request().postDataJSON());
     expect(entry.kind).toBe("cafardFollowup");
+    const error = validateWorkPredecessor(entry, workEvents, true) || validateWorkEntry(entry, workEvents, []);
+    if (error) return route.fulfill({ status: 409, json: { error } });
     const record = receipt(entry);
     submitted.push(entry);
     workEvents.push(record);
     await route.fulfill({ json: { collection: "workEvents", record } });
   });
-  return { submitted, reads: () => reads };
+  return { submitted, reads: () => reads, freshReads: () => freshReads };
 }
 
 test("staff can filter every cafards state and act on seven-day treatment reminders", async ({ page }) => {
@@ -157,11 +156,15 @@ test("a treatment reminder becomes due at Paris midnight without reloading the p
   await page.clock.pauseAt(new Date("2025-06-07T21:59:30.000Z")); // 23:59 in Paris.
   await expect(card.getByText("Vérification à faire", { exact: true })).toHaveCount(0);
   const readsBeforeMidnight = api.reads();
+  const freshReadsBeforeMidnight = api.freshReads();
   await page.clock.runFor(60_000); // 00:00:30 on 8 June in Paris; still 7 June on this device.
   await expect(card.getByText("Vérification à faire", { exact: true })).toBeVisible();
   await expect(page.getByText("1 chambre à vérifier après traitement", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => new Date().getDate())).toBe(7);
-  expect(api.reads()).toBe(readsBeforeMidnight);
+  // Regular cached polling may read twice in this minute. The local day change
+  // must not add a forced refresh or a write just to update the reminder.
+  expect(api.reads() - readsBeforeMidnight).toBeLessThanOrEqual(2);
+  expect(api.freshReads()).toBe(freshReadsBeforeMidnight);
   expect(api.submitted).toHaveLength(0);
   await page.clock.resume();
 });

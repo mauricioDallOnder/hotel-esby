@@ -12,7 +12,7 @@ import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 export default function FamiliesPage() {
   const { familyEvents = [] } = useAppContext();
-  const { pending, enqueue, removeAbsence } = useEntries();
+  const { pending, enqueue, removeAbsence, ready, reviewPending } = useEntries();
   const draft = useDeviceDraft<FamilyEntry>("draft:family", () => ({ type: "createFamilyEvent", id: createId(), date: today(), room: "", family: "", actor: "", notes: "", kind: "absence", returnDate: "" }));
   const [deleting, setDeleting] = useState<FamilyEntry | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -28,7 +28,7 @@ export default function FamiliesPage() {
   const visibleRecords = records.filter(e => `${e.room} ${e.family}`.toLowerCase().includes(filter.toLowerCase()));
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!value) return;
+    if (!value || !ready) return;
     setError(""); setMessage(""); setBusy(true);
     const parsed = familyEntrySchema.safeParse(value);
     if (!parsed.success) { setError(parsed.error.issues.map(i => i.message).join(" ")); setBusy(false); return; }
@@ -48,7 +48,8 @@ export default function FamiliesPage() {
   }
   return <>
     <ConnectionBar />
-    <PageTitle title="Absences et départs" description="Signalez les absences temporaires et les départs définitifs des familles." />
+    <PageTitle title="Absences et départs" description="Signalez les absences temporaires et les départs définitifs des familles."
+      action={<Button component="a" href="#family-history">Consulter l’historique</Button>} />
     <Stack spacing={3}>
       <Paper component="form" onSubmit={submit} variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
         <Stack spacing={2}>
@@ -56,7 +57,8 @@ export default function FamiliesPage() {
           {error && <Alert severity="error">{error}</Alert>}
           {draft.error && <Alert severity="error">{draft.error}</Alert>}
           {message && <Alert severity="success">{message}</Alert>}
-          {value && <Box component="fieldset" disabled={busy} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}><Stack spacing={2}>
+          {!value && <Typography role="status">Chargement du brouillon…</Typography>}
+          {value && <Box component="fieldset" disabled={busy || !ready} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}><Stack spacing={2}>
             <RoomSelect value={value.room} onChange={room => draft.update({ ...value, room })} />
             <TextField label="Famille" required value={value.family} onChange={e => draft.update({ ...value, family: e.target.value })} slotProps={{ htmlInput: { maxLength: 200 } }} />
             <TextField select label="Événement" value={value.kind} onChange={e => draft.update({ ...value, kind: e.target.value as FamilyEntry["kind"], returnDate: "" })}>
@@ -67,24 +69,29 @@ export default function FamiliesPage() {
             <TextField label="Signalé par" required value={value.actor} onChange={e => draft.update({ ...value, actor: e.target.value })} slotProps={{ htmlInput: { maxLength: 200 } }} />
             <TextField label="Observations" multiline minRows={3} value={value.notes} onChange={e => draft.update({ ...value, notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} />
             <Typography variant="caption" color="text.secondary">{draft.saving ? "Sauvegarde du brouillon…" : "Brouillon conservé sur cet appareil pendant la saisie."}</Typography>
-            <Button type="submit" variant="contained" disabled={busy}>Enregistrer l’événement</Button>
+            <Button type="submit" variant="contained" disabled={busy || !ready}>Enregistrer l’événement</Button>
           </Stack></Box>}
         </Stack>
       </Paper>
-      <Typography variant="h6">Historique · {records.length} événement(s)</Typography>
+      <Typography id="family-history" component="h2" variant="h6" sx={{ scrollMarginTop: "88px" }}>Historique · {records.length} événement(s)</Typography>
       <TextField label="Rechercher une chambre ou une famille" value={filter} onChange={e => { setFilter(e.target.value); setLimit(30); }} />
-      {visibleRecords.slice(0, limit).map(record => <Paper key={record.id} variant="outlined" sx={{ p: 2 }}>
+      {visibleRecords.slice(0, limit).map(record => {
+        const request = pending.find(item => item.entry.id === record.id);
+        return <Paper key={record.id} variant="outlined" sx={{ p: 2 }}>
         <Stack spacing={1}>
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}><Chip label={record.kind === "absence" ? "Absence" : "Départ"} color={record.kind === "absence" ? "warning" : "default"} /><Chip variant="outlined" label={queued.some(e => e.id === record.id) ? "En attente d’envoi" : "Enregistré sur le serveur"} /></Stack>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}><Chip label={record.kind === "absence" ? "Absence" : "Départ"} color={record.kind === "absence" ? "warning" : "default"} /><Chip variant="outlined" color={request?.blocked ? "error" : request ? "warning" : "default"} label={request?.blocked ? "À vérifier · envoi suspendu" : request ? "En attente d’envoi" : "Enregistré sur le serveur"} /></Stack>
           <Typography variant="h6">Ch. {record.room} · {record.family}</Typography>
           <Typography>{displayDate(record.date)}{record.returnDate ? ` · Retour prévu : ${displayDate(record.returnDate)}` : ""}</Typography>
           <Typography variant="body2" color="text.secondary">Signalé par {record.actor}</Typography>
-          {record.kind === "absence" && <Button color="error" onClick={() => { setDeleteError(""); setDeleting(record); }}>Supprimer</Button>}
+          {request?.blocked && <Alert severity="warning" action={<Button color="inherit" onClick={() => reviewPending(record.id)}>Vérifier l’envoi</Button>}>{request.error || "Cet événement doit être vérifié avant de continuer."}</Alert>}
+          {record.kind === "absence" && <Button color="error" disabled={!!request?.blocked} onClick={() => { setDeleteError(""); setDeleting(record); }}>Supprimer</Button>}
           <FamilyComments family={record} />
         </Stack>
-      </Paper>)}
+      </Paper>;
+      })}
       {visibleRecords.length > limit && <Button onClick={() => setLimit(n => n + 30)}>Afficher plus</Button>}
       {!records.length && <Typography color="text.secondary">Aucun événement enregistré.</Typography>}
+      {!!records.length && !visibleRecords.length && <Alert severity="info" action={<Button color="inherit" onClick={() => { setFilter(""); setLimit(30); }}>Effacer la recherche</Button>}>Aucun événement ne correspond à cette recherche.</Alert>}
     </Stack>
     <Dialog open={!!deleting} onClose={deleteBusy ? undefined : () => setDeleting(null)} fullWidth maxWidth="xs">
       <DialogTitle>Supprimer cette absence ?</DialogTitle>

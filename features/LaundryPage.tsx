@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, InputAdornment, LinearProgress, Paper, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
 import LocalLaundryServiceOutlined from "@mui/icons-material/LocalLaundryServiceOutlined";
 import DryCleaningOutlined from "@mui/icons-material/DryCleaningOutlined";
@@ -9,7 +9,7 @@ import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { LaundryCycleDialog, type LaundryAction } from "@/components/LaundryCycleDialog";
 import { LaundryNotificationSettings } from "@/components/LaundryNotificationSettings";
 import { useEntries } from "@/context/EntriesContext";
-import { laundryCycles, laundryMachineStates, laundryPhase } from "@/lib/laundry";
+import { laundryMachineStates, laundryPhase, laundryStatesAt, nextLaundryPhaseAt, projectLaundry, type LaundryMachineSnapshot } from "@/lib/laundry";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 
 type MachineState = ReturnType<typeof laundryMachineStates>[number];
@@ -23,29 +23,35 @@ function phaseLabel(phase: keyof typeof phaseLabels, kind?: "washer" | "dryer") 
   return phaseLabels[phase];
 }
 
-function dateTime(value: string) {
-  return new Date(value).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" });
-}
-function clockTime(value: string) {
-  return new Date(value).toLocaleTimeString("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
-}
-function dateOnly(value: string) {
-  return new Date(value).toLocaleDateString("fr-CA", { timeZone: "Europe/Paris" });
-}
+const dateTimeFormat = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" });
+const clockTimeFormat = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
+const dateOnlyFormat = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" });
+const dateTime = (value: string) => dateTimeFormat.format(new Date(value));
+const clockTime = (value: string) => clockTimeFormat.format(new Date(value));
+const dateOnly = (value: string) => dateOnlyFormat.format(new Date(value));
 function countdown(milliseconds: number) {
   const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
-function useClock() {
+function useClock(machines: readonly LaundryMachineSnapshot[], live: boolean) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const update = () => setNow(Date.now());
-    const timer = window.setInterval(update, 1000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const update = () => {
+      clearTimeout(timer);
+      const at = Date.now();
+      setNow(at);
+      if (document.visibilityState !== "visible") return;
+      const countdownActive = live && machines.some(({ cycle }) => cycle && Date.parse(cycle.endsAt) > at);
+      const next = countdownActive ? at + 1000 : nextLaundryPhaseAt(machines, at);
+      if (next !== null) timer = setTimeout(update, Math.max(1, next - at));
+    };
+    const initial = setTimeout(update, 0);
     window.addEventListener("focus", update);
     document.addEventListener("visibilitychange", update);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", update); document.removeEventListener("visibilitychange", update); };
-  }, []);
+    return () => { clearTimeout(initial); clearTimeout(timer); window.removeEventListener("focus", update); document.removeEventListener("visibilitychange", update); };
+  }, [machines, live]);
   return now;
 }
 
@@ -110,26 +116,28 @@ export default function LaundryPage() {
   const { ready, reviewLaundry } = useEntries();
   const blockedMachines = new Map(queued.filter(item => item.blocked && item.entry.type === "createWorkEvent" && item.entry.kind === "laundryCycle")
     .map(item => [item.entry.type === "createWorkEvent" ? item.entry.targetId : "", item.entry.id]));
-  const now = useClock();
-  const states = laundryMachineStates(events, now);
-  const cycles = laundryCycles(events);
   const [tab, setTab] = useState(0);
+  const projection = useMemo(() => projectLaundry(events), [events]);
+  const now = useClock(projection.machines, tab === 0);
+  const states = laundryStatesAt(projection.machines, now);
+  const cycles = projection.cycles;
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<keyof typeof statusFilters>("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [limit, setLimit] = useState(30);
   const [saved, setSaved] = useState("");
   const [dialog, setDialog] = useState<{ action: LaundryAction; state: MachineState } | null>(null);
   const activeCount = states.filter(state => ["running", "soon"].includes(state.phase)).length;
   const awaitingCount = states.filter(state => state.phase === "ready").length;
   const availableCount = states.filter(state => state.phase === "available").length;
   const text = search.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr");
-  const visibleHistory = cycles.filter(cycle => {
-    const machine = states.find(state => state.machine.id === cycle.machineId)?.machine;
+  const visibleHistory = useMemo(() => cycles.filter(cycle => {
+    const machine = projection.machines.find(state => state.machine.id === cycle.machineId)?.machine;
     const haystack = `${cycle.room} ${cycle.owner} ${cycle.actor} ${cycle.collectedBy} ${machine?.label} ${cycle.notes}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr");
     return (!text || haystack.includes(text)) && (!from || dateOnly(cycle.startedAt) >= from) && (!to || dateOnly(cycle.startedAt) <= to) &&
       (filter === "all" || filter === "active" && cycle.status === "en_cours" || filter === "collected" && cycle.status === "recupere" || filter === "cancelled" && cycle.status === "annule");
-  });
+  }), [cycles, projection.machines, text, from, to, filter]);
   const currentDialog = dialog && states.find(state => state.machine.id === dialog.state.machine.id);
   const unchanged = !!currentDialog && !!dialog && currentDialog.revision === dialog.state.revision &&
     !blockedMachines.has(dialog.state.machine.id) &&
@@ -164,20 +172,20 @@ export default function LaundryPage() {
         </Stack>
       </Box> : <Box role="tabpanel" id="laundry-history-panel" aria-labelledby="laundry-history-tab">
         <Stack spacing={2}>
-          <TextField type="search" label="Rechercher du linge" placeholder="Chambre, nom, machine…" value={search} onChange={event => setSearch(event.target.value)}
+          <TextField type="search" label="Rechercher du linge" placeholder="Chambre, nom, machine…" value={search} onChange={event => { setSearch(event.target.value); setLimit(30); }}
             slotProps={{ input: { startAdornment: <InputAdornment position="start"><Search /></InputAdornment> } }} />
-          <TextField select label="État du cycle" value={filter} onChange={event => setFilter(event.target.value as keyof typeof statusFilters)} slotProps={{ select: { native: true } }}>
+          <TextField select label="État du cycle" value={filter} onChange={event => { setFilter(event.target.value as keyof typeof statusFilters); setLimit(30); }} slotProps={{ select: { native: true } }}>
             {Object.entries(statusFilters).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </TextField>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-            <TextField type="date" label="Démarré à partir du" value={from} onChange={event => setFrom(event.target.value)} fullWidth slotProps={{ inputLabel: { shrink: true } }} />
-            <TextField type="date" label="Démarré jusqu’au" value={to} onChange={event => setTo(event.target.value)} fullWidth error={!!from && !!to && to < from} helperText={from && to && to < from ? "La date de fin doit suivre la date de début." : undefined} slotProps={{ inputLabel: { shrink: true } }} />
+            <TextField type="date" label="Démarré à partir du" value={from} onChange={event => { setFrom(event.target.value); setLimit(30); }} fullWidth slotProps={{ inputLabel: { shrink: true } }} />
+            <TextField type="date" label="Démarré jusqu’au" value={to} onChange={event => { setTo(event.target.value); setLimit(30); }} fullWidth error={!!from && !!to && to < from} helperText={from && to && to < from ? "La date de fin doit suivre la date de début." : undefined} slotProps={{ inputLabel: { shrink: true } }} />
           </Stack>
           <Stack direction="row" sx={{ justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-            <Typography variant="caption" color="text.secondary" role="status">{visibleHistory.length} cycle(s) · Les plus récents en premier</Typography>
-            <Button disabled={!search && filter === "all" && !from && !to} onClick={() => { setSearch(""); setFilter("all"); setFrom(""); setTo(""); }}>Réinitialiser les filtres</Button>
+            <Typography variant="caption" color="text.secondary" role="status">{Math.min(limit, visibleHistory.length)} sur {visibleHistory.length} cycle(s) · Les plus récents en premier</Typography>
+            <Button disabled={!search && filter === "all" && !from && !to} onClick={() => { setSearch(""); setFilter("all"); setFrom(""); setTo(""); setLimit(30); }}>Réinitialiser les filtres</Button>
           </Stack>
-          {!visibleHistory.length ? <Alert severity="info">{cycles.length ? "Aucun cycle ne correspond à ces filtres." : "Les cycles et les récupérations du linge apparaîtront ici."}</Alert> : visibleHistory.map(cycle => {
+          {!visibleHistory.length ? <Alert severity="info">{cycles.length ? "Aucun cycle ne correspond à ces filtres." : "Les cycles et les récupérations du linge apparaîtront ici."}</Alert> : visibleHistory.slice(0, limit).map(cycle => {
             const machine = states.find(state => state.machine.id === cycle.machineId)?.machine;
             const phase = laundryPhase(cycle, now);
             return <Paper component="article" aria-label={`${machine?.label} · chambre ${cycle.room} · ${dateTime(cycle.startedAt)}`} key={cycle.cycleId} variant="outlined" sx={{ p: 2.5, minWidth: 0 }}>
@@ -202,11 +210,12 @@ export default function LaundryPage() {
               </Stack>
             </Paper>;
           })}
+          {visibleHistory.length > limit && <Button onClick={() => setLimit(value => value + 30)}>Afficher 30 cycles de plus</Button>}
         </Stack>
       </Box>}
     </Stack>
     {dialog && <LaundryCycleDialog key={`${dialog.state.machine.id}:${dialog.action}:${dialog.state.revision}`} action={dialog.action} machine={dialog.state.machine} cycle={dialog.state.cycle}
-      revision={dialog.state.revision} unchanged={unchanged} onClose={() => setDialog(null)} onSaved={room => {
+      revision={dialog.state.revision} previousEventId={dialog.state.lastEventId || null} unchanged={unchanged} onClose={() => setDialog(null)} onSaved={room => {
         const result = dialog.action === "start" ? "Suivi démarré" : dialog.action === "extend" ? "Temps ajouté" : dialog.action === "collect"
           ? dialog.state.machine.kind === "washer" ? "Lavage terminé · prêt à sécher" : "Récupération conservée" : "Annulation conservée";
         setSaved(`${result} · chambre ${room} · ${dialog.state.machine.label}.`);

@@ -46,6 +46,16 @@ test("a blank checklist fits one portrait A4 page and includes every room inspec
   assert.doesNotMatch(text, /Enregistré sur le serveur/);
 });
 
+test("printed results retain the selected problem type and precise fitting even without general notes", () => {
+  const record = saved({ checks: roomChecks.map(check => ({ key: check.key, result: check.key === "damage" ? "probleme" : "ok" })),
+    problemDetails: [{ key: "damage", problemType: "electrical_socket", description: "Prise du mur nord près de la commode." }], notes: "" });
+  const doc = buildRoomChecklist({ hotelName: "Test", date, mode: "latest", selectedRooms: [record.room], history: [record] });
+  const text = pageText(doc).join(" ");
+  assert.match(text, /Prise électrique cassée ou mal fixée/);
+  assert.match(text, /Prise du mur nord près de la commode/);
+  assert.doesNotMatch(text, /Aucune observation saisie/);
+});
+
 test("latest checklists deduplicate selected rooms and choose by inspection date and time up to the export date", () => {
   const history = [
     saved({ notes: "OLDER_DATE", date: "2026-10-19", inspectedAt: "2026-10-21T18:00:00Z" }),

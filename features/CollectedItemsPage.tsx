@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, Collapse, InputAdornment, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import Inventory2Outlined from "@mui/icons-material/Inventory2Outlined";
@@ -83,9 +83,10 @@ function ItemCard({ record, pending, ready, onAction }: {
 export default function CollectedItemsPage() {
   const { events, isPending } = useWorkEvents();
   const { ready } = useEntries();
-  const records = collectedItems(events);
+  const records = useMemo(() => collectedItems(events), [events]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("stored");
+  const [limit, setLimit] = useState(30);
   const [dialog, setDialog] = useState<{ action: CollectedItemAction; record?: CollectedItemRecord } | null>(null);
   const [saved, setSaved] = useState<{ message: string; returned: boolean } | null>(null);
   const scoped = filterCollectedItems(records, search);
@@ -102,18 +103,18 @@ export default function CollectedItemsPage() {
     <Stack spacing={3}>
       {saved && <Alert severity="success" onClose={() => setSaved(null)} closeText="Masquer ce message">
         {saved.message}
-        {saved.returned && filter !== "returned" && <Button size="small" onClick={() => { setFilter("returned"); setSearch(""); }} sx={{ display: "block", mt: 0.5, minHeight: 44 }}>Voir les objets restitués</Button>}
+        {saved.returned && filter !== "returned" && <Button size="small" onClick={() => { setFilter("returned"); setSearch(""); setLimit(30); }} sx={{ display: "block", mt: 0.5, minHeight: 44 }}>Voir les objets restitués</Button>}
       </Alert>}
       <Stack spacing={1.5}>
-        <TextField type="search" label="Rechercher un objet" placeholder="Chambre, objet, nom ou motif…" value={search} onChange={event => setSearch(event.target.value)}
+        <TextField type="search" label="Rechercher un objet" placeholder="Chambre, objet, nom ou motif…" value={search} onChange={event => { setSearch(event.target.value); setLimit(30); }}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><Search /></InputAdornment> } }} />
         <Box role="group" aria-label="Filtrer les objets récupérés" sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }}>
-          {(Object.keys(filters) as Filter[]).map(key => <Button key={key} variant={filter === key ? "contained" : "outlined"} onClick={() => setFilter(key)}
+          {(Object.keys(filters) as Filter[]).map(key => <Button key={key} variant={filter === key ? "contained" : "outlined"} onClick={() => { setFilter(key); setLimit(30); }}
             aria-label={filters[key] + " : " + counts[key]} aria-pressed={filter === key} sx={{ minHeight: 48, px: 1, gap: 0.75, flexWrap: "wrap", lineHeight: 1.35 }}>
             {filters[key]} <Box component="span" sx={{ fontWeight: 800 }}>{counts[key]}</Box>
           </Button>)}
         </Box>
-        <Typography variant="caption" color="text.secondary" role="status">{visible.length} objet{visible.length > 1 ? "s" : ""} affiché{visible.length > 1 ? "s" : ""} · Récupérations les plus récentes en premier.</Typography>
+        <Typography variant="caption" color="text.secondary" role="status">{Math.min(limit, visible.length)} sur {visible.length} objet{visible.length > 1 ? "s" : ""} affiché{visible.length > 1 ? "s" : ""} · Récupérations les plus récentes en premier.</Typography>
       </Stack>
       {!ready ? <Typography role="status">Chargement des objets enregistrés sur cet appareil…</Typography> : !visible.length ?
         <Paper variant="outlined" sx={{ py: 5, px: 3, textAlign: "center", borderStyle: "dashed" }}>
@@ -123,8 +124,9 @@ export default function CollectedItemsPage() {
           {search.trim() && <Button onClick={() => setSearch("")} sx={{ mt: 1, minHeight: 44 }}>Effacer la recherche</Button>}
         </Paper> :
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(3, minmax(0, 1fr))" }, alignItems: "start", gap: 2 }}>
-          {visible.map(record => <ItemCard key={record.id} record={record} pending={isPending(record.lastEventId)} ready={ready} onAction={action => setDialog({ action, record })} />)}
+          {visible.slice(0, limit).map(record => <ItemCard key={record.id} record={record} pending={isPending(record.lastEventId)} ready={ready} onAction={action => setDialog({ action, record })} />)}
         </Box>}
+      {visible.length > limit && <Button onClick={() => setLimit(value => value + 30)}>Afficher 30 objets de plus</Button>}
     </Stack>
     {dialog && <CollectedItemDialog key={dialog.action + ":" + (dialog.record?.id || "new") + ":" + (dialog.record?.revision || 0)} action={dialog.action} record={dialog.record}
       onClose={() => setDialog(null)} onSaved={result => {
@@ -134,7 +136,7 @@ export default function CollectedItemsPage() {
             dialog.action === "edit" ? `Fiche corrigée · ${roomLabel}. Les anciennes informations restent dans l’historique.` :
               `Objet conservé · ${roomLabel}. ${result.room ? "Pensez à mettre l’étiquette et à le ranger dans l’armoire." : "Vous pourrez renseigner le numéro plus tard avec « Corriger la fiche »."}`;
         setSaved({ message, returned: result.returned });
-        if (dialog.action === "create" || dialog.action === "restore") { setFilter("stored"); setSearch(""); }
+        if (dialog.action === "create" || dialog.action === "restore") { setFilter("stored"); setSearch(""); setLimit(30); }
         setDialog(null);
       }} />}
   </>;

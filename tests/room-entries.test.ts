@@ -208,17 +208,17 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(after.roomInspections.length, 1);
   assert.equal(JSON.stringify(tables.get("Anomalies")!.slice(0, 2)), old);
   // Work events share the durable receipt contract and enforce revisions under the script lock.
-  const work = { type: "createWorkEvent", id: createId(), targetId: createId(), kind: "dailyTask", expectedRevision: 0, date: today(), actor: "Marie", room: "", notes: "=clé", done: false, deleted: false, occurredAt: new Date().toISOString(), version: 1, submissionHash: "f".repeat(64), updatedAt: new Date().toISOString() };
-  const saveWork = (record: object) => call({ action: "commitWorkEvent", collection: "workEvents", expectedVersion: 0, record });
+  const work = { type: "createWorkEvent", id: createId(), targetId: createId(), kind: "dailyTask", expectedRevision: 0, expectedPreviousEventId: null, date: today(), actor: "Marie", room: "", notes: "=clé", done: false, deleted: false, occurredAt: new Date().toISOString(), version: 1, submissionHash: "f".repeat(64), updatedAt: new Date().toISOString() };
+  const saveWork = (record: object) => call({ action: "commitWorkEventV2", collection: "workEvents", expectedVersion: 0, record });
   const firstWork = saveWork(work);
   assert.equal(firstWork.ok, true, firstWork.error);
   assert.equal(tables.get("Suivi quotidien")?.[1][4], "'=clé");
-  const completedWork = { ...work, id: createId(), expectedRevision: 1, done: true };
+  const completedWork = { ...work, id: createId(), expectedRevision: 1, expectedPreviousEventId: work.id, done: true };
   assert.equal(saveWork(completedWork).ok, true);
   assert.equal(saveWork({ ...work, id: createId(), expectedRevision: 1 }).code, 409);
   assert.deepEqual(saveWork(work), firstWork);
   assert.equal(saveWork({ ...work, submissionHash: "e".repeat(64) }).code, 409);
-  const deletedWork = { ...completedWork, id: createId(), expectedRevision: 2, deleted: true };
+  const deletedWork = { ...completedWork, id: createId(), expectedRevision: 2, expectedPreviousEventId: completedWork.id, deleted: true };
   assert.equal(saveWork(deletedWork).ok, true);
   assert.equal(saveWork({ ...deletedWork, id: createId(), expectedRevision: 3, deleted: false }).code, 409);
   const familyComment = { ...work, id: createId(), targetId: departure.id, kind: "familyComment", room: departure.room, familyEventId: departure.id, done: undefined, deleted: undefined };

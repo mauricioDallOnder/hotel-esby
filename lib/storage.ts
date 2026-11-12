@@ -3,7 +3,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChange } from "./rooms";
 import { today } from "./domain";
-import { validateWorkEntry } from "./work";
+import { validateWorkEntry, validateWorkPredecessor } from "./work";
+import { commandOperation, hasCommandReceipt, isCommandReplay, stampCommandReceipt } from "./commandReceipt";
 import { prepareRoomIssue, validateRoomIssuePlan } from "./roomIssueMatching";
 import { ReadCache } from "./readCache";
 import {
@@ -14,6 +15,7 @@ import {
   type Command,
   type State,
   type Change,
+  type Issue,
 } from "./domain";
 
 const directory = () =>
@@ -112,9 +114,9 @@ export async function google<T>(payload: Record<string, unknown>, timeoutMs = 55
       );
     }
     
-    if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitWorkEvent", "commitCafardFollowupV2", "commitLaundryCycle", "commitLaundryCycleV2"].includes(String(payload.action)) && result.error === "Action invalide.")
-      throw new DomainError(["commitIssueV2", "commitIssueV3"].includes(String(payload.action))
-        ? "Mettez à jour et redéployez le fichier Google Apps Script avant d’enregistrer ce problème. Votre saisie reste dans ce formulaire : gardez-le ouvert pour réessayer."
+    if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitIssueV4", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitWorkEvent", "commitWorkEventV2", "commitCafardFollowupV2", "commitCafardFollowupV3", "commitLaundryCycle", "commitLaundryCycleV2", "commitLaundryCycleV3"].includes(String(payload.action)) && result.error === "Action invalide.")
+      throw new DomainError(["commitIssueV2", "commitIssueV3", "commitIssueV4"].includes(String(payload.action))
+        ? "Mettez à jour et redéployez le fichier Google Apps Script avant d’enregistrer ce problème. Votre demande est conservée sur cet appareil."
         : "Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser ces modifications. Elles restent conservées sur cet appareil.", 503);
     if (!result.ok)
       // A Google token failure is a server configuration error, not an expired hotel session.
@@ -134,33 +136,49 @@ export async function readState({ fresh = false } = {}): Promise<State> {
 }
 
 export async function execute(command: Command): Promise<State> {
+  const operation = commandOperation(command);
   if (storageMode() === "sheets") {
     const state = await google<State & { maxIssuePhotos?: number }>({ action: "list" });
+    if (isCommandReplay(state, command, operation)) return state;
     const change = applyCommand(state, command);
+    stampCommandReceipt(change, operation);
     stateCache.clear();
     try {
       if (change.collection === "issues") {
         const { photosData, ...recordChange } = change;
         if ((photosData?.length || 0) > 1 && state.maxIssuePhotos !== MAX_ISSUE_PHOTOS)
           throw new DomainError("La connexion Google doit être mise à jour par la direction pour enregistrer plusieurs photos.", 503);
-        await google({
-          action: "commitIssueV3",
+        const receipt = await google<{ collection: "issues"; record: Issue }>({
+          action: "commitIssueV4",
           ...recordChange,
+          ...(operation ? { operation } : {}),
           ...(photosData?.length === 1 ? { photoData: photosData[0] } : { photosData }),
         });
+        if (receipt?.collection !== "issues" || receipt.record?.id !== change.record.id ||
+          !Number.isInteger(receipt.record.version) || receipt.record.version < change.record.version ||
+          (operation ? !hasCommandReceipt(receipt.record, operation) : receipt.record.version !== change.record.version))
+          throw new DomainError("La confirmation de l’enregistrement est incomplète. Réessayez la même demande pour vérifier son résultat.", 503);
+        change.record = receipt.record;
       } else {
-        await google({ action: "commit", ...change });
+        const receipt = await google<{ id: string; version: number }>({ action: "commit", ...change });
+        if (receipt?.id !== change.record.id || receipt.version !== change.record.version)
+          throw new DomainError("La confirmation de la ronde est incomplète. Actualisez son état avant de poursuivre.", 503);
       }
     } finally {
       stateCache.clear();
     }
-    return readState();
+    // The commit receipt is the success boundary. A later refresh must never
+    // turn an accepted save into an apparent failure or duplicate intervention.
+    replace(state, change);
+    return state;
   }
   
   // Synchronous read + replace keeps local writes serialized in one Node process.
   // Google uses optimistic versions plus a script lock for multiple instances.
   const state = localState();
+  if (isCommandReplay(state, command, operation)) return state;
   const change = applyCommand(state, command);
+  stampCommandReceipt(change, operation);
   mkdirSync(directory(), { recursive: true });
   
   if (change.collection === "issues" && change.photosData?.length) {
@@ -277,9 +295,11 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   
   if (storageMode() === "sheets") {
     try {
+      const protectedPredecessor = change.collection === "workEvents" && change.record.expectedPreviousEventId !== undefined;
       const action = change.collection === "roomInspections" ? "commitRoomInspectionV3"
-        : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? "commitLaundryCycleV2"
-          : change.record.kind === "cafardFollowup" ? "commitCafardFollowupV2" : "commitWorkEvent" : "commitEntry";
+        : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? protectedPredecessor ? "commitLaundryCycleV3" : "commitLaundryCycleV2"
+          : change.record.kind === "cafardFollowup" ? protectedPredecessor ? "commitCafardFollowupV3" : "commitCafardFollowupV2"
+            : protectedPredecessor ? "commitWorkEventV2" : "commitWorkEvent" : "commitEntry";
       const receipt = await google<EntryChange>({ action, ...change, expectedVersion: 0, photosData });
       if (receipt?.collection !== collection || receipt.record?.id !== entry.id || receipt.record?.submissionHash !== submissionHash)
         throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
@@ -300,7 +320,8 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   }
   
   if (entry.type === "createWorkEvent") {
-    const error = validateWorkEntry(entry, state.workEvents || [], state.familyEvents || [], state.deletedFamilyEventIds, state.roomInspections || []);
+    const error = validateWorkPredecessor(entry, state.workEvents || [], true) ||
+      validateWorkEntry(entry, state.workEvents || [], state.familyEvents || [], state.deletedFamilyEventIds, state.roomInspections || []);
     if (error) throw new DomainError(error, 409);
   }
   if (change.collection === "roomInspections") {

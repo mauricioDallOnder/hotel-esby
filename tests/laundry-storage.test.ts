@@ -11,12 +11,12 @@ import { executeEntry, readState } from "../lib/storage";
 
 const firstTime = "2026-10-01T09:00:00.000Z";
 const start = (patch: Partial<WorkEntry> = {}): WorkEntry => ({
-  type: "createWorkEvent", id: createId(), kind: "laundryCycle", targetId: "washer-1", expectedRevision: 0,
+  type: "createWorkEvent", id: createId(), kind: "laundryCycle", targetId: "washer-1", expectedRevision: 0, expectedPreviousEventId: null,
   room: "101", date: "2026-10-01", actor: "Agent fictif", notes: "Sac de démonstration.", occurredAt: firstTime,
   laundryCycleId: createId(), laundryStatus: "en_cours", laundryStartedAt: firstTime,
   laundryCollectedAt: null, laundryCollectedBy: "", laundryOwner: "Exemple", ...patch,
 });
-const collect = (entry: WorkEntry): WorkEntry => ({ ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1,
+const collect = (entry: WorkEntry): WorkEntry => ({ ...entry, id: createId(), expectedRevision: entry.expectedRevision + 1, expectedPreviousEventId: entry.id,
   actor: "Agent retrait", laundryStatus: "recupere", occurredAt: "2026-10-01T09:45:00.000Z",
   laundryCollectedAt: "2026-10-01T09:45:00.000Z", laundryCollectedBy: "Agent retrait" });
 
@@ -46,11 +46,11 @@ test("local laundry keeps custody history, separates identically numbered applia
   await executeEntry(dryerThree);
   assert.deepEqual(await executeEntry(first), receipt);
   await assert.rejects(executeEntry(start()), { code: 409 });
-  await assert.rejects(executeEntry(start({ expectedRevision: 1 })), { code: 409 });
+  await assert.rejects(executeEntry(start({ expectedRevision: 1, expectedPreviousEventId: first.id })), { code: 409 });
   await assert.rejects(executeEntry({ ...first, notes: "Même identifiant, autre contenu." }), { code: 409 });
   const removed = collect(first), removalReceipt = await executeEntry(removed);
   assert.deepEqual(await executeEntry(removed), removalReceipt);
-  const next = start({ expectedRevision: 2, room: "102", laundryStartedAt: "2026-10-01T10:00:00.000Z", occurredAt: "2026-10-01T10:00:00.000Z" });
+  const next = start({ expectedRevision: 2, expectedPreviousEventId: removed.id, room: "102", laundryStartedAt: "2026-10-01T10:00:00.000Z", occurredAt: "2026-10-01T10:00:00.000Z" });
   await executeEntry(next);
   assert.deepEqual(await executeEntry(first), receipt, "An old start replay must not occupy the machine again");
   await assert.rejects(executeEntry({ ...collect(first), expectedRevision: 3 }), { code: 409 });
@@ -98,14 +98,14 @@ test("Google laundry uses the protected transaction and applies the same machine
   });
   const first = start(), receipt = await executeEntry(first);
   assert.deepEqual(await executeEntry(first), receipt);
-  await assert.rejects(executeEntry(start({ expectedRevision: 1 })), { code: 409 });
+  await assert.rejects(executeEntry(start({ expectedRevision: 1, expectedPreviousEventId: first.id })), { code: 409 });
   const removed = collect(first), removalReceipt = await executeEntry(removed);
   assert.deepEqual(await executeEntry(removed), removalReceipt);
-  await executeEntry(start({ expectedRevision: 2, room: "102", laundryStartedAt: "2026-10-01T10:00:00.000Z", occurredAt: "2026-10-01T10:00:00.000Z" }));
+  await executeEntry(start({ expectedRevision: 2, expectedPreviousEventId: removed.id, room: "102", laundryStartedAt: "2026-10-01T10:00:00.000Z", occurredAt: "2026-10-01T10:00:00.000Z" }));
   assert.deepEqual(await executeEntry(first), receipt);
   assert.equal(google.records().length, 3);
   assert.equal(laundryMachineStates(google.records())[0].cycle?.room, "102");
-  assert.ok(actions.every(action => action === "commitLaundryCycleV2"));
+  assert.ok(actions.every(action => action === "commitLaundryCycleV3"));
 });
 
 test("an old Apps Script deployment rejects laundry safely instead of accepting an unprotected booking", async t => {
@@ -116,7 +116,7 @@ test("an old Apps Script deployment rejects laundry safely instead of accepting 
     return Response.json({ ok: false, code: 400, error: "Action invalide." });
   });
   await assert.rejects(executeEntry(start()), { code: 503 });
-  assert.deepEqual(actions, ["commitLaundryCycleV2"]);
+  assert.deepEqual(actions, ["commitLaundryCycleV3"]);
 });
 
 test("future laundry actions are rejected before a local write or Google request", async t => {
@@ -142,18 +142,18 @@ test("new plans and overdue extensions persist once, preserve history and reject
       Response.json(google.call(JSON.parse(String(options?.body)))));
     const first = start({ laundryEndsAt: "2026-10-01T09:44:00.000Z" });
     await executeEntry(first);
-    const extended: WorkEntry = { ...first, id: createId(), expectedRevision: 1,
+    const extended: WorkEntry = { ...first, id: createId(), expectedRevision: 1, expectedPreviousEventId: first.id,
       occurredAt: "2026-10-01T09:50:00.000Z", laundryAddedMinutes: 5, laundryEndsAt: "2026-10-01T09:55:00.000Z" };
     const receipt = await executeEntry(extended);
     assert.deepEqual(await executeEntry(extended), receipt);
     await assert.rejects(executeEntry({ ...extended, id: createId() }), { code: 409 });
-    await assert.rejects(executeEntry({ ...extended, id: createId(), expectedRevision: 2,
+    await assert.rejects(executeEntry({ ...extended, id: createId(), expectedRevision: 2, expectedPreviousEventId: extended.id,
       occurredAt: "2026-10-01T09:51:00.000Z", laundryEndsAt: "2026-10-01T10:10:00.000Z" }), { code: 409 });
-    const removed: WorkEntry = { ...collect(first), expectedRevision: 2,
+    const removed: WorkEntry = { ...collect(first), expectedRevision: 2, expectedPreviousEventId: extended.id,
       occurredAt: "2026-10-01T09:56:00.000Z", laundryCollectedAt: "2026-10-01T09:56:00.000Z",
       laundryEndsAt: extended.laundryEndsAt };
     await executeEntry(removed);
-    await assert.rejects(executeEntry({ ...extended, id: createId(), expectedRevision: 3,
+    await assert.rejects(executeEntry({ ...extended, id: createId(), expectedRevision: 3, expectedPreviousEventId: removed.id,
       occurredAt: "2026-10-01T10:00:00.000Z", laundryEndsAt: "2026-10-01T10:05:00.000Z" }), { code: 409 });
     assert.deepEqual(await executeEntry(extended), receipt, "A delayed receipt cannot extend the cycle again after collection");
     const records = mode === "local" ? (await readState()).workEvents! : google.records();
@@ -177,6 +177,7 @@ test("the upgraded Apps Script accepts legacy clients but rejects new plans thro
   await executeEntry(start({ laundryEndsAt: "2026-10-01T09:44:00.000Z" }));
   assert.equal(google.call({ ...posted[0], action: "commitLaundryCycle" }).ok, false);
   const legacy = start({ targetId: "washer-2" });
+  delete legacy.expectedPreviousEventId;
   await executeEntry(legacy);
   const replay = google.call({ ...posted[1], action: "commitLaundryCycle" });
   assert.equal(replay.ok, true);

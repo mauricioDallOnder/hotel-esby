@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { today, type Issue } from "../../lib/domain";
 
 const sample = (patch: Partial<Issue> = {}): Issue => ({ id: crypto.randomUUID(), version: 1, title: "Éclairage défectueux", description: "Ampoule de la salle de bain", location: "Chambre 204", category: "Électricité", status: "ouvert", priority: "haute", date: "2026-10-01", createdAt: "2026-10-01T10:00:00Z", updatedAt: "2026-10-01T10:00:00Z", assignee: "", reportedBy: "Marie", photoId: null, photoIds: [], history: [{ at: "2026-10-01T10:00:00Z", actor: "Marie", note: "Anomalie signalée.", status: "ouvert", priority: "haute", assignee: "" }], ...patch });
@@ -124,11 +124,11 @@ test("employee creates an anomaly with only the reporter name and keeps the cons
   await page.getByRole("button", { name: "Signaler une anomalie", exact: true }).click();
   const creation = page.getByRole("dialog", { name: "Signaler une anomalie", exact: true });
   await expect(creation.getByLabel("Responsable de l’intervention")).toHaveCount(0);
-  await expect(creation.getByLabel("Signalé par")).toHaveCount(1);
-  await creation.getByLabel("Titre").fill(title);
-  await creation.getByLabel("Lieu précis").fill(location);
-  await creation.getByLabel("Description du problème").fill("Le robinet de la salle de bain fuit.");
-  await creation.getByLabel("Signalé par").fill(`  ${reporter}  `);
+  await expect(creation.getByLabel(/^Signalé par\s*\*?$/)).toHaveCount(1);
+  await creation.getByLabel(/^Titre\s*\*?$/).fill(title);
+  await creation.getByLabel(/^Lieu précis\s*\*?$/).fill(location);
+  await creation.getByLabel(/^Description du problème\s*\*?$/).fill("Le robinet de la salle de bain fuit.");
+  await creation.getByLabel(/^Signalé par\s*\*?$/).fill(`  ${reporter}  `);
   await creation.getByRole("button", { name: "Enregistrer l’anomalie", exact: true }).click();
   await expect(creation).toHaveCount(0);
 
@@ -148,10 +148,10 @@ test("employee creates an anomaly with only the reporter name and keeps the cons
   await card.getByRole("button", { name: "Consulter", exact: true }).click();
   const consultation = page.getByRole("dialog", { name: /Consulter l’anomalie/ });
   await expect(consultation.getByText(`Responsable : ${reporter}`, { exact: true })).toBeVisible();
-  await expect(consultation.getByLabel("Titre")).toBeDisabled();
-  await expect(consultation.getByLabel("Description du problème")).toBeDisabled();
+  await expect(consultation.getByLabel(/^Titre\s*\*?$/)).toBeDisabled();
+  await expect(consultation.getByLabel(/^Description du problème\s*\*?$/)).toBeDisabled();
   await expect(consultation.getByLabel("Responsable de l’intervention")).toHaveCount(0);
-  await expect(consultation.getByLabel("Intervention saisie par")).toHaveCount(0);
+  await expect(consultation.getByLabel(/^Intervention saisie par\s*\*?$/)).toHaveCount(0);
   await expect(consultation.getByRole("radiogroup", { name: "État de résolution" })).toHaveCount(0);
   await expect(consultation.getByRole("button", { name: "Enregistrer le suivi", exact: true })).toHaveCount(0);
   await expect(consultation.getByText("La direction gère les interventions et les changements d’état.", { exact: true })).toBeVisible();
@@ -165,17 +165,17 @@ test("direction records an intervention under its author while the original repo
   await page.getByLabel("Rechercher une anomalie").fill(title);
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /Suivi de l’anomalie/ });
-  await expect(dialog.getByLabel("Titre", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByLabel(/^Titre\s*\*?$/)).toHaveCount(0);
   await expect(dialog.getByText("Responsable : Marie", { exact: true })).toBeVisible();
   await dialog.getByRole("radiogroup", { name: "État de résolution" }).getByRole("radio", { name: "Résolu", exact: true }).click();
   await expect(dialog.getByLabel("Votre nom")).toHaveCount(0);
   await expect(dialog.getByLabel("Responsable de l’intervention")).toHaveCount(0);
-  await expect(dialog.getByLabel("Intervention saisie par")).toHaveValue("");
-  await dialog.getByLabel("Intervention saisie par").fill("Salima");
-  await dialog.getByLabel("Travaux effectués / résolution").fill("Store réparé et testé");
+  await expect(dialog.getByLabel(/^Intervention saisie par\s*\*?$/)).toHaveValue("");
+  await dialog.getByLabel(/^Intervention saisie par\s*\*?$/).fill("Salima");
+  await dialog.getByLabel(/^Travaux effectués \/ résolution\s*\*?$/).fill("Store réparé et testé");
   await dialog.getByRole("button", { name: "Annuler", exact: true }).click();
   await page.getByRole("dialog", { name: "Fermer sans enregistrer ?", exact: true }).getByRole("button", { name: "Continuer la saisie" }).click();
-  await expect(dialog.getByLabel("Travaux effectués / résolution")).toHaveValue("Store réparé et testé");
+  await expect(dialog.getByLabel(/^Travaux effectués \/ résolution\s*\*?$/)).toHaveValue("Store réparé et testé");
   await dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   const state = await (await page.request.get("/api/hotel")).json();
@@ -190,7 +190,7 @@ test("direction records an intervention under its author while the original repo
   await expect(page.getByRole("article").getByText("Store réparé et testé", { exact: true })).toBeVisible();
   await expect(page.getByRole("article").getByText("Responsable : Marie", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Ouvrir le suivi", exact: true }).click();
-  await expect(dialog.getByLabel("Intervention saisie par")).toHaveValue("");
+  await expect(dialog.getByLabel(/^Intervention saisie par\s*\*?$/)).toHaveValue("");
   await dialog.getByRole("button", { name: "Historique (2)", exact: true }).click();
   await expect(dialog.getByText("Store réparé et testé", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Salima · Résolu", { exact: true })).toBeVisible();

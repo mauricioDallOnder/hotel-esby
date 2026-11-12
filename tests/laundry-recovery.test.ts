@@ -14,13 +14,13 @@ const start = (patch: Partial<WorkEntry> = {}): WorkEntry => {
     laundryCycleId: createId(), laundryStatus: "en_cours", laundryStartedAt: "2026-11-10T09:00:00.000Z",
     laundryOwner: "Repère du linge", laundryCollectedAt: null, laundryCollectedBy: "", ...patch,
   };
-  return workEntrySchema.parse({ ...entry,
+  return workEntrySchema.parse({ ...entry, expectedPreviousEventId: entry.expectedRevision === 0 ? null : entry.expectedPreviousEventId,
     laundryEndsAt: new Date(Date.parse(entry.laundryStartedAt!) + getLaundryMachine(entry.targetId)!.durationMinutes * 60_000).toISOString(),
   });
 };
 const terminal = (first: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry => {
   const result: WorkEntry = {
-    ...first, id: createId(), expectedRevision: first.expectedRevision + 1,
+    ...first, id: createId(), expectedRevision: first.expectedRevision + 1, expectedPreviousEventId: first.id,
     laundryStatus: "recupere", occurredAt: "2026-11-10T09:45:00.000Z", laundryCollectedAt: "2026-11-10T09:45:00.000Z",
     laundryCollectedBy: first.actor, ...patch,
   };
@@ -28,7 +28,7 @@ const terminal = (first: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry =
   return workEntrySchema.parse(result);
 };
 const extend = (first: WorkEntry, patch: Partial<WorkEntry> = {}): WorkEntry => workEntrySchema.parse({
-  ...first, id: createId(), expectedRevision: first.expectedRevision + 1,
+  ...first, id: createId(), expectedRevision: first.expectedRevision + 1, expectedPreviousEventId: first.id,
   actor: "Belkacem", occurredAt: "2026-11-10T09:30:00.000Z", laundryAddedMinutes: 5,
   laundryEndsAt: new Date(Date.parse(getLaundryEndsAt(first)!) + 5 * 60_000).toISOString(), ...patch,
 });
