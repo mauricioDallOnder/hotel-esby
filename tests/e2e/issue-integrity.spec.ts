@@ -45,8 +45,8 @@ test("a partial repair keeps its resolved item and completing all findings is an
   await api.dialog.getByText("État global : En cours", { exact: true }).click();
   await expect(api.dialog.getByRole("radiogroup", { name: "État · Robinet du lavabo", exact: true }).getByRole("radio", { name: "Résolu", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(api.dialog.getByRole("radiogroup", { name: "État · Éclairage du chevet", exact: true }).getByRole("radio", { name: "À traiter", exact: true })).toHaveAttribute("aria-checked", "true");
-  await api.dialog.getByLabel("Intervention saisie par").fill("Direction test");
-  await api.dialog.getByLabel("Intervention ou modification effectuée").fill("Robinet réparé ; la lampe reste à remplacer.");
+  await api.dialog.getByLabel(/^Intervention saisie par\s*\*?$/).fill("Direction test");
+  await api.dialog.getByLabel(/^Intervention ou modification effectuée\s*\*?$/).fill("Robinet réparé ; la lampe reste à remplacer.");
   await api.dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(api.dialog).toHaveCount(0);
   expect(api.data.issues[0].status).toBe("en_cours");
@@ -57,8 +57,8 @@ test("a partial repair keeps its resolved item and completing all findings is an
   await api.dialog.getByRole("button", { name: "Marquer tous les problèmes résolus", exact: true }).click();
   await expect(api.dialog.getByText("État global : Résolu", { exact: true })).toBeVisible();
   await expect(api.dialog.getByRole("button", { name: "Marquer tous les problèmes résolus", exact: true })).toBeDisabled();
-  await api.dialog.getByLabel("Intervention saisie par").fill("Direction test");
-  await api.dialog.getByLabel("Travaux effectués / résolution").fill("Ampoule remplacée et fonctionnement vérifié.");
+  await api.dialog.getByLabel(/^Intervention saisie par\s*\*?$/).fill("Direction test");
+  await api.dialog.getByLabel(/^Travaux effectués \/ résolution\s*\*?$/).fill("Ampoule remplacée et fonctionnement vérifié.");
   await api.dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(api.dialog).toHaveCount(0);
   expect(api.data.issues[0].status).toBe("resolu");
@@ -75,8 +75,8 @@ test("one finding has one resolution control and saves the same state on the ite
   await expect(resolution).toBeVisible();
   await expect(api.dialog.getByRole("button", { name: "Marquer tous les problèmes résolus", exact: true })).toHaveCount(0);
   await resolution.getByRole("radio", { name: "Résolu", exact: true }).click();
-  await api.dialog.getByLabel("Intervention saisie par").fill("Direction test");
-  await api.dialog.getByLabel("Travaux effectués / résolution").fill("Robinet réparé et vérifié.");
+  await api.dialog.getByLabel(/^Intervention saisie par\s*\*?$/).fill("Direction test");
+  await api.dialog.getByLabel(/^Travaux effectués \/ résolution\s*\*?$/).fill("Robinet réparé et vérifié.");
   await api.dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(api.dialog).toHaveCount(0);
   expect(api.data.issues[0].status).toBe("resolu");
@@ -86,16 +86,16 @@ test("one finding has one resolution control and saves the same state on the ite
 test("an accepted intervention with a lost response retries the frozen request after reload exactly once", async ({ page }) => {
   const original = { ...issue(), roomFindings: undefined };
   const api = await fixture(page, original, true);
-  await api.dialog.getByLabel("Intervention saisie par").fill("Direction test");
-  await api.dialog.getByLabel("Intervention ou modification effectuée").fill("Vérification effectuée ; pièce commandée.");
+  await api.dialog.getByLabel(/^Intervention saisie par\s*\*?$/).fill("Direction test");
+  await api.dialog.getByLabel(/^Intervention ou modification effectuée\s*\*?$/).fill("Vérification effectuée ; pièce commandée.");
   await api.dialog.getByRole("button", { name: "Enregistrer le suivi", exact: true }).click();
   await expect(api.dialog.getByRole("button", { name: "Réessayer le même envoi", exact: true })).toBeEnabled();
-  await expect(api.dialog.getByLabel("Intervention ou modification effectuée")).toBeDisabled();
+  await expect(api.dialog.getByLabel(/^Intervention ou modification effectuée\s*\*?$/)).toBeDisabled();
   expect(api.writes()).toBe(1);
   expect(api.commands[0].type).toBe("updateIssue");
   await page.reload();
   await page.getByRole("button", { name: "Reprendre le brouillon", exact: true }).click();
-  await expect(api.dialog.getByLabel("Intervention ou modification effectuée")).toHaveValue("Vérification effectuée ; pièce commandée.");
+  await expect(api.dialog.getByLabel(/^Intervention ou modification effectuée\s*\*?$/)).toHaveValue("Vérification effectuée ; pièce commandée.");
   await api.dialog.getByRole("button", { name: "Réessayer le même envoi", exact: true }).click();
   await expect(api.dialog).toHaveCount(0);
   expect(api.commands).toHaveLength(2);

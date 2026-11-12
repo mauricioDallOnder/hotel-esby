@@ -7,8 +7,9 @@ export default defineConfig({
   testDir: "./tests/e2e",
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  maxFailures: process.env.CI ? 5 : undefined,
   globalTimeout: 20 * 60_000,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  reporter: process.env.CI ? [["list"], ["github"], ["html", { open: "never" }]] : "list",
   workers: 1,
   // Playwright's API cookie jar accepts production Secure cookies on localhost.
   use: { baseURL: "http://localhost:3127", browserName: "chromium", trace: "retain-on-failure", screenshot: "only-on-failure" },

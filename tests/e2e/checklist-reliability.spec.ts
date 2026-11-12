@@ -56,7 +56,7 @@ test("bulk OK includes smoke, minibar presence stays consistent and a new detect
   await choose("État de la moquette", "OK");
   await choose("Micro-ondes présent ?", "Non");
   await dialog.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
-  await dialog.getByLabel("Inspecteur", { exact: true }).fill("Test minibar absent");
+  await dialog.getByLabel(/^Inspecteur\s*\*?$/).fill("Test minibar absent");
   await dialog.getByLabel("Observations et problèmes constatés", { exact: true }).fill("Nouvelle observation fictive dans la même chambre.");
   await expect(dialog.getByText("Cafards détectés : constat ajouté au suivi existant de cette chambre. Aucun doublon.", { exact: true })).toBeVisible();
   const saved = page.waitForResponse(response => response.url().endsWith("/api/entries") && response.request().method() === "POST");

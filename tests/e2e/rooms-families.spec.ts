@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { roomChecks } from "../../lib/rooms";
 async function login(page: Page) { await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } }); }
 async function select(page: Page, label: string, option: string) {
-  await page.getByRole("combobox", { name: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?: ?\\*)?$") }).click();
+  await page.getByRole("combobox", { name: new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\*?$") }).click();
   await page.getByRole("option", { name: option, exact: true }).click();
 }
 test("mobile room checklist opens cleaning for free rooms, exports PDF and shares problems and photos with anomalies", async ({ page }) => {

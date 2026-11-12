@@ -92,7 +92,7 @@ test("a refused checklist reopens its full local contents and is atomically repl
   await expect(dialog.getByLabel("Observations et problèmes constatés", { exact: true })).toHaveValue(original.notes);
   await expect(dialog.getByRole("img", { name: /^Photo du contrôle/ })).toHaveCount(2);
   await dialog.getByRole("button", { name: /^Date :/ }).click();
-  await expect(dialog.getByLabel("Date du contrôle", { exact: true })).toHaveValue(original.date);
+  await expect(dialog.getByLabel(/^Date du contrôle(?:\s*\*)?$/)).toHaveValue(original.date);
   await dialog.getByRole("combobox", { name: /^Associer au problème existant/ }).click();
   await page.getByRole("option", { name: "Nouveau problème, aucune fiche sélectionnée", exact: true }).click();
   await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
