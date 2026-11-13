@@ -1,5 +1,31 @@
 # Hôtel Contrôle
 
+## Correction du brouillon de suivi des cafards — 13/11/2026
+
+Depois de um tratamento seguido por uma nova detecção no checklist, o formulário
+de cafards podia usar o identificador da inspeção como se fosse o da última
+atualização do acompanhamento. Isso provocava o aviso de rascunho antigo e
+bloqueava **Enregistrer le suivi**, mesmo após recarregar.
+
+O aplicativo agora distingue a última inspeção do último acompanhamento manual.
+É possível registrar **Cafards présents** após o controle, conservando o produto,
+as datas do tratamento e todo o histórico na mesma ficha do quarto.
+
+Para um rascunho já afetado, use **Recharger le suivi en conservant mes observations**.
+O botão consulta o estado atual do servidor e corrige essa referência, preservando
+a resposta escolhida, as datas e as observações. Se houver uma alteração real
+de outro colega ou uma nova detecção, o formulário recarrega o estado e as datas
+atuais e conserva as observações para a equipe conferir antes de salvar.
+Uma falha de conexão mantém o rascunho intacto para nova tentativa.
+
+Solicitações que já estão na fila não são reescritas nem substituídas pelo botão
+de rascunho; continuam disponíveis em **Voir tous les envois** para conferência.
+
+Esta correção é no aplicativo: integrar o PR e publicar a nova versão é suficiente.
+Não altera dados históricos, colunas ou abas e não exige nova publicação do Apps
+Script em relação à versão anterior do app. Rascunhos existentes são recuperados
+sem limpar os dados do navegador.
+
 ## Chambres encombrées e relatórios com fotos
 
 Em **Checklist des chambres → État et ménage**, a pergunta

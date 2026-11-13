@@ -1,31 +1,32 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField, Typography, useMediaQuery, useTheme } from "@mui/material";
-import { cafardCases, cafardStatusLabels, cafardTreatmentReminder, type CafardCase, type CafardStatus } from "@/lib/cafards";
+import { cafardCases, cafardStatusLabels, cafardTreatmentReminder, emptyCafardCase, type CafardCase, type CafardStatus } from "@/lib/cafards";
 import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
+import { hasCafardDraftIdentityMixup, reloadCafardDraft, type CafardDraft as Draft } from "@/lib/cafardDraft";
 import { useAppContext } from "@/context/AppContext";
 import { deviceStore } from "@/lib/deviceStore";
 import { createId, displayDate, today } from "@/lib/domain";
 import type { PendingEntry } from "@/lib/entryQueue";
 import { workEntrySchema, type WorkEntry } from "@/lib/rooms";
+import { roomObservations } from "@/lib/roomObservations";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 import { useRoomObservations } from "@/lib/useRoomObservations";
 import { validateWorkEntry } from "@/lib/work";
 
-type Draft = WorkEntry & { kind: "cafardFollowup"; cafardStatus: CafardStatus; detectedOn: string | null; treatedOn: string | null; resolvedOn: string | null; product: string };
 const statusColors = { a_verifier: "warning", signale: "error", traite: "primary", resolu: "success" } as const;
 
 export function CafardFollowupDialog({ record, onClose, onSaved }: { record: CafardCase; onClose: () => void; onSaved: (status: CafardStatus) => void }) {
   const { actor, enqueue, events } = useWorkEvents();
   const { history } = useRoomObservations();
-  const { issues } = useAppContext();
+  const { issues, readRecoveryState } = useAppContext();
   const theme = useTheme();
   const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const freshDraft = (): Draft => ({
     type: "createWorkEvent", id: createId(), kind: "cafardFollowup", targetId: record.room, room: record.room,
-    expectedRevision: record.revision, expectedPreviousEventId: record.revision ? record.lastEventId : null,
+    expectedRevision: record.revision, expectedPreviousEventId: record.lastFollowupEventId,
     date: today(), occurredAt: new Date().toISOString(), actor,
     cafardStatus: record.status, detectedOn: record.detectedOn, treatedOn: record.treatedOn,
     resolvedOn: record.resolvedOn, product: record.product, notes: "",
@@ -37,9 +38,13 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
   const value = draft.value;
   const stale = !!value && !events.some(event => event.id === value.id) &&
     (value.cafardObservationId === undefined || value.expectedPreviousEventId === undefined || !!validateWorkEntry(value, events, [], [], history));
+  const currentFollowup = useMemo(() => cafardCases(history, events, cafardSeedsFromIssues(issues)).find(item => item.room === record.room) || record,
+    [history, events, issues, record]);
+  const canKeepAnswers = !!value && hasCafardDraftIdentityMixup(value, currentFollowup);
   const reminder = value ? cafardTreatmentReminder({ status: value.cafardStatus, treatedOn: value.treatedOn }) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [recoveryNotice, setRecoveryNotice] = useState("");
   const [validationAttempted, setValidationAttempted] = useState(false);
   const saving = useRef(false);
   const content = useRef<HTMLDivElement>(null);
@@ -47,15 +52,38 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
   const problems = validation && !validation.success ? validation.error.issues : [];
   const fieldError = (field: string) => problems.find(problem => problem.path[0] === field)?.message;
   function update(patch: Partial<Draft>) { if (value) draft.update({ ...value, ...patch }); }
-  function useCurrentFollowup() {
-    if (!value || busy) return;
-    const current = cafardCases(history, events, cafardSeedsFromIssues(issues)).find(item => item.room === record.room) || record;
-    draft.update({ ...value, id: createId(), expectedRevision: current.revision, expectedPreviousEventId: current.revision ? current.lastEventId : null,
-      cafardObservationId: current.observationId ?? null,
-      date: today(), occurredAt: new Date().toISOString(), cafardStatus: current.status,
-      detectedOn: current.detectedOn, treatedOn: current.treatedOn, resolvedOn: current.resolvedOn, product: current.product });
+  async function reloadCurrentFollowup() {
+    if (!value || saving.current) return;
+    saving.current = true;
+    setBusy(true);
     setError("");
-    setValidationAttempted(false);
+    setRecoveryNotice("");
+    try {
+      // A queued request is immutable; correcting an unsent draft must never
+      // manufacture a second operation for a save whose outcome is uncertain.
+      if (await deviceStore<PendingEntry | undefined>("get", "queue:" + value.id))
+        throw new Error("Cette demande est déjà dans les envois en attente. Fermez cette fiche et utilisez « Voir tous les envois » pour la vérifier.");
+      const state = await readRecoveryState();
+      const pending = await deviceStore<PendingEntry[]>("all");
+      if (pending.some(item => item.entry.id === value.id) || state.workEvents?.some(event => event.id === value.id))
+        throw new Error("Cette demande a déjà été envoyée. Fermez cette fiche et vérifiez son enregistrement dans l’historique ou les envois en attente.");
+      const currentEvents = [...(state.workEvents || []), ...pending.filter(item => !item.blocked && item.entry.type === "createWorkEvent").map(item => item.entry as WorkEntry)];
+      const observations = roomObservations(state.roomInspections || [], pending, today()).history;
+      const current = cafardCases(observations, currentEvents, cafardSeedsFromIssues(state.issues)).find(item => item.room === record.room)
+        || (record.revision === 0 ? emptyCafardCase(record.room) : undefined);
+      if (!current) throw new Error("Ce suivi n’a pas pu être retrouvé. Vos observations sont conservées ; actualisez la liste avant de réessayer.");
+      const preserveAnswers = hasCafardDraftIdentityMixup(value, current);
+      draft.update(reloadCafardDraft(value, current, { id: createId(), date: today(), occurredAt: new Date().toISOString() }));
+      setValidationAttempted(false);
+      setRecoveryNotice(preserveAnswers
+        ? "Votre brouillon est à jour. Vos réponses, dates et observations ont été conservées."
+        : "Suivi actuel rechargé. Vos observations sont conservées. Vérifiez l’état et les dates avant d’enregistrer.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Le suivi actuel n’a pas pu être rechargé. Votre saisie est conservée.");
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
   }
   function changeStatus(status: CafardStatus) {
     if (!value || value.cafardStatus === status) return;
@@ -104,9 +132,12 @@ export function CafardFollowupDialog({ record, onClose, onSaved }: { record: Caf
           {error && <Alert severity="error">{error}</Alert>}
           {draft.error && <Alert severity="error">{draft.error}</Alert>}
           {stale && <Alert severity="warning">
-            Ce brouillon utilise une ancienne version du suivi. Rechargez l’état et les dates actuels avant de continuer. Vos observations seront conservées.
-            <Button color="inherit" disabled={busy} onClick={useCurrentFollowup} sx={{ display: "flex", mt: 1 }}>Recharger le suivi en conservant mes observations</Button>
+            {canKeepAnswers
+              ? "Ce brouillon doit être actualisé avant l’enregistrement. Votre choix, vos dates et vos observations seront conservés."
+              : "Ce brouillon utilise une ancienne version du suivi. Rechargez l’état et les dates actuels avant de continuer. Vos observations seront conservées."}
+            <Button color="inherit" disabled={busy} onClick={() => void reloadCurrentFollowup()} sx={{ display: "flex", mt: 1 }}>Recharger le suivi en conservant mes observations</Button>
           </Alert>}
+          {!stale && recoveryNotice && <Alert severity="success">{recoveryNotice}</Alert>}
           {!!problems.length && <Alert severity="error">Vérifiez les champs indiqués avant d’enregistrer.</Alert>}
           {!value ? <Typography>Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
             <Stack spacing={2.5}>

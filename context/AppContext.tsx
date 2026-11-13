@@ -40,6 +40,7 @@ type Context = Data & {
   clearSaveError: () => void;
   cachedAt: string;
   refresh: (fresh?: boolean) => Promise<void>;
+  readRecoveryState: () => Promise<State>;
   mutate: (command: Command) => Promise<Data>;
   logout: () => Promise<void>;
 };
@@ -365,6 +366,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         clearSaveError: () => setSaveError(""),
         cachedAt,
         refresh,
+        readRecoveryState,
         mutate,
         logout,
       }}
