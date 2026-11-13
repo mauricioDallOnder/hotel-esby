@@ -1,6 +1,6 @@
 import { today } from "./domain";
 import { rooms, type RoomEntry, type RoomInspection, type WorkEntry, type WorkEvent } from "./rooms";
-import { latestCafardObservationId } from "./work";
+import { latestCafardObservationId, latestWork } from "./work";
 
 export type CafardStatus = NonNullable<WorkEntry["cafardStatus"]>;
 export const cafardStatusLabels: Record<CafardStatus, string> = {
@@ -33,6 +33,9 @@ export type CafardCase = {
   history: CafardHistoryEvent[];
   // The next revision belongs only to explicit follow-ups, not to inspections.
   revision: number;
+  // A later room observation updates the display, but is never the predecessor
+  // of an explicit follow-up in the append-only work history.
+  lastFollowupEventId: string | null;
   lastEventId: string | null;
   // Guards a follow-up form against a new detection while that form is open.
   observationId?: string | null;
@@ -41,7 +44,7 @@ export type CafardCase = {
 export function emptyCafardCase(room: string): CafardCase {
   return {
     room, status: "a_verifier", detectedOn: null, treatedOn: null, updatedOn: null, resolvedOn: null,
-    product: "", notes: "", history: [], revision: 0, lastEventId: null, observationId: null,
+    product: "", notes: "", history: [], revision: 0, lastFollowupEventId: null, lastEventId: null, observationId: null,
   };
 }
 
@@ -72,7 +75,7 @@ export function cafardTreatmentReminder(
   return { dueOn, due: application.getTime() <= current.getTime() };
 }
 
-export type CafardSeed = Omit<CafardCase, "history" | "revision" | "lastEventId"> & {
+export type CafardSeed = Omit<CafardCase, "history" | "revision" | "lastFollowupEventId" | "lastEventId"> & {
   importedAt: string;
   sourceIssueIds: readonly string[];
   treatments: readonly { date: string; product: string; sourceIssueIds?: readonly string[] }[];
@@ -143,8 +146,10 @@ export function cafardCases(
   const positives = uniqueById(inspections).filter(record => rooms.includes(record.room) && record.bugs === "oui")
     .sort((a, b) => observationOrder(a.date, a.inspectedAt).localeCompare(observationOrder(b.date, b.inspectedAt)) || a.id.localeCompare(b.id));
   const followups = uniqueById(workEvents).filter(event => event.kind === "cafardFollowup" &&
-    event.targetId === event.room && rooms.includes(event.room) && event.cafardStatus !== undefined)
-    .sort((a, b) => a.expectedRevision - b.expectedRevision || a.id.localeCompare(b.id));
+    event.targetId === event.room && rooms.includes(event.room) && event.cafardStatus !== undefined);
+  // Use the same revision selection as the write validator, independently of
+  // how inspections or history rows are ordered for display.
+  const latestFollowups = latestWork(followups, "cafardFollowup");
   const initial = new Map(seeds.filter(seed => rooms.includes(seed.room)).map(seed => [seed.room, seed]));
   const positivesByRoom = new Map<string, Inspection[]>(), followupsByRoom = new Map<string, Work[]>();
   for (const observation of positives) {
@@ -159,14 +164,14 @@ export function cafardCases(
 
   return [...trackedRooms].sort().map(room => {
     const seed = initial.get(room), observations = positivesByRoom.get(room) || [];
-    const updates = followupsByRoom.get(room) || [], latest = updates.at(-1);
+    const updates = followupsByRoom.get(room) || [], latest = latestFollowups.get(room);
     const history = [...(seed ? seedHistory(seed) : []), ...observations.map(inspectionHistory), ...updates.map(followupHistory)]
       .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.at || "").localeCompare(a.at || "") || b.id.localeCompare(a.id));
     const record: CafardCase = {
       room, status: seed?.status || "a_verifier", detectedOn: seed?.detectedOn ?? null,
       treatedOn: seed?.treatedOn ?? null, updatedOn: seed?.updatedOn ?? null, resolvedOn: seed?.resolvedOn ?? null,
       product: seed?.product || "", notes: seed?.notes || "", history,
-      revision: latest ? latest.expectedRevision + 1 : 0, lastEventId: latest?.id || null,
+      revision: latest ? latest.expectedRevision + 1 : 0, lastFollowupEventId: latest?.id || null, lastEventId: latest?.id || null,
       observationId: latestCafardObservationId(observations, room),
     };
     // importedAt is an initialization checkpoint, not a fabricated business date.
