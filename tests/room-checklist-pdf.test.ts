@@ -7,7 +7,7 @@ import { roomChecks, type RoomEntry, type RoomInspection } from "../lib/rooms";
 
 const date = "2026-10-20";
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", schemaVersion: 5, id: createId(), room: "114", date,
+  type: "createRoomInspection", schemaVersion: 6, id: createId(), room: "114", date,
   inspectedAt: `${date}T10:00:00Z`, actor: "Marie", occupied: false,
   condition: "bon", cleaning: "faite", bugs: "non", carpet: "ok", carpetNotes: "",
   microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "propre",
@@ -42,6 +42,8 @@ test("a blank checklist fits one portrait A4 page and includes every room inspec
   assert.match(text, /Fiche vierge/);
   assert.match(text, /OK Problème Absent/);
   assert.match(text, /Chauffage \/ radiateur Libre Caché/);
+  assert.match(text, /État général Bon état À revoir Mauvais état Chambre encombrée d’affaires Non Oui/);
+  assert.equal((text.match(/Chambre encombrée d’affaires/g) || []).length, 1);
   assert.match(text, /Page 1 \/ 1/);
   assert.doesNotMatch(text, /Enregistré sur le serveur/);
 });
@@ -84,7 +86,7 @@ test("printed results distinguish missing records, absent equipment, unchecked o
   const legacy = saved({
     schemaVersion: undefined, occupied: null, cleaning: null, bugs: undefined, microwave: "non_verifie",
     microwaveCleaning: undefined, fridgeCleaning: undefined,
-    checks: roomChecks.filter(check => !["door_handle_clear", "door_closer", "radiator_clear"].includes(check.key)).map(check => ({
+    checks: roomChecks.filter(check => !["door_handle_clear", "door_closer", "radiator_clear", "room_clutter"].includes(check.key)).map(check => ({
       key: check.key, result: check.key === "taps" || check.key === "fridge" ? "non_verifie" : "ok",
     })),
   });
@@ -102,6 +104,7 @@ test("printed results distinguish missing records, absent equipment, unchecked o
   assert.match(roomText("114"), /Robinets fonctionnels Non vérifié/);
   assert.match(roomText("114"), /Ferme-porte \(fermeture automatique\) Non renseigné/);
   assert.match(roomText("114"), /Chauffage \/ radiateur Non renseigné/);
+  assert.match(roomText("114"), /Chambre encombrée d’affaires Non renseigné/);
   assert.match(roomText("114"), /Occupation au contrôle Non renseignée/);
   assert.match(roomText("114"), /Minibar \/ réfrigérateur Non vérifié/);
   assert.match(roomText("114"), /Enregistré sur le serveur/);
@@ -129,6 +132,19 @@ test("printed radiator answers distinguish Libre and Caché", () => {
   assert.match(pages[0], /Chauffage \/ radiateur Libre/);
   assert.match(pages[1], /Chauffage \/ radiateur Caché/);
   assert.doesNotMatch(pages.join(" "), /Chauffage \/ radiateur (Oui \/ OK|Problème)/);
+});
+
+test("printed clutter answers use Non and Oui in the room condition section", () => {
+  const history = [saved(), saved({ room: "115", checks: roomChecks.map(check => ({
+    key: check.key, result: check.key === "room_clutter" ? "probleme" : "ok",
+  })) })];
+  const doc = buildRoomChecklist({ hotelName: "Test", date, mode: "latest", selectedRooms: ["114", "115"], history });
+  const pages = pageText(doc);
+  assert.equal(pages.length, 2);
+  assert.match(pages[0], /État général Bon état Chambre encombrée d’affaires Non/);
+  assert.match(pages[1], /État général Bon état Chambre encombrée d’affaires Oui/);
+  assert.doesNotMatch(pages.join(" "), /Chambre encombrée d’affaires (Oui \/ OK|Problème|Absent)/);
+  assert.doesNotMatch(pages.join(" "), /Chambre encombrée d’affaires : Chambre encombrée d’affaires/);
 });
 
 test("long carpet details and observations continue across pages through the final marker", () => {

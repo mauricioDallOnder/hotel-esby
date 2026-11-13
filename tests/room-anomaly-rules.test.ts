@@ -10,10 +10,10 @@ import { parseEntry, roomChecks, roomFindings, roomIssue, roomProblems, type Ent
 import { prepareRoomIssue } from "../lib/roomIssueMatching";
 import { executeEntry, readPhoto, readState } from "../lib/storage";
 
-const allowed = ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear"];
+const allowed = ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear", "room_clutter"];
 const excluded = ["bed", "mattress", "fridge", "door_closer", "door_handle_clear"];
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", schemaVersion: 5, id: createId(), room: "114", date: today(), actor: "Marie",
+  type: "createRoomInspection", schemaVersion: 6, id: createId(), room: "114", date: today(), actor: "Marie",
   notes: "", occupied: true, condition: "bon", cleaning: null, carpet: "ok", carpetNotes: "",
   microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non", photosData: [],
   checks: roomChecks.map(check => ({ key: check.key, result: "ok" })), ...patch,
@@ -192,7 +192,7 @@ test("Google storage preserves full controls and photos without an anomaly or du
   });
   const input = observationsOnly();
   const receipt = await executeEntry(input);
-  assert.deepEqual(actions, ["commitRoomInspectionV3"]);
+  assert.deepEqual(actions, ["commitRoomInspectionV4"]);
   assertSavedWithoutAnomaly(receipt, input);
   assert.deepEqual(await executeEntry(input), receipt);
   assert.equal(google.files.size, 2);
@@ -219,8 +219,13 @@ function assertReplay(record: RoomInspection, candidate: Issue | undefined, issu
   assert.deepEqual(google.records("issues"), expected && !originalIssues.some(issue => issue.id === expected.id) ? [...originalIssues, expected] : originalIssues);
 }
 
+const legacyEntry = (patch: Partial<RoomEntry> = {}): RoomEntry => {
+  const input = entry(patch);
+  return { ...input, schemaVersion: 5, checks: input.checks.filter(check => check.key !== "room_clutter") };
+};
+
 test("legacy replays preserve an existing resolved anomaly and a saved no-creation decision", () => {
-  const previous = saved(entry({ checks: checks(["bed"]) }), {
+  const previous = saved(legacyEntry({ checks: checks(["bed"]) }), {
     issueSyncVersion: 2, createdIssue: true, newIssueFindingKeys: ["bed"], relatedIssueIds: [],
   });
   const existing = anomaly({ id: previous.id, version: 3, status: "resolu", title: "Lit réparé",
@@ -228,7 +233,7 @@ test("legacy replays preserve an existing resolved anomaly and a saved no-creati
   assert.equal(roomIssue(previous), undefined);
   assertReplay(previous, undefined, [existing], existing);
   const known = anomaly({ status: "resolu" });
-  const linked = saved(entry({ checks: checks(["taps"]) }), {
+  const linked = saved(legacyEntry({ checks: checks(["taps"]) }), {
     issueSyncVersion: 2, createdIssue: false, newIssueFindingKeys: [], relatedIssueIds: [known.id],
   });
   assertReplay(linked, roomIssue(linked), [known], undefined);
@@ -236,15 +241,15 @@ test("legacy replays preserve an existing resolved anomaly and a saved no-creati
 
 test("partial legacy writes never replace excluded findings and repair only the saved eligible findings", () => {
   const known = anomaly({ status: "resolu" });
-  const excludedRepair = saved(entry({ checks: checks(["taps", "bed"]) }), {
+  const excludedRepair = saved(legacyEntry({ checks: checks(["taps", "bed"]) }), {
     issueSyncVersion: 2, createdIssue: true, newIssueFindingKeys: ["bed"], relatedIssueIds: [known.id],
   });
   assertReplay(excludedRepair, roomIssue(excludedRepair), [known], undefined);
-  const oldPhotoOnly = saved(entry({ photosData: ["data:image/jpeg;base64,YQ=="] }), {
+  const oldPhotoOnly = saved(legacyEntry({ photosData: ["data:image/jpeg;base64,YQ=="] }), {
     issueSyncVersion: 2, createdIssue: true, newIssueFindingKeys: [], relatedIssueIds: [],
   });
   assertReplay(oldPhotoOnly, roomIssue(oldPhotoOnly), [], undefined);
-  const permittedRepair = saved(entry({ checks: checks(["taps", "lights", "bed"]), notes: "Note de visite." }), {
+  const permittedRepair = saved(legacyEntry({ checks: checks(["taps", "lights", "bed"]), notes: "Note de visite." }), {
     issueSyncVersion: 2, createdIssue: true, newIssueFindingKeys: ["lights", "bed"], relatedIssueIds: [known.id],
   });
   const candidate = roomIssue(permittedRepair)!;

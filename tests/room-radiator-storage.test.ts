@@ -7,7 +7,7 @@ import { executeEntry } from "../lib/storage";
 import { roomChecks, type RoomEntry, type RoomInspection } from "../lib/rooms";
 
 const entry = (result: "ok" | "probleme"): RoomEntry => ({
-  type: "createRoomInspection", schemaVersion: 5, id: createId(), room: "123", date: today(),
+  type: "createRoomInspection", schemaVersion: 6, id: createId(), room: "123", date: today(),
   actor: "Test radiateur", notes: "", occupied: true, condition: "bon", cleaning: null,
   carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null,
   fridgeCleaning: "propre", bugs: "non", photosData: [],
@@ -62,7 +62,7 @@ test("Google radiator controls preserve Libre, create Caché, repair a partial w
   const clear = await executeEntry(entry("ok"));
   assert.equal(clear.collection, "roomInspections");
   if (clear.collection !== "roomInspections") throw new Error("Expected room inspection");
-  assert.equal(clear.record.schemaVersion, 5);
+  assert.equal(clear.record.schemaVersion, 6);
   assert.equal(clear.record.checks.find(check => check.key === "radiator_clear")?.result, "ok");
   assert.equal(clear.record.createdIssue, false);
   assert.equal(clear.issue, undefined);
@@ -101,5 +101,5 @@ test("Google radiator controls preserve Libre, create Caché, repair a partial w
   assert.deepEqual(await executeEntry(repeatedInput), repeated);
   assert.equal(google.records("roomInspections").length, 3);
   assert.equal(google.records("issues").length, 1);
-  assert.ok(actions.every(action => action === "commitRoomInspectionV3"));
+  assert.ok(actions.every(action => action === "commitRoomInspectionV4"));
 });

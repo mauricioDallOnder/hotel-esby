@@ -23,11 +23,12 @@ function addCalendarDays(date: string, days: number) {
 
 export function completeRoomInspection(record: Record) {
   const version = record.schemaVersion ?? 1;
-  const required = roomChecks.filter(c => c.key !== "radiator_clear" || version >= 5)
+  const required = roomChecks.filter(c => c.key !== "room_clutter" || version >= 6)
+    .filter(c => c.key !== "radiator_clear" || version >= 5)
     .filter(c => c.key !== "door_closer" || version >= 4)
     .filter(c => c.key !== "door_handle_clear" || version >= 2);
   return required.every(c => record.checks.some(check => check.key === c.key && check.result !== "non_verifie" &&
-    (check.key !== "radiator_clear" || check.result === "ok" || check.result === "probleme"))) &&
+    (!["radiator_clear", "room_clutter"].includes(check.key) || check.result === "ok" || check.result === "probleme"))) &&
     record.microwave !== "non_verifie" && (version < 4 || (typeof record.occupied === "boolean" && !!record.bugs && record.bugs !== "non_verifie"));
 }
 

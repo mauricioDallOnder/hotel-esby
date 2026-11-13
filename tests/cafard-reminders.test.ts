@@ -65,7 +65,7 @@ test("cases awaiting verification need a documented application date to generate
 
 test("new detections on an open treatment keep its original seven-day visit reminder", () => {
   const positive: RoomEntry = {
-    type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "101", date: "2026-11-05", inspectedAt: "2026-11-05T11:00:00.000Z",
+    type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "101", date: "2026-11-05", inspectedAt: "2026-11-05T11:00:00.000Z",
     actor: "Agent test", notes: "Cafards encore présents.", condition: "bon", occupied: true, cleaning: null,
     carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "oui", photosData: [],
     checks: roomChecks.map(check => ({ key: check.key, result: "ok" })),
@@ -126,7 +126,7 @@ test("manual resolution, a newer positive inspection and a new treatment use the
   assert.equal(cafardTreatmentReminder(cafardCases([], [treatment, resolution])[0], "2026-11-06"), null);
 
   const positive: RoomEntry = {
-    type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "101", date: "2026-11-06", inspectedAt: "2026-11-06T11:00:00.000Z",
+    type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "101", date: "2026-11-06", inspectedAt: "2026-11-06T11:00:00.000Z",
     actor: "Agent test", notes: "Cafards encore présents.", condition: "bon", occupied: true, cleaning: null,
     carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "oui", photosData: [],
     checks: roomChecks.map(check => ({ key: check.key, result: "ok" })),

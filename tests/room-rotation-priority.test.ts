@@ -7,7 +7,7 @@ import { roomAvailability } from "../lib/work";
 
 const day = "2026-11-03", yesterday = "2026-11-02";
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "114", date: patch.date || yesterday,
+  type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "114", date: patch.date || yesterday,
   inspectedAt: `${patch.date || yesterday}T10:00:00Z`, actor: "Marie", notes: "", occupied: true, condition: "bon", cleaning: null,
   carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non", photosData: [],
   checks: roomChecks.map(check => ({ key: check.key, result: "ok" })), ...patch,
@@ -16,8 +16,9 @@ const partial = (patch: Partial<RoomEntry> = {}) => entry({ ...patch, checks: ro
 const recentHistory = () => rooms.map(room => entry({ room }));
 
 test("rotation respects each inspection version without marking old complete controls unfinished", () => {
-  for (const version of [undefined, 2, 3, 4, 5] as const) {
-    const checks = entry().checks.filter(check => check.key !== "radiator_clear" || version === 5)
+  for (const version of [undefined, 2, 3, 4, 5, 6] as const) {
+    const checks = entry().checks.filter(check => check.key !== "room_clutter" || version === 6)
+      .filter(check => check.key !== "radiator_clear" || !!version && version >= 5)
       .filter(check => check.key !== "door_closer" || !!version && version >= 4)
       .filter(check => check.key !== "door_handle_clear" || !!version);
     const input = entry({ schemaVersion: version, checks, date: day });
@@ -30,6 +31,7 @@ test("rotation respects each inspection version without marking old complete con
   }
   assert.equal(completeRoomInspection(entry({ checks: entry().checks.filter(check => check.key !== "radiator_clear") })), false);
   assert.equal(completeRoomInspection(entry({ checks: entry().checks.filter(check => check.key !== "door_closer") })), false);
+  assert.equal(completeRoomInspection(entry({ checks: entry().checks.filter(check => check.key !== "room_clutter") })), false);
   assert.equal(completeRoomInspection(entry({ occupied: null })), false);
   assert.equal(completeRoomInspection(entry({ bugs: "non_verifie" })), false);
   assert.equal(completeRoomInspection(entry({ checks: entry().checks.map(check => check.key === "radiator_clear" ? { ...check, result: "probleme" } : check) })), true);

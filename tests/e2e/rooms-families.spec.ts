@@ -12,9 +12,10 @@ test("mobile room checklist opens cleaning for free rooms, exports PDF and share
   await expect(page.getByRole("article", { name: "Chambre 114", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Contrôler la chambre 114", exact: true }).click();
   const choose = async (label: string, answer: string) => { await page.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click(); };
-  for (const check of roomChecks) await choose(check.label, check.key === "taps" ? "Problème" : check.key === "door_closer" ? "Absent" : check.key === "radiator_clear" ? "Libre" : "OK");
+  for (const check of roomChecks.filter(check => check.key !== "room_clutter")) await choose(check.label, check.key === "taps" ? "Problème" : check.key === "door_closer" ? "Absent" : check.key === "radiator_clear" ? "Libre" : "OK");
   await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("État général de la chambre", "À revoir");
+  await choose("Chambre encombrée d’affaires", "Non");
   await choose("Chambre occupée", "Occupée");
   await expect(page.getByRole("radiogroup", { name: /Nettoyage/ })).toHaveCount(0);
   await choose("Chambre occupée", "Libre");
@@ -86,6 +87,7 @@ test("radiator Libre stays in the checklist while Caché creates one technical p
     await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
     await choose("Chambre occupée", "Occupée");
     await choose("État général de la chambre", "Bon");
+    await choose("Chambre encombrée d’affaires", "Non");
     await choose("Présence de cafards ou nuisibles", "Aucun");
     await choose("État de la moquette", "OK");
     await choose("Micro-ondes présent ?", "Non");
@@ -125,7 +127,7 @@ test("radiator Libre stays in the checklist while Caché creates one technical p
   state = await (await page.request.get("/api/hotel")).json();
   expect(state.issues.filter((issue: { room: string }) => issue.room === "124")).toHaveLength(1);
   const repeated = state.roomInspections.find((record: { actor: string }) => record.actor === "Test radiateur toujours caché");
-  expect(repeated.schemaVersion).toBe(5);
+  expect(repeated.schemaVersion).toBe(6);
   expect(repeated.relatedIssueIds).toEqual([issues[0].id]);
   await page.getByRole("button", { name: "Historique de la chambre 124", exact: true }).click();
   await page.getByRole("button", { name: /Test radiateur toujours caché/ }).click();
@@ -213,6 +215,7 @@ test("quick controls include the smoke detector, preserve known faults and reuse
   await choose("Rien de cassé", "OK");
   await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("Chambre occupée", "Occupée"); await choose("État général de la chambre", "À revoir");
+  await choose("Chambre encombrée d’affaires", "Non");
   await choose("Présence de cafards ou nuisibles", "Aucun"); await choose("État de la moquette", "OK");
   await choose("Micro-ondes présent ?", "Non"); await choose("Propreté du minibar", "Propre");
   await page.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();
@@ -264,6 +267,7 @@ test("room validation follows corrections and conditional fields without another
   await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("Chambre occupée", "Libre");
   await choose("État général de la chambre", "Bon");
+  await choose("Chambre encombrée d’affaires", "Non");
   await choose("Présence de cafards ou nuisibles", "Aucun");
   await choose("État de la moquette", "OK");
   await choose("Micro-ondes présent ?", "Oui");

@@ -6,7 +6,7 @@ import { roomChecks, workEntrySchema, type RoomEntry, type RoomInspection, type 
 
 function inspection(patch: Partial<RoomEntry> = {}): RoomEntry {
   return {
-    type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "101", date: "2025-10-19",
+    type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "101", date: "2025-10-19",
     inspectedAt: "2025-10-19T09:00:00.000Z", actor: "Agent test", notes: "Cafards près du minibar.",
     condition: "bon", occupied: true, cleaning: null, carpet: "ok", carpetNotes: "", microwave: "non",
     microwaveCleaning: null, fridgeCleaning: "propre", bugs: "oui", photosData: [],

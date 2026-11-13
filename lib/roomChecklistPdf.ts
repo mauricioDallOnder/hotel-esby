@@ -16,9 +16,11 @@ type Options = { hotelName: string; date?: string } & (
 
 const margin = 14;
 const width = 182;
+const equipmentChecks = roomChecks.filter(check => check.key !== "room_clutter");
 const conditionChoices = [
   ["Occupation au contrôle", ["Libre", "Occupée"]],
   ["État général", ["Bon état", "À revoir", "Mauvais état"]],
+  ["Chambre encombrée d’affaires", ["Non", "Oui"]],
   ["Ménage (si chambre libre)", ["Fait", "Non fait", "Non applicable"]],
   ["Cafards / nuisibles", ["Aucun", "Détectés"]],
   ["Moquette", ["OK", "Tachée", "Sale"]],
@@ -30,10 +32,12 @@ const conditionChoices = [
 
 function conditionAnswers(record: Record) {
   const fridge = record.checks.find(check => check.key === "fridge")?.result;
+  const clutter = record.checks.find(check => check.key === "room_clutter")?.result;
   const clean = (value: Record["microwaveCleaning"]) => value ? applianceCleaningLabels[value] : "Non renseignée";
   return [
     record.occupied === false ? "Libre" : record.occupied === true ? "Occupée" : "Non renseignée",
     conditionLabels[record.condition] || "Non renseigné",
+    clutter ? roomCheckResultLabel("room_clutter", clutter) : "Non renseigné",
     cleaningText(record),
     record.bugs === "oui" ? "Détectés" : record.bugs === "non" ? "Aucun" : "Non vérifié",
     carpetLabels[record.carpet] || "Non renseignée",
@@ -92,10 +96,10 @@ export function buildRoomChecklist(options: Options) {
     const record = latest.get(room);
     let y = paragraph(options.hotelName || "Hôtel", 15, 10);
     text("Checklist de chambre", margin, y + 6, 18, true);
-    y += 13;
+    y += 11;
     text(record ? "Résultats du dernier contrôle disponible" : "Fiche vierge - À remplir lors du contrôle", margin, y, 9);
     doc.setDrawColor(150); doc.setLineWidth(0.25); doc.line(margin, y + 4, margin + width, y + 4);
-    y += 12;
+    y += 10;
     text(`Chambre : ${room || "________________"}`, margin, y, 12, true);
     text(`Date du contrôle : ${record ? displayDate(record.date) : "____ / ____ / ________"}`, 108, y, 10);
     y = paragraph(`Inspecteur : ${record?.actor || "____________________________________________________________"}`, y + 7, 10) + 1;
@@ -106,13 +110,13 @@ export function buildRoomChecklist(options: Options) {
     } else if (room) {
       y = paragraph("Aucun contrôle disponible pour cette chambre. Fiche à compléter.", y, 9, true) + 2;
     }
-    y = paragraph(record ? "Les réponses décrivent la visite indiquée ci-dessus." : "Cocher une réponse par ligne. Laisser vide si le point n'a pas été vérifié.", y, 9) + 4;
+    y = paragraph(record ? "Les réponses décrivent la visite indiquée ci-dessus." : "Cocher une réponse par ligne. Laisser vide si le point n'a pas été vérifié.", y, 9) + 3;
     y = section("1. Équipements et sécurité", y, room);
     autoTable(doc, {
       startY: y, theme: "grid", tableWidth: width,
       margin: { top: 34, bottom: 18, left: margin, right: margin },
       head: [record ? ["Point de contrôle", "Résultat"] : ["Point de contrôle", "OK", "Problème", "Absent"]],
-      body: roomChecks.map(check => {
+      body: equipmentChecks.map(check => {
         const answer = record?.checks.find(item => item.key === check.key)?.result;
         if (record) return [check.label, answer ? roomCheckResultLabel(check.key, answer) : "Non renseigné"];
         return check.key === "radiator_clear" ? [check.label, { content: "", colSpan: 3 }] : [check.label, "", "", ""];
@@ -124,7 +128,7 @@ export function buildRoomChecklist(options: Options) {
       willDrawPage: () => ensureHeader(room),
       didDrawCell: cell => {
         if (record || cell.section !== "body" || cell.column.index === 0) return;
-        if (roomChecks[cell.row.index].key === "radiator_clear") {
+        if (equipmentChecks[cell.row.index].key === "radiator_clear") {
           let x = cell.cell.x + 4;
           const baseline = cell.cell.y + cell.cell.height / 2 + 1.2;
           for (const result of ["ok", "probleme"] as const) {
@@ -140,7 +144,7 @@ export function buildRoomChecklist(options: Options) {
     });
     // autoTable adds this property to jsPDF after each table.
     const endY = () => (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
-    y = section("2. État de la chambre et propreté", endY() + 7, room);
+    y = section("2. État de la chambre et propreté", endY() + 5, room);
     const answers = record ? conditionAnswers(record) : [];
     autoTable(doc, {
       startY: y, theme: "grid", tableWidth: width,
@@ -161,12 +165,13 @@ export function buildRoomChecklist(options: Options) {
         }
       },
     });
-    y = section("3. Observations et problèmes constatés", endY() + 7, room) + 2;
+    y = section("3. Observations et problèmes constatés", endY() + 5, room) + 2;
     if (record) {
       const findings = roomFindings(record);
       const technicalDetails = findings.map(finding => {
         const check = roomChecks.find(item => item.key === finding.key)?.label || finding.key;
-        return `${check} : ${finding.label}${finding.description && !finding.label.includes(finding.description) ? ` - ${finding.description}` : ""}`;
+        const label = finding.label === check || finding.label.startsWith(`${check} :`) ? finding.label : `${check} : ${finding.label}`;
+        return `${label}${finding.description && !finding.label.includes(finding.description) ? ` - ${finding.description}` : ""}`;
       }).join("\n");
       const notes = [technicalDetails ? `Problèmes techniques constatés\n${technicalDetails}` : "",
         record.carpetNotes.trim() ? `Moquette : ${record.carpetNotes.trim()}` : "", record.notes.trim()].filter(Boolean).join("\n\n") || "Aucune observation saisie.";

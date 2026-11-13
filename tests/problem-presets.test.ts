@@ -14,7 +14,7 @@ import { executeEntry, readState } from "../lib/storage";
 function entry(patch: Partial<RoomEntry> = {}): RoomEntry {
   return { type: "createRoomInspection", id: createId(), room: "325", date: today(), actor: "Agent test", notes: "",
     condition: "bon", cleaning: null, checks: roomChecks.map(check => ({ key: check.key, result: check.key === "damage" ? "probleme" : "ok" })),
-    carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 5,
+    carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 6,
     microwaveCleaning: null, fridgeCleaning: "propre", ...patch };
 }
 function saved(input: RoomEntry): RoomInspection {
@@ -161,7 +161,7 @@ test("Apps Script validates live links under lock before photos and preserves V2
   context.table_ = () => ({});
   context.records_ = (collection: string) => { assert.equal(locked, true); return structuredClone(collection === "issues" ? repairs : inspections); };
   context.writeRecord_ = (collection: string, record: RoomInspection) => { assert.equal(locked, true); assert.equal(collection, "roomInspections"); writes++; inspections.push(structuredClone(record)); };
-  const record = saved(entry({ issueLinks: [{ key: "damage", issueId: current.id }] }));
+  const record = saved(entry({ schemaVersion: 5, checks: entry().checks.filter(check => check.key !== "room_clutter"), issueLinks: [{ key: "damage", issueId: current.id }] }));
   const call = (input: RoomInspection, action = "commitRoomInspectionV3", photosData: string[] = []) => context.doPost({ postData: { contents: JSON.stringify({ token: "test-token", action, collection: "roomInspections", expectedVersion: 0, record: input, issue: roomIssue(input), photosData }) } });
   assert.equal(call(record).ok, true);
   assert.equal(inspections[0].issueSyncVersion, 2);
@@ -181,7 +181,7 @@ test("Apps Script validates live links under lock before photos and preserves V2
 });
 
 test("a historical Google receipt without a matching decision is acknowledged without replanning or new repairs", () => {
-  const old = saved(entry({ issueLinks: [{ key: "damage", issueId: createId() }] }));
+  const old = saved(entry({ schemaVersion: 5, checks: entry().checks.filter(check => check.key !== "room_clutter"), issueLinks: [{ key: "damage", issueId: createId() }] }));
   const historicalLinks = [createId()]; old.relatedIssueIds = historicalLinks;
   let updated: RoomInspection | undefined;
   const context = vm.createContext({

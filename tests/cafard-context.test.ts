@@ -11,7 +11,7 @@ import { executeEntry, readState } from "../lib/storage";
 import { latestCafardObservationId, validateWorkEntry } from "../lib/work";
 
 function inspection(patch: Partial<RoomEntry> = {}): RoomEntry {
-  return { type: "createRoomInspection", schemaVersion: 5, id: createId(), room: "114", date: "2026-11-05",
+  return { type: "createRoomInspection", schemaVersion: 6, id: createId(), room: "114", date: "2026-11-05",
     inspectedAt: "2026-11-05T09:00:00.000Z", actor: "Agent test", notes: "Cafards près de la porte.",
     occupied: true, condition: "bon", cleaning: null, carpet: "ok", carpetNotes: "", microwave: "non",
     microwaveCleaning: null, fridgeCleaning: "propre", bugs: "oui", photosData: [],

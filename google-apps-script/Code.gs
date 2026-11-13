@@ -92,11 +92,11 @@ function doPost(e) {
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (!['commit', 'commitIssueV2', 'commitIssueV3', 'commitIssueV4', 'commitEntry', 'commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitWorkEvent', 'commitWorkEventV2', 'commitCafardFollowupV2', 'commitCafardFollowupV3', 'commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action)) throw requestError_('Action invalide.');
+    if (!['commit', 'commitIssueV2', 'commitIssueV3', 'commitIssueV4', 'commitEntry', 'commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitRoomInspectionV4', 'commitWorkEvent', 'commitWorkEventV2', 'commitCafardFollowupV2', 'commitCafardFollowupV3', 'commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action)) throw requestError_('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
     const isLaundry = ['commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action);
-    const isRoom = input.action === 'commitRoomInspection' || input.action === 'commitRoomInspectionV2' || input.action === 'commitRoomInspectionV3';
+    const isRoom = ['commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitRoomInspectionV4'].includes(input.action);
     const isCafard = ['commitCafardFollowupV2', 'commitCafardFollowupV3'].includes(input.action);
     const isWork = ['commitWorkEvent', 'commitWorkEventV2'].includes(input.action);
     const isEntry = input.action === 'commitEntry' || isRoom || isWork || isCafard || isLaundry;
@@ -104,7 +104,8 @@ function doPost(e) {
     if (input.collection === 'issues' && input.record && input.record.problemType !== undefined && !['commitIssueV3', 'commitIssueV4'].includes(input.action)) throw requestError_('Utilisez commitIssueV4.');
     if (input.collection === 'issues' && input.record && (input.operation || input.record.distinctFromIssueIds !== undefined || input.record.roomFindingsActive !== undefined || (input.record.roomFindings || []).some(item => item.status !== undefined)) && input.action !== 'commitIssueV4') throw requestError_('Utilisez commitIssueV4.');
     if (input.operation && (!input.record || !/^[\da-f-]{36}$/i.test(input.operation.id || '') || !/^[a-f0-9]{64}$/.test(input.operation.hash || '') || !Array.isArray(input.record.history) || !input.record.history.some(event => event.commandId === input.operation.id && event.commandHash === input.operation.hash))) throw requestError_('Confirmation de commande invalide.');
-    if (input.collection === 'roomInspections' && input.record && input.record.problemDetails !== undefined && input.action !== 'commitRoomInspectionV3') throw requestError_('Utilisez commitRoomInspectionV3.');
+    if (input.collection === 'roomInspections' && input.record && input.record.problemDetails !== undefined && !['commitRoomInspectionV3', 'commitRoomInspectionV4'].includes(input.action)) throw requestError_('Utilisez commitRoomInspectionV3.');
+    if (input.collection === 'roomInspections' && input.record && ((input.record.schemaVersion || 1) >= 6 || (input.record.checks || []).some(check => check.key === 'room_clutter')) && input.action !== 'commitRoomInspectionV4') throw requestError_('Utilisez commitRoomInspectionV4.');
     if (isCafard && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'cafardFollowup')) throw requestError_('Suivi des cafards invalide.');
     if (input.collection === 'workEvents' && input.record && input.record.cafardObservationId !== undefined && !isCafard) throw requestError_('Utilisez commitCafardFollowupV2.');
     if (isWork && input.collection !== 'workEvents') throw requestError_('Collection invalide.');
@@ -225,6 +226,7 @@ function writeRecord_(collection, record, isEntry, current) {
         const check = record.checks.find(c => c.key === key);
         if (!check) return '';
         if (key === 'radiator_clear') return check.result === 'ok' ? 'Libre' : check.result === 'probleme' ? 'Caché' : check.result;
+        if (key === 'room_clutter') return check.result === 'ok' ? 'Non' : check.result === 'probleme' ? 'Oui' : check.result;
         return check.result;
       }));
       row = visible.map(safe).concat(chunks.map(chunk => 'j' + chunk), extra.map(safe));
@@ -445,12 +447,12 @@ function dispatchLaundryNotifications() {
   props.setProperty('LAUNDRY_PUSH_LAST_RUN_AT', new Date().toISOString());
 }
 
-const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear', 'door_closer', 'radiator_clear'];
+const ROOM_CHECK_KEYS = ['taps', 'switches', 'leaks', 'lights', 'smoke', 'damage', 'window', 'bed', 'mattress', 'fridge', 'door_handle_clear', 'door_closer', 'radiator_clear', 'room_clutter'];
 function headers_(collection) {
   const data = HEADERS.slice(10);
   if (collection === 'workEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Texte', 'Type de suivi', 'Réservé', 'Auteur', 'Réservé 2', 'Enregistré le'].concat(data);
   if (collection === 'familyEvents') return ['ID', 'Version', 'Date', 'Chambre', 'Famille', 'Événement', 'Signalé par', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Retour prévu']);
-  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée', 'Ferme-porte', 'Chauffage / radiateur']);
+  if (collection === 'roomInspections') return ['ID', 'Version', 'Date', 'Chambre', 'Inspecteur', 'État', 'Ménage', 'Observations', 'Photo Drive', 'Modifié le'].concat(data, ['Moquette', 'Détail moquette', 'Micro-ondes', 'Robinets', 'Interrupteurs', 'Aucune fuite', 'Éclairage', 'Détecteur fumée', 'Rien de cassé', 'Fenêtre', 'Lit', 'Matelas', 'Minibar', 'Poignée dégagée', 'Ferme-porte', 'Chauffage / radiateur', 'Chambre encombrée d’affaires']);
   return HEADERS;
 }
 function deletionTable_() {
@@ -502,12 +504,13 @@ exports.problemPresets = [
     { id: "lighting_fault", label: "Éclairage / ampoule défectueux", category: "Électricité", checkKeys: ["lights"] },
     { id: "heater_loose", label: "Radiateur détaché ou mal fixé", category: "Équipements", checkKeys: ["damage"] },
     { id: "radiator_obstructed", label: "Radiateur caché ou encombré", category: "Équipements", checkKeys: ["radiator_clear"] },
+    { id: "room_cluttered", label: "Chambre encombrée d’affaires", category: "Autre", checkKeys: ["room_clutter"] },
     { id: "drain_blocked", label: "Douche / évacuation bouchée", category: "Plomberie", checkKeys: ["damage", "taps"] },
     { id: "door_damage", label: "Porte endommagée", category: "Bâtiment", checkKeys: ["damage"] },
     { id: "smoke_detector", label: "Détecteur de fumée défectueux", category: "Sécurité incendie", checkKeys: ["smoke"] },
     // A minibar answer remains in the inspection; it never creates an automatic issue.
     { id: "fridge_fault", label: "Réfrigérateur en panne", category: "Équipements", checkKeys: [] },
-    { id: "other", label: "Autre problème", category: "Autre", checkKeys: ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear"] },
+    { id: "other", label: "Autre problème", category: "Autre", checkKeys: ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear", "room_clutter"] },
 ];
 function getProblemPreset(id) {
     return exports.problemPresets.find(preset => preset.id === id);
@@ -659,6 +662,20 @@ const keywords = {
     carpet: /\bmoquette\w*\b/,
     cleaning: /\b(menage|nettoyage chambre)\b/,
 };
+// Room clutter is a room-wide observation. A radiator or door handle covered
+// by belongings remains a different finding, even in the same room.
+function hasRoomClutter(text) {
+    return text.split(/[.!?;,\n]+/).some(clause => {
+        const value = normalizeIssueText(clause);
+        if (/\b(?:non|pas|plus|jamais)(?: \w+){0,2} encombre\w*\b/.test(value) ||
+            /\b(?:aucun|pas d|absence d) encombrement\b/.test(value))
+            return false;
+        return /\bchambres?(?: \d{3})?(?: (?:est|sont|tres|fortement|trop|entierement|completement|encore)){0,3} encombre\w*\b/.test(value) ||
+            /\bchambres?(?: \d{3})?(?: (?:est|sont|tres|fortement|trop|entierement|completement)){0,3} (?:pleine?s?|remplie?s?|saturee?s?) (?:d|de) (?:affaires|bagages|valises|objets)\b/.test(value) ||
+            /\b(?:affaires|bagages|valises|objets)(?: \w+){0,3} (?:encombrent|envahissent|remplissent) (?:toute |toutes )?(?:la |les )?chambres?\b/.test(value) ||
+            /\bencombrement (?:de la |dans la |en )?chambre\b/.test(value);
+    });
+}
 function inferredProblemTypes(text) {
     const value = normalizeIssueText(text), types = [];
     const has = (pattern) => pattern.test(value);
@@ -698,6 +715,8 @@ function inferredProblemTypes(text) {
         types.push("smoke_detector");
     if (has(keywords.fridge) && has(/\b(panne|hs|defectueu\w*|casse\w*|refroid\w*|ne (?:fonctionne|marche) (?:pas|plus))\b/))
         types.push("fridge_fault");
+    if (hasRoomClutter(text))
+        types.push("room_cluttered");
     return types;
 }
 function findingText(finding) {
@@ -713,6 +732,9 @@ function typedFindingMatches(issue, finding) {
     const existingTypes = explicit ? [explicit] : inferredProblemTypes(existingText);
     if (!type || !existingTypes.includes(type))
         return false;
+    // The whole room has one clutter follow-up, even when bags move around.
+    if (type === "room_cluttered")
+        return true;
     if (differentDetails(text, existingText))
         return false;
     // A selected type is a useful suggestion, but never sufficient on its own
@@ -721,7 +743,7 @@ function typedFindingMatches(issue, finding) {
     return true;
 }
 function matchesRoomFinding(issue, finding) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     issue = (0, issueFindings_1.issueMatchingSnapshot)(issue);
     if (finding.problemType) {
         if ((_a = issue.roomFindings) === null || _a === void 0 ? void 0 : _a.length)
@@ -735,14 +757,19 @@ function matchesRoomFinding(issue, finding) {
     if (finding.key === "damage") {
         if (meaningful(finding.description || ""))
             return sameManualProblem({ location: issue.location, title: "", description: finding.description }, issue);
+        const clutterOnly = ((_b = issue.roomFindings) === null || _b === void 0 ? void 0 : _b.length)
+            ? issue.roomFindings.every(item => item.key === "room_clutter" || item.problemType === "room_cluttered")
+            : issue.problemType === "room_cluttered";
         // "Rien de cassé : Problème" does not identify an object. It can suggest
-        // existing room repairs for a human choice, but can never auto-link one.
-        return !isCafardTechnicalReport(issue);
+        // existing room repairs for a human choice, but clutter is not a repair.
+        return !clutterOnly && !isCafardTechnicalReport(issue);
     }
-    if ((_b = issue.roomFindings) === null || _b === void 0 ? void 0 : _b.length)
+    if ((_c = issue.roomFindings) === null || _c === void 0 ? void 0 : _c.length)
         return issue.roomFindings.some(item => item.key === finding.key &&
             (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
     const text = normalizeIssueText(`${issue.title || ""} ${issue.description || ""}`);
+    if (finding.key === "room_clutter")
+        return issue.problemType === "room_cluttered" || hasRoomClutter(text);
     // A heater fault is different from a heater hidden or obstructed by objects.
     if (finding.key === "radiator_clear")
         return /\b(chauffage\w*|radiateur\w*)\b/.test(text) &&
@@ -757,7 +784,7 @@ function matchesRoomFinding(issue, finding) {
         return false;
     if (finding.key === "observation")
         return normalizeIssueText(issue.description || "") === normalizeIssueText(finding.label);
-    return ((_c = keywords[finding.key]) === null || _c === void 0 ? void 0 : _c.test(text)) || false;
+    return ((_d = keywords[finding.key]) === null || _d === void 0 ? void 0 : _d.test(text)) || false;
 }
 const genericText = /^(?:chambre\s+\d{3}\s*)?(?:probleme(?: constate| technique)?|anomalie|a verifier|a reparer|voir (?:la )?photo|voir sur place|test)$/;
 const failureKinds = [
@@ -804,6 +831,9 @@ function sameManualProblem(candidate, existing) {
     const right = normalizeIssueText(`${existing.title || ""} ${existing.description || ""}`);
     if (candidate.problemType && existing.problemType && candidate.problemType !== "other" && existing.problemType !== "other" && candidate.problemType !== existing.problemType)
         return false;
+    if ((candidate.problemType === "room_cluttered" || hasRoomClutter(left)) &&
+        (existing.problemType === "room_cluttered" || hasRoomClutter(right)))
+        return true;
     if (differentDetails(left, right))
         return false;
     const leftFailures = failureKinds.filter(([, pattern]) => pattern.test(left)).map(([kind]) => kind);
@@ -964,7 +994,7 @@ function planRoomIssue(candidate, record, issues) {
             return true; // A stale link must never silently create a replacement.
         }
         const matching = open.filter(issue => matchesRoomFinding(issue, finding));
-        if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && !exactTypedDescription(matching[0], finding)) ||
+        if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && finding.problemType !== "room_cluttered" && !exactTypedDescription(matching[0], finding)) ||
             (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
             requiresChoice.push(finding.key);
             conflicts.push(`Un problème similaire est déjà ouvert pour « ${((_b = (0, problemPresets_1.getProblemPreset)(finding.problemType)) === null || _b === void 0 ? void 0 : _b.label) || finding.label} ». Choisissez le signalement à réutiliser ou précisez un problème différent.`);

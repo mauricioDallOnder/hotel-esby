@@ -1,35 +1,21 @@
 import jsPDF from "jspdf";
-import { displayDate, eventAt, issuePhotoIds, monthlySummary, today, type Issue, type State } from "./domain";
+import { displayDate, type Issue, type State } from "./domain";
 import { loadPhotoData, photoSource } from "./photos";
-
-export function dailyIssues(state: State, date: string): Issue[] {
-  const linked = new Set(
-    state.inspections
-      .filter((inspection) => inspection.date === date)
-      .flatMap((inspection) => inspection.checks.map((check) => check.issueId))
-  );
-
-  return state.issues.filter(
-    (issue) =>
-      issue.date <= date &&
-      (issue.date === date ||
-        (eventAt(issue, date)?.status ?? "ouvert") !== "resolu" ||
-        linked.has(issue.id) ||
-        issue.history.some((event) => today(new Date(event.at)) === date))
-  );
-}
+import { reportPendingIssues, reportPeriodEnd, reportPhotos, type ReportPhoto, type ReportScope } from "./reportData";
+export { dailyIssues } from "./reportData";
 
 type ReportOptions = {
   kind: "daily" | "monthly";
   period: string;
   hotelName: string;
   state: State;
+  scope?: ReportScope;
 };
 
-type PhotoLoader = (issue: Issue, index: number) => Promise<string | null>;
+type PhotoLoader = (issue: Issue, index: number, photo: ReportPhoto) => Promise<string | null>;
 
 export async function buildReport(
-  { kind, period, state }: ReportOptions,
+  { kind, period, state, scope = "all" }: ReportOptions,
   photoLoader: PhotoLoader = loadPhoto
 ): Promise<jsPDF> {
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
@@ -45,12 +31,10 @@ export async function buildReport(
   const PHOTO_ROW_HEIGHT = PHOTO_HEIGHT + 12;
   let y = 32;
 
-  const monthly = kind === "monthly" ? monthlySummary(state, period) : null;
-  const end = monthly?.end || period;
-  const issues = monthly?.issues || dailyIssues(state, period);
+  const end = reportPeriodEnd(kind, period);
   const subtitle = kind === "daily"
-    ? `Rapport anomalies · ${displayDate(period)}`
-    : `Anomalies du mois · ${period.split("-").reverse().join("/")}`;
+    ? `Rapport du ${displayDate(period)}`
+    : `Rapport mensuel · ${period.split("-").reverse().join("/")}`;
 
   function normalizeText(value: string): string {
     return String(value ?? "").replace(/[\u2018\u2019]/g, "'").replace(/[\u2013\u2014]/g, "-");
@@ -101,8 +85,8 @@ export async function buildReport(
       y += lineHeight;
     }
   }
-  async function getPhoto(issue: Issue, index: number) {
-    try { return await photoLoader(issue, index); }
+  async function getPhoto(issue: Issue, index: number, photo: ReportPhoto) {
+    try { return await photoLoader(issue, index, photo); }
     catch { return null; }
   }
 
@@ -110,20 +94,19 @@ export async function buildReport(
   doc.setTextColor(35, 50, 45);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
-  doc.text("Problèmes à traiter", LEFT, y);
+  doc.text(scope === "room_clutter" ? "Chambres encombrées" : "Problèmes à traiter", LEFT, y);
   y += 12;
 
-  // Keep the report's existing date/status selection; only its photo coverage changes.
-  const unresolvedIssues = issues.filter(issue => (eventAt(issue, end)?.status ?? "ouvert") !== "resolu");
-  if (!unresolvedIssues.length) writeLines(["Aucun problème en attente."], 11, "normal", 5, 50);
+  const unresolvedIssues = reportPendingIssues(state, kind, period, scope);
+  if (!unresolvedIssues.length) writeLines([scope === "room_clutter" ? "Aucune chambre encombrée en attente." : "Aucun problème en attente."], 11, "normal", 5, 50);
 
   for (const [issueIndex, issue] of unresolvedIssues.entries()) {
-    const photoIds = issuePhotoIds(issue);
+    const attachments = reportPhotos(issue, state, end);
     const titleLines = split(issue.title, 12, "bold");
     const metaLines = split(`${issue.location} · Constat du ${displayDate(issue.date)}`, 9, "italic");
     const descLines = split(issue.description, 10);
     const headingHeight = titleLines.length * 5.5 + metaLines.length * 4.5 + 3;
-    const blockHeight = headingHeight + descLines.length * 4.5 + 4 + Math.ceil(photoIds.length / PHOTO_COLUMNS) * PHOTO_ROW_HEIGHT;
+    const blockHeight = headingHeight + descLines.length * 4.5 + 4 + Math.ceil(attachments.length / PHOTO_COLUMNS) * PHOTO_ROW_HEIGHT;
     // Keep normal-size problems together. Longer descriptions flow across pages instead of being clipped.
     checkPage(issueIndex > 0 && blockHeight <= CONTENT_BOTTOM - 32 ? blockHeight : headingHeight + 4.5);
     writeLines(titleLines, 12, "bold", 5.5, 35);
@@ -133,17 +116,17 @@ export async function buildReport(
     y += 4;
 
     // Load at most one row at a time, preserving every attachment and its original index.
-    for (let start = 0; start < photoIds.length; start += PHOTO_COLUMNS) {
-      const photos = await Promise.all(photoIds.slice(start, start + PHOTO_COLUMNS).map((_, column) => getPhoto(issue, start + column)));
+    for (let start = 0; start < attachments.length; start += PHOTO_COLUMNS) {
+      const photos = await Promise.all(attachments.slice(start, start + PHOTO_COLUMNS).map((photo, column) => getPhoto(issue, start + column, photo)));
       checkPage(PHOTO_ROW_HEIGHT, issue);
       for (const [column, data] of photos.entries()) {
         const index = start + column;
         const x = LEFT + column * (PHOTO_WIDTH + PHOTO_GAP);
         const imageTop = y + 7;
         doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
+        doc.setFontSize(8);
         doc.setTextColor(70);
-        doc.text(`Photo ${index + 1} / ${photoIds.length}`, x, y + 3);
+        doc.text(`Photo ${index + 1} / ${attachments.length} · ${displayDate(attachments[index].date)}`, x, y + 3);
         doc.setDrawColor(210); doc.setLineWidth(0.2);
         doc.rect(x, imageTop, PHOTO_WIDTH, PHOTO_HEIGHT);
         let available = false;
@@ -186,12 +169,12 @@ export async function buildReport(
   return doc;
 }
 
-function loadPhoto(issue: Issue, index: number): Promise<string | null> {
-  return loadPhotoData(photoSource(issue.id, index));
+function loadPhoto(_issue: Issue, _index: number, photo: ReportPhoto): Promise<string | null> {
+  return loadPhotoData(photoSource(photo.sourceId, photo.index, photo.collection));
 }
 
 export async function downloadReport(options: ReportOptions) {
   const doc = await buildReport(options);
-  const prefix = options.kind === "daily" ? "rapport-quotidien" : "bilan-mensuel";
+  const prefix = options.scope === "room_clutter" ? "chambres-encombrees" : options.kind === "daily" ? "rapport-quotidien" : "bilan-mensuel";
   doc.save(`${prefix}-${options.period}.pdf`);
 }

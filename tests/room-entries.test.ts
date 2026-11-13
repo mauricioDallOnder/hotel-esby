@@ -36,10 +36,10 @@ test("free rooms require cleaning, occupied rooms clear it, and all equipment mu
     const entry = roomEntry(); entry.checks.find(c => c.key === check.key)!.result = "non_verifie";
     assert.equal(roomEntrySchema.safeParse(entry).success, false, check.key);
     entry.checks.find(c => c.key === check.key)!.result = "absent";
-    assert.equal(roomEntrySchema.safeParse(entry).success, check.key !== "radiator_clear");
+    assert.equal(roomEntrySchema.safeParse(entry).success, !["radiator_clear", "room_clutter"].includes(check.key));
   }
-  assert.equal(roomChecks.at(-1)?.key, "radiator_clear");
-  for (const key of ["door_handle_clear", "door_closer", "radiator_clear"])
+  assert.equal(roomChecks.at(-1)?.key, "room_clutter");
+  for (const key of ["door_handle_clear", "door_closer", "radiator_clear", "room_clutter"])
     assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), checks: roomEntry().checks.filter(c => c.key !== key) }).success, false);
   assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), microwave: "non_verifie" }).success, false);
   for (const carpet of ["sale", "tachee"]) assert.equal(roomEntrySchema.safeParse({ ...roomEntry(), carpet }).success, true);
@@ -49,14 +49,15 @@ test("free rooms require cleaning, occupied rooms clear it, and all equipment mu
   assert.equal(cleaningText({ cleaning: "faite" }), "Faite");
 });
 test("legacy drafts gain unanswered fields without changing existing values or photos", () => {
-  const draft = { ...roomEntry(), occupied: undefined, photosData: ["data:image/jpeg;base64,YQ=="], checks: roomEntry().checks.filter(c => !["door_handle_clear", "door_closer", "radiator_clear"].includes(c.key)) };
+  const draft = { ...roomEntry(), occupied: undefined, photosData: ["data:image/jpeg;base64,YQ=="], checks: roomEntry().checks.filter(c => !["door_handle_clear", "door_closer", "radiator_clear", "room_clutter"].includes(c.key)) };
   const normalized = normalizeRoomDraft(draft);
   assert.equal(normalized.occupied, null);
   assert.equal(normalized.checks.at(-1)?.result, "non_verifie");
-  assert.deepEqual(normalized.checks.filter(c => !["door_handle_clear", "door_closer", "radiator_clear"].includes(c.key)), draft.checks);
+  assert.deepEqual(normalized.checks.filter(c => !["door_handle_clear", "door_closer", "radiator_clear", "room_clutter"].includes(c.key)), draft.checks);
   assert.equal(normalized.checks.find(c => c.key === "door_closer")?.result, "non_verifie");
   assert.equal(normalized.checks.find(c => c.key === "radiator_clear")?.result, "non_verifie");
-  assert.equal(normalized.schemaVersion, 5);
+  assert.equal(normalized.checks.find(c => c.key === "room_clutter")?.result, "non_verifie");
+  assert.equal(normalized.schemaVersion, 6);
   assert.deepEqual(normalized.photosData, draft.photosData);
   assert.equal(normalized.id, draft.id);
   assert.equal(draft.checks.length, 10);
@@ -71,7 +72,7 @@ test("v1 queue preserves the old hash, IDs and removed rooms across retries", as
   process.env.STORAGE_DRIVER = "local";
   process.env.LOCAL_DATA_DIR = mkdtempSync(path.join(tmpdir(), "hotel-legacy-"));
   // The precise original Zod output order is part of the v1 hash contract.
-  const legacy = { type: "createRoomInspection" as const, id: createId(), room: "112", date: today(), actor: "Marie", notes: "", condition: "bon" as const, cleaning: "faite" as const, checks: roomEntry().checks.filter(c => !["door_handle_clear", "door_closer", "radiator_clear"].includes(c.key)), carpet: "ok" as const, carpetNotes: "", microwave: "non_verifie" as const, photosData: ["data:image/jpeg;base64,YQ=="] };
+  const legacy = { type: "createRoomInspection" as const, id: createId(), room: "112", date: today(), actor: "Marie", notes: "", condition: "bon" as const, cleaning: "faite" as const, checks: roomEntry().checks.filter(c => !["door_handle_clear", "door_closer", "radiator_clear", "room_clutter"].includes(c.key)), carpet: "ok" as const, carpetNotes: "", microwave: "non_verifie" as const, photosData: ["data:image/jpeg;base64,YQ=="] };
   assert.deepEqual(parseEntry(legacy, true), legacy);
   const first = await executeEntry(legacy, true);
   assert.equal(first.record.submissionHash, createHash("sha256").update(JSON.stringify(legacy)).digest("hex"));
@@ -155,13 +156,13 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   const roomTable = tables.get("Contrôles chambres")!;
   const roomHeader = [...roomTable[0]];
   roomTable.push(["old-history", "1", "old-date"]);
-  for (const missingColumns of [1, 2, 3]) {
+  for (const missingColumns of [1, 2, 3, 4]) {
     roomTable[0] = roomHeader.slice(0, -missingColumns);
     context.setup(); context.setup();
     assert.deepEqual(roomTable[0], roomHeader);
     assert.deepEqual(roomTable[1], ["old-history", "1", "old-date"]);
   }
-  assert.equal(roomTable[0].at(-1), "Chauffage / radiateur");
+  assert.equal(roomTable[0].at(-1), "Chambre encombrée d’affaires");
   roomTable.pop();
   const call = (input: object) => context.doPost({ postData: { contents: JSON.stringify({ ...input, token: "test-token" }) } });
   const legacy = { id: createId(), version: 1, title: "Old issue" };
@@ -171,10 +172,11 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   const entry = roomEntry();
   entry.checks.find(c => c.key === "taps")!.result = "probleme";
   const record = { ...entry, photosData: undefined, version: 1, updatedAt: new Date().toISOString(), submissionHash: "a".repeat(64), photoIds: [], photoId: null };
-  const input = { action: "commitEntry", collection: "roomInspections", expectedVersion: 0, record, issue: roomIssue(record), photosData: ["data:image/jpeg;base64,YQ=="] };
+  const input = { action: "commitRoomInspectionV4", collection: "roomInspections", expectedVersion: 0, record, issue: roomIssue(record), photosData: ["data:image/jpeg;base64,YQ=="] };
   const result = call(input);
   assert.equal(result.ok, true, result.error);
-  assert.equal(roomTable[1].at(-1), "Libre");
+  assert.equal(roomTable[1].at(-2), "Libre");
+  assert.equal(roomTable[1].at(-1), "Non");
   assert.deepEqual(call(input), result);
   assert.equal(files.size, 1);
   assert.equal(call({ action: "photo", collection: "issues", issueId: entry.id, index: 0 }).data.base64, "YQ==");
@@ -191,7 +193,7 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(state.issues.length, 2); assert.equal(state.roomInspections.length, 1); assert.equal(state.familyEvents.length, 1);
   assert.equal(state.familyEvents[0].notes, fam.notes);
   assert.equal(state.roomInspections[0].occupied, true);
-  assert.equal(state.roomInspections[0].checks.at(-1).key, "radiator_clear");
+  assert.equal(state.roomInspections[0].checks.at(-1).key, "room_clutter");
   for (const collection of ["issues", "inspections", "roomInspections"]) assert.equal(call({ action: "deleteEntry", collection, id: fam.id }).ok, false);
   assert.equal(call({ action: "deleteEntry", collection: "familyEvents", id: "invalid" }).ok, false);
   assert.equal(call({ action: "deleteEntry", collection: "familyEvents", id: createId() }).code, 404);
@@ -233,7 +235,7 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(call({ action: "commit", collection: "issues", expectedVersion: 0, record: manualIssue }).ok, true);
   const duplicateEntry = { ...roomEntry(), room: "120", notes: "", checks: roomEntry().checks.map(c => ({ ...c, result: c.key === "taps" ? "probleme" as const : "ok" as const })) };
   const duplicateRecord = { ...duplicateEntry, version: 1, updatedAt: new Date().toISOString(), submissionHash: "e".repeat(64), photoIds: [], photoId: null };
-  const duplicateInput = { action: "commitRoomInspection", collection: "roomInspections", expectedVersion: 0, record: duplicateRecord, issue: roomIssue(duplicateRecord) };
+  const duplicateInput = { action: "commitRoomInspectionV4", collection: "roomInspections", expectedVersion: 0, record: duplicateRecord, issue: roomIssue(duplicateRecord) };
   const duplicateReceipt = call(duplicateInput);
   assert.equal(duplicateReceipt.ok, true, duplicateReceipt.error);
   assert.equal(duplicateReceipt.data.issue, undefined);

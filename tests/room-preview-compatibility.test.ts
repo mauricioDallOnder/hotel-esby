@@ -22,7 +22,7 @@ test("removing the temperature UI preserves the hash and receipt of controls sav
   const input = {
     type: "createRoomInspection", id: "a1111111-1111-4111-8111-111111111111", room: "114",
     date: "2026-10-20", actor: "Marie", notes: "", condition: "bon", cleaning: "faite",
-    checks: roomChecks.filter(check => check.key !== "radiator_clear").map(check => ({ key: check.key, result: "ok" })),
+    checks: roomChecks.filter(check => !["radiator_clear", "room_clutter"].includes(check.key)).map(check => ({ key: check.key, result: "ok" })),
     carpet: "ok", carpetNotes: "", microwave: "oui", photosData: [],
     schemaVersion: 4, occupied: true, bugs: "non", microwaveCleaning: "propre", fridgeCleaning: "propre",
     inspectedAt: "2026-10-20T10:15:00Z", distinctProblemKeys: [], issueLinks: [], temperatureC: 21.5,

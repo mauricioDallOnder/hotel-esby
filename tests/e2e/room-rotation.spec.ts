@@ -6,7 +6,7 @@ const day = "2026-11-11";
 
 function control(room: string, date: string, condition: RoomInspection["condition"] = "bon"): RoomInspection {
   return roomReceipt({
-    type: "createRoomInspection", id: crypto.randomUUID(), schemaVersion: 5, room, date,
+    type: "createRoomInspection", id: crypto.randomUUID(), schemaVersion: 6, room, date,
     inspectedAt: date + "T08:00:00.000Z", actor: "Test tournée", notes: "Contrôle fictif de rotation.",
     occupied: true, condition, cleaning: null, carpet: "ok", carpetNotes: "",
     microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",

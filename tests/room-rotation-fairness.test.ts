@@ -10,7 +10,7 @@ function addDays(date: string, days: number) {
 
 function inspection(room: string, date: string, condition: RoomEntry["condition"] = "bon", partial = false): RoomEntry {
   return {
-    type: "createRoomInspection", id: createId(), schemaVersion: 5, room, date,
+    type: "createRoomInspection", id: createId(), schemaVersion: 6, room, date,
     inspectedAt: date + "T10:00:00.000Z", actor: "Test rotation", notes: "", occupied: true, condition,
     cleaning: null, carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null,
     fridgeCleaning: "propre", bugs: "non", photosData: [],
