@@ -22,6 +22,7 @@ type Draft = Omit<RoomEntry, "condition" | "carpet"> & {
   fridgePresent?: boolean;
 };
 const sections = ["Équipements", "État et ménage", "Résumé"];
+const equipmentChecks = roomChecks.filter(check => check.key !== "room_clutter");
 function rememberedActor() { try { return localStorage.getItem("room-inspector") || ""; } catch { return ""; } }
 const yesNo = [{ value: "oui", label: "Oui" }, { value: "non", label: "Non" }] as const;
 const cleanliness = [{ value: "propre", label: "Propre", color: "success" }, { value: "sale", label: "Sale", color: "warning" }] as const;
@@ -40,7 +41,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const submitting = useRef(false);
   const preparingPhotos = useRef(false);
   const draft = useDeviceDraft<Draft>(recovery ? `draft:room-recovery:${recovery.originalId}` : `draft:room:${room}`, () => recovery ? normalizeRoomDraft(recovery.entry) as Draft : ({
-    type: "createRoomInspection", schemaVersion: 5, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
+    type: "createRoomInspection", schemaVersion: 6, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
     cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [],
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [], problemDetails: [],
   }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
@@ -80,6 +81,10 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   function updateCheck(key: RoomCheckKey, result: RoomEntry["checks"][number]["result"]) {
     if (!value) return;
     update({ checks: value.checks.map(check => check.key === key ? { ...check, result } : check),
+      ...(key === "room_clutter" && result === "probleme" ? {
+        problemDetails: [...(value.problemDetails || []).filter(detail => detail.key !== key),
+          { key, problemType: "room_cluttered", ...value.problemDetails?.find(detail => detail.key === key) }],
+      } : {}),
       ...(result !== "probleme" ? {
         problemDetails: value.problemDetails?.filter(detail => detail.key !== key),
         issueLinks: value.issueLinks?.filter(link => link.key !== key),
@@ -117,7 +122,15 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     if (!parsed.success) {
       const fields = parsed.error.issues.map(i => i.path.join("."));
       setValidationAttempted(true);
-      goStep(fields.some(f => f.startsWith("checks") || f.startsWith("problemDetails")) ? 0 : fields.some(f => !["actor", "date", "notes", "issueLinks"].some(key => f === key || f.startsWith(key + "."))) ? 1 : 2);
+      const equipmentError = parsed.error.issues.some(issue => {
+        if (issue.path[0] === "checks") return issue.path[1] !== "room_clutter";
+        if (issue.path[0] === "problemDetails") {
+          const index = issue.path[1];
+          return typeof index !== "number" || value.problemDetails?.[index]?.key !== "room_clutter";
+        }
+        return false;
+      });
+      goStep(equipmentError ? 0 : fields.some(f => !["actor", "date", "notes", "issueLinks"].some(key => f === key || f.startsWith(key + "."))) ? 1 : 2);
       setShowMetadata(true);
       setTimeout(() => content.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0);
       return;
@@ -152,7 +165,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   return <Dialog open fullWidth fullScreen={mobile} maxWidth="sm" onClose={busy || compressing ? undefined : onClose} aria-labelledby="inspection-title">
     <DialogTitle id="inspection-title" sx={{ pb: 1 }}>
       <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
-        <Box><Typography component="span" variant="h5" sx={{ fontWeight: 800 }}>Chambre {room}</Typography><Typography variant="body2" color="text.secondary">Contrôle rapide · {checked}/{roomChecks.length} équipements vérifiés</Typography></Box>
+        <Box><Typography component="span" variant="h5" sx={{ fontWeight: 800 }}>Chambre {room}</Typography><Typography variant="body2" color="text.secondary">Contrôle rapide · {checked}/{roomChecks.length} points vérifiés</Typography></Box>
         <Button disabled={busy || compressing} onClick={onClose}>Fermer</Button>
       </Stack>
       <LinearProgress variant="determinate" value={checked / roomChecks.length * 100} sx={{ my: 1.5, height: 5, borderRadius: 4 }} />
@@ -180,9 +193,9 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
           </Alert>}
           {step === 0 && <>
             <Typography variant="body2" color="text.secondary">Un toucher par résultat. « Absent » indique que l’équipement n’existe pas dans la chambre.</Typography>
-            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.result === "non_verifie" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
-            <Typography variant="caption" color="text.secondary">Le détecteur de fumée et le ferme-porte sont inclus. Pour le radiateur, OK signifie « Libre ». Les équipements déjà signalés restent à vérifier individuellement. Les réponses saisies sont conservées.</Typography>
-            {roomChecks.map(check => {
+            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.key !== "room_clutter" && c.result === "non_verifie" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
+            <Typography variant="caption" color="text.secondary">Le détecteur de fumée et le ferme-porte sont inclus. Pour le radiateur, OK signifie « Libre ». Les équipements déjà signalés restent à vérifier individuellement. L’encombrement de la chambre se vérifie à l’étape suivante. Les réponses saisies sont conservées.</Typography>
+            {equipmentChecks.map(check => {
               const result = value.checks.find(item => item.key === check.key)?.result;
               const detailIndex = value.problemDetails?.findIndex(detail => detail.key === check.key) ?? -1;
               const detail = detailIndex >= 0 ? value.problemDetails?.[detailIndex] : undefined;
@@ -214,6 +227,11 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <QuickChoice label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} options={[{ value: "oui", label: "Occupée" }, { value: "non", label: "Libre" }]} error={invalidField("occupied")} onChange={v => update({ occupied: v === "oui", cleaning: v === "oui" ? null : value.cleaning })} />
             <QuickChoice label="État général de la chambre" value={value.condition} options={[{ value: "bon", label: "Bon", color: "success" }, { value: "a_revoir", label: "À revoir", color: "warning" }, { value: "mauvais", label: "Mauvais", color: "error" }]} error={invalidField("condition")} onChange={condition => update({ condition })} />
             <Typography variant="caption" color="text.secondary">« Mauvais » prévoit un nouveau contrôle prioritaire après quatre jours, sans créer de problème technique à lui seul.</Typography>
+            <QuickChoice label="Chambre encombrée d’affaires" value={value.checks.find(check => check.key === "room_clutter")?.result}
+              options={[{ value: "ok", label: "Non", color: "success" }, { value: "probleme", label: "Oui", color: "error" }]}
+              error={invalidField("checks.room_clutter")} onChange={result => updateCheck("room_clutter", result)}
+              hint={<><Typography variant="caption" sx={{ display: "block" }}>Trop de bagages ou d’affaires qui encombrent fortement la chambre. « Oui » ajoute un constat dans « Problèmes techniques ». Joignez les photos à l’étape Résumé pour les retrouver dans les rapports.</Typography>
+                {known.filter(issue => matchesRoomFinding(issue, { key: "room_clutter", label: "" })).map(issue => <Typography key={issue.id} variant="caption" color="warning.main" sx={{ display: "block" }}>Déjà signalé : {issue.title} · le suivi existant sera proposé dans le résumé.</Typography>)}</>} />
             {value.occupied === false && <QuickChoice label="Nettoyage / ménage" value={value.cleaning} options={[{ value: "faite", label: "Fait", color: "success" }, { value: "non_faite", label: "Non fait", color: "warning" }]} error={invalidField("cleaning")} onChange={cleaning => update({ cleaning })} />}
             <QuickChoice label="Présence de cafards ou nuisibles" value={value.bugs} options={[{ value: "non", label: "Aucun", color: "success" }, { value: "oui", label: "Détectés", color: "error" }]} error={invalidField("bugs")} onChange={bugs => update({ bugs })} />
             {value.bugs === "oui" && <Alert severity="info">{cafardCase ? "Cette détection sera ajoutée au suivi existant de cette chambre, sans créer de doublon." : "Après enregistrement, cette détection apparaîtra dans « Suivi des cafards » pour noter le traitement et les vérifications."}</Alert>}

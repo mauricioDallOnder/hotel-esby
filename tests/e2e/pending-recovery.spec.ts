@@ -77,7 +77,7 @@ test("a refused checklist reopens its full local contents and is atomically repl
     title: "Robinet bloqué", description: "Robinet du lavabo bloqué", category: "Plomberie", priority: "normale", location: "Chambre 114", status: "resolu", assignee: "Agent", reportedBy: "Agent", photoId: null, history: [] };
   const original = parseEntry({ type: "createRoomInspection", id: crypto.randomUUID(), schemaVersion: 5, room: "114", date: "2026-10-20", inspectedAt: "2026-10-20T10:00:00.000Z",
     actor: "Agent contrôle", notes: "Observation et photos à conserver", condition: "bon", occupied: true, cleaning: null,
-    checks: roomChecks.map(check => ({ key: check.key, result: check.key === "taps" ? "probleme" : "ok" })),
+    checks: roomChecks.filter(check => check.key !== "room_clutter").map(check => ({ key: check.key, result: check.key === "taps" ? "probleme" : "ok" })),
     carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",
     photosData: ["data:image/jpeg;base64,YQ==", "data:image/jpeg;base64,Yg=="], issueLinks: [{ key: "taps", issueId: resolved.id }], problemDetails: [],
   }) as RoomEntry;
@@ -88,6 +88,11 @@ test("a refused checklist reopens its full local contents and is atomically repl
   await page.getByRole("button", { name: "Corriger le contrôle", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /^Chambre 114/ });
   await expect(dialog.getByRole("radiogroup", { name: "Robinets fonctionnels", exact: true }).getByRole("radio", { name: "Problème", exact: true })).toHaveAttribute("aria-checked", "true");
+  // Correcting an older control preserves its answers and asks only for the new point.
+  await dialog.getByRole("button", { name: "2. État et ménage", exact: true }).click();
+  const clutter = dialog.getByRole("radiogroup", { name: "Chambre encombrée d’affaires", exact: true });
+  await expect(clutter.getByRole("radio", { checked: true })).toHaveCount(0);
+  await clutter.getByRole("radio", { name: "Non", exact: true }).click();
   await dialog.getByRole("button", { name: "3. Résumé", exact: true }).click();
   await expect(dialog.getByLabel("Observations et problèmes constatés", { exact: true })).toHaveValue(original.notes);
   await expect(dialog.getByRole("img", { name: /^Photo du contrôle/ })).toHaveCount(2);
@@ -103,7 +108,8 @@ test("a refused checklist reopens its full local contents and is atomically repl
   expect(replacement.id).not.toBe(original.id);
   expect(replacement.date).toBe(original.date);
   expect(replacement.notes).toBe(original.notes);
-  expect(replacement.checks).toEqual(original.checks);
+  expect(replacement.schemaVersion).toBe(6);
+  expect(replacement.checks).toEqual([...original.checks, { key: "room_clutter", result: "ok" }]);
   expect(replacement.photosData).toEqual(original.photosData);
   expect(control.state.roomInspections).toHaveLength(1);
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);

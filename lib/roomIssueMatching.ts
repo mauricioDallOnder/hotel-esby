@@ -49,6 +49,20 @@ const keywords: Record<string, RegExp> = {
 
 type Finding = NonNullable<Issue["roomFindings"]>[number];
 
+// Room clutter is a room-wide observation. A radiator or door handle covered
+// by belongings remains a different finding, even in the same room.
+function hasRoomClutter(text: string) {
+  return text.split(/[.!?;,\n]+/).some(clause => {
+    const value = normalizeIssueText(clause);
+    if (/\b(?:non|pas|plus|jamais)(?: \w+){0,2} encombre\w*\b/.test(value) ||
+      /\b(?:aucun|pas d|absence d) encombrement\b/.test(value)) return false;
+    return /\bchambres?(?: \d{3})?(?: (?:est|sont|tres|fortement|trop|entierement|completement|encore)){0,3} encombre\w*\b/.test(value) ||
+      /\bchambres?(?: \d{3})?(?: (?:est|sont|tres|fortement|trop|entierement|completement)){0,3} (?:pleine?s?|remplie?s?|saturee?s?) (?:d|de) (?:affaires|bagages|valises|objets)\b/.test(value) ||
+      /\b(?:affaires|bagages|valises|objets)(?: \w+){0,3} (?:encombrent|envahissent|remplissent) (?:toute |toutes )?(?:la |les )?chambres?\b/.test(value) ||
+      /\bencombrement (?:de la |dans la |en )?chambre\b/.test(value);
+  });
+}
+
 function inferredProblemTypes(text: string): ProblemType[] {
   const value = normalizeIssueText(text), types: ProblemType[] = [];
   const has = (pattern: RegExp) => pattern.test(value);
@@ -73,6 +87,7 @@ function inferredProblemTypes(text: string): ProblemType[] {
   if (has(keywords.door_damage) && has(/\b(casse\w*|abime\w*|endommage\w*)\b/)) types.push("door_damage");
   if (has(keywords.smoke)) types.push("smoke_detector");
   if (has(keywords.fridge) && has(/\b(panne|hs|defectueu\w*|casse\w*|refroid\w*|ne (?:fonctionne|marche) (?:pas|plus))\b/)) types.push("fridge_fault");
+  if (hasRoomClutter(text)) types.push("room_cluttered");
   return types;
 }
 
@@ -88,6 +103,8 @@ function typedFindingMatches(issue: Issue, finding: Finding) {
   const explicit = issue.problemType && issue.problemType !== "other" ? issue.problemType : undefined;
   const existingTypes = explicit ? [explicit] : inferredProblemTypes(existingText);
   if (!type || !existingTypes.includes(type)) return false;
+  // The whole room has one clutter follow-up, even when bags move around.
+  if (type === "room_cluttered") return true;
   if (differentDetails(text, existingText)) return false;
   // A selected type is a useful suggestion, but never sufficient on its own
   // to silently combine two repairs. planRoomIssue asks for confirmation when
@@ -107,13 +124,17 @@ export function matchesRoomFinding(issue: Issue, finding: Finding) {
   if (finding.key === "damage") {
     if (meaningful(finding.description || ""))
       return sameManualProblem({ location: issue.location, title: "", description: finding.description! }, issue);
+    const clutterOnly = issue.roomFindings?.length
+      ? issue.roomFindings.every(item => item.key === "room_clutter" || item.problemType === "room_cluttered")
+      : issue.problemType === "room_cluttered";
     // "Rien de cassé : Problème" does not identify an object. It can suggest
-    // existing room repairs for a human choice, but can never auto-link one.
-    return !isCafardTechnicalReport(issue);
+    // existing room repairs for a human choice, but clutter is not a repair.
+    return !clutterOnly && !isCafardTechnicalReport(issue);
   }
   if (issue.roomFindings?.length) return issue.roomFindings.some(item => item.key === finding.key &&
     (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
   const text = normalizeIssueText(`${issue.title || ""} ${issue.description || ""}`);
+  if (finding.key === "room_clutter") return issue.problemType === "room_cluttered" || hasRoomClutter(text);
   // A heater fault is different from a heater hidden or obstructed by objects.
   if (finding.key === "radiator_clear") return /\b(chauffage\w*|radiateur\w*)\b/.test(text) &&
     /\b(cache[es]*|recouvert[es]*|obstrue[es]*|encombre[es]*)\b/.test(text) &&
@@ -171,6 +192,8 @@ function sameManualProblem(candidate: IssueCandidate, existing: Issue) {
   const left = normalizeIssueText(`${candidate.title || ""} ${candidate.description || ""}`);
   const right = normalizeIssueText(`${existing.title || ""} ${existing.description || ""}`);
   if (candidate.problemType && existing.problemType && candidate.problemType !== "other" && existing.problemType !== "other" && candidate.problemType !== existing.problemType) return false;
+  if ((candidate.problemType === "room_cluttered" || hasRoomClutter(left)) &&
+    (existing.problemType === "room_cluttered" || hasRoomClutter(right))) return true;
   if (differentDetails(left, right)) return false;
   const leftFailures = failureKinds.filter(([, pattern]) => pattern.test(left)).map(([kind]) => kind);
   const rightFailures = failureKinds.filter(([, pattern]) => pattern.test(right)).map(([kind]) => kind);
@@ -316,7 +339,7 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
       return true; // A stale link must never silently create a replacement.
     }
     const matching = open.filter(issue => matchesRoomFinding(issue, finding));
-    if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && !exactTypedDescription(matching[0], finding)) ||
+    if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && finding.problemType !== "room_cluttered" && !exactTypedDescription(matching[0], finding)) ||
       (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
       requiresChoice.push(finding.key);
       conflicts.push(`Un problème similaire est déjà ouvert pour « ${getProblemPreset(finding.problemType)?.label || finding.label} ». Choisissez le signalement à réutiliser ou précisez un problème différent.`);

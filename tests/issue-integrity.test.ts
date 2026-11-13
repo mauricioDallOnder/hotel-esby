@@ -8,7 +8,7 @@ import { roomChecks, roomIssue, type RoomInspection } from "../lib/rooms";
 
 const now = "2026-11-12T12:00:00.000Z", date = "2026-11-12";
 function inspection(keys = ["damage"]): RoomInspection {
-  return { type: "createRoomInspection", id: createId(), room: "101", date, actor: "Test", notes: "", occupied: true, schemaVersion: 5,
+  return { type: "createRoomInspection", id: createId(), room: "101", date, actor: "Test", notes: "", occupied: true, schemaVersion: 6,
     checks: roomChecks.map(check => ({ key: check.key, result: keys.includes(check.key) ? "probleme" : "ok" })),
     condition: "bon", cleaning: null, carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",
     problemDetails: keys.includes("damage") ? [{ key: "damage", problemType: "electrical_socket", description: "Prise cassée près du lit." }] : [],

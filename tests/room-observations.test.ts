@@ -8,7 +8,7 @@ import { roomAvailability } from "../lib/work";
 
 const day = "2026-11-04";
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "101", date: day,
+  type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "101", date: day,
   actor: "Test", notes: "", condition: "bon", occupied: true, cleaning: null,
   carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null,
   fridgeCleaning: "propre", bugs: "non", photosData: [],

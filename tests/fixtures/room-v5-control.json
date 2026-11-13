@@ -1,0 +1,82 @@
+{
+  "submissionHash": "b8f09148645f389e7399786600cda9d13cbc84c376a64308e7aa37d845c534fe",
+  "input": {
+    "type": "createRoomInspection",
+    "id": "d1111111-1111-4111-8111-111111111111",
+    "room": "114",
+    "date": "2026-11-12",
+    "actor": "Marie",
+    "notes": "",
+    "condition": "bon",
+    "cleaning": null,
+    "checks": [
+      {
+        "key": "taps",
+        "result": "ok"
+      },
+      {
+        "key": "switches",
+        "result": "ok"
+      },
+      {
+        "key": "leaks",
+        "result": "ok"
+      },
+      {
+        "key": "lights",
+        "result": "ok"
+      },
+      {
+        "key": "smoke",
+        "result": "ok"
+      },
+      {
+        "key": "damage",
+        "result": "ok"
+      },
+      {
+        "key": "window",
+        "result": "ok"
+      },
+      {
+        "key": "bed",
+        "result": "ok"
+      },
+      {
+        "key": "mattress",
+        "result": "ok"
+      },
+      {
+        "key": "fridge",
+        "result": "ok"
+      },
+      {
+        "key": "door_closer",
+        "result": "ok"
+      },
+      {
+        "key": "door_handle_clear",
+        "result": "ok"
+      },
+      {
+        "key": "radiator_clear",
+        "result": "ok"
+      }
+    ],
+    "carpet": "ok",
+    "carpetNotes": "",
+    "microwave": "non",
+    "photosData": [
+      "data:image/jpeg;base64,YQ=="
+    ],
+    "bugs": "non",
+    "occupied": true,
+    "schemaVersion": 5,
+    "microwaveCleaning": null,
+    "fridgeCleaning": "propre",
+    "inspectedAt": "2026-11-12T10:30:00.000Z",
+    "distinctProblemKeys": [],
+    "issueLinks": [],
+    "problemDetails": []
+  }
+}

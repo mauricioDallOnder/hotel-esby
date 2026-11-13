@@ -51,6 +51,7 @@ test("bulk OK includes smoke, minibar presence stays consistent and a new detect
   await expect(group("Propreté du minibar")).toHaveCount(0);
   await choose("Chambre occupée", "Occupée");
   await choose("État général de la chambre", "Bon");
+  await choose("Chambre encombrée d’affaires", "Non");
   await choose("Présence de cafards ou nuisibles", "Détectés");
   await expect(dialog.getByText("Cette détection sera ajoutée au suivi existant de cette chambre, sans créer de doublon.", { exact: true })).toBeVisible();
   await choose("État de la moquette", "OK");
@@ -89,7 +90,7 @@ test("room rotation cards keep equal dimensions on mobile and desktop and known 
   await login(page);
   const date = today(new Date(Date.now() - 8 * 86_400_000));
   const prior = (room: string, recordDate = date, condition: RoomInspection["condition"] = "mauvais"): RoomInspection => roomReceipt({
-    type: "createRoomInspection", schemaVersion: 5, id: crypto.randomUUID(), room, date: recordDate,
+    type: "createRoomInspection", schemaVersion: 6, id: crypto.randomUUID(), room, date: recordDate,
     inspectedAt: `${recordDate}T08:00:00.000Z`, actor: "Test présentation", notes: "État fictif pour vérifier les cartes.",
     condition, occupied: true, cleaning: null, carpet: "ok", carpetNotes: "",
     microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",

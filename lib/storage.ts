@@ -114,7 +114,7 @@ export async function google<T>(payload: Record<string, unknown>, timeoutMs = 55
       );
     }
     
-    if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitIssueV4", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitWorkEvent", "commitWorkEventV2", "commitCafardFollowupV2", "commitCafardFollowupV3", "commitLaundryCycle", "commitLaundryCycleV2", "commitLaundryCycleV3"].includes(String(payload.action)) && result.error === "Action invalide.")
+    if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitIssueV4", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitRoomInspectionV4", "commitWorkEvent", "commitWorkEventV2", "commitCafardFollowupV2", "commitCafardFollowupV3", "commitLaundryCycle", "commitLaundryCycleV2", "commitLaundryCycleV3"].includes(String(payload.action)) && result.error === "Action invalide.")
       throw new DomainError(["commitIssueV2", "commitIssueV3", "commitIssueV4"].includes(String(payload.action))
         ? "Mettez à jour et redéployez le fichier Google Apps Script avant d’enregistrer ce problème. Votre demande est conservée sur cet appareil."
         : "Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser ces modifications. Elles restent conservées sur cet appareil.", 503);
@@ -296,7 +296,7 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   if (storageMode() === "sheets") {
     try {
       const protectedPredecessor = change.collection === "workEvents" && change.record.expectedPreviousEventId !== undefined;
-      const action = change.collection === "roomInspections" ? "commitRoomInspectionV3"
+      const action = change.collection === "roomInspections" ? (change.record.schemaVersion || 1) >= 6 ? "commitRoomInspectionV4" : "commitRoomInspectionV3"
         : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? protectedPredecessor ? "commitLaundryCycleV3" : "commitLaundryCycleV2"
           : change.record.kind === "cafardFollowup" ? protectedPredecessor ? "commitCafardFollowupV3" : "commitCafardFollowupV2"
             : protectedPredecessor ? "commitWorkEventV2" : "commitWorkEvent" : "commitEntry";

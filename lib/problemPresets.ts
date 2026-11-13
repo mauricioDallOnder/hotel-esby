@@ -21,12 +21,13 @@ export const problemPresets = [
   { id: "lighting_fault", label: "Éclairage / ampoule défectueux", category: "Électricité", checkKeys: ["lights"] },
   { id: "heater_loose", label: "Radiateur détaché ou mal fixé", category: "Équipements", checkKeys: ["damage"] },
   { id: "radiator_obstructed", label: "Radiateur caché ou encombré", category: "Équipements", checkKeys: ["radiator_clear"] },
+  { id: "room_cluttered", label: "Chambre encombrée d’affaires", category: "Autre", checkKeys: ["room_clutter"] },
   { id: "drain_blocked", label: "Douche / évacuation bouchée", category: "Plomberie", checkKeys: ["damage", "taps"] },
   { id: "door_damage", label: "Porte endommagée", category: "Bâtiment", checkKeys: ["damage"] },
   { id: "smoke_detector", label: "Détecteur de fumée défectueux", category: "Sécurité incendie", checkKeys: ["smoke"] },
   // A minibar answer remains in the inspection; it never creates an automatic issue.
   { id: "fridge_fault", label: "Réfrigérateur en panne", category: "Équipements", checkKeys: [] },
-  { id: "other", label: "Autre problème", category: "Autre", checkKeys: ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear"] },
+  { id: "other", label: "Autre problème", category: "Autre", checkKeys: ["taps", "switches", "leaks", "lights", "smoke", "damage", "window", "radiator_clear", "room_clutter"] },
 ] as const satisfies readonly Preset[];
 
 export type ProblemType = typeof problemPresets[number]["id"];

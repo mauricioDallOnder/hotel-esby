@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inflateSync } from "node:zlib";
-import { applyCommand, createId, issueResponsible, monthlySummary, type Issue } from "../lib/domain";
+import { applyCommand, createId, issueResponsible, monthlySummary, type Issue, type State } from "../lib/domain";
 import { buildReport } from "../lib/pdfExport";
+import { reportPendingIssues, reportPhotos } from "../lib/reportData";
+import type { RoomInspection } from "../lib/rooms";
 
 const date = "2026-10-20";
 // A valid 2 x 2 RGB PNG, reused deliberately to exercise image-resource deduplication.
@@ -238,6 +240,122 @@ test("the default photo loader requests each index from the issue photo endpoint
       assert.equal(url.pathname, `/api/photos/${record.id}`);
       assert.equal(url.searchParams.get("collection"), "issues");
       assert.equal(url.searchParams.get("v"), "2");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalReader) Object.defineProperty(globalThis, "FileReader", originalReader);
+    else Reflect.deleteProperty(globalThis, "FileReader");
+  }
+});
+
+function roomControl(issueId: string, photoIds: string[], patch: Partial<RoomInspection> = {}): RoomInspection {
+  return {
+    type: "createRoomInspection", id: createId(), room: "204", date,
+    actor: "Marie", notes: "Les bagages encombrent la chambre.", condition: "a_revoir", occupied: true,
+    cleaning: null, carpet: "ok", carpetNotes: "", microwave: "non", bugs: "non", checks: [],
+    version: 1, updatedAt: `${date}T12:00:00Z`, submissionHash: "saved-control", photoIds, photoId: photoIds[0] || null,
+    relatedIssueIds: [issueId], issueSyncVersion: 2, createdIssue: false, ...patch,
+  };
+}
+
+test("clutter reports include all original and explicitly linked control photos once, within the period", async t => {
+  const clutter = issue({ title: "Chambre encombrée d’affaires", description: "Des bagages occupent une grande partie de la chambre.",
+    room: "204", roomFindings: [{ key: "room_clutter", label: "Chambre encombrée d’affaires", problemType: "room_cluttered" }] });
+  const second = roomControl(clutter.id, ["followup-1", "followup-2"]);
+  const state: State = { issues: [clutter, issue({ title: "ÉCLAIRAGE_SEUL" })], inspections: [], roomInspections: [
+    roomControl(clutter.id, clutter.photoIds!, { id: clutter.id, createdIssue: true, relatedIssueIds: [] }),
+    second,
+    roomControl(clutter.id, ["future-photo"], { date: "2026-11-01", updatedAt: "2026-11-01T10:00:00Z" }),
+    roomControl(createId(), ["unrelated-photo"]),
+    // An unconfirmed form's desired link is not evidence that this issue was used.
+    roomControl(createId(), ["unconfirmed-link"], { relatedIssueIds: [], issueLinks: [{ key: "room_clutter", issueId: clutter.id }] }),
+  ] };
+  const snapshot = structuredClone(state);
+  for (const kind of ["daily", "monthly"] as const) {
+    await t.test(kind, async () => {
+      const calls: { sourceId: string; index: number; collection: string; galleryIndex: number }[] = [];
+      const doc = await buildReport({ ...options(state.issues, kind), state, scope: "room_clutter" }, async (requested, galleryIndex, photo) => {
+        assert.equal(requested.id, clutter.id);
+        calls.push({ sourceId: photo.sourceId, index: photo.index, collection: photo.collection, galleryIndex });
+        return image;
+      });
+      const content = pages(doc), text = content.map(page => page.text).join(" ");
+      assert.equal(imageCount(content), 5);
+      assert.match(text, /Chambres encombrées/);
+      assert.doesNotMatch(text, /ÉCLAIRAGE_SEUL/);
+      assert.deepEqual(calls, [
+        ...[0, 1, 2].map(index => ({ sourceId: clutter.id, index, collection: "issues", galleryIndex: index })),
+        ...[0, 1].map(index => ({ sourceId: second.id, index, collection: "roomInspections", galleryIndex: index + 3 })),
+      ]);
+      for (let index = 1; index <= 5; index++) assert.ok(text.includes(`Photo ${index} / 5`));
+      assert.equal(reportPhotos(clutter, state, kind === "daily" ? date : "2026-10-31").length, 5);
+    });
+  }
+  assert.deepEqual(state, snapshot, "reporting must not rewrite source issues or controls");
+});
+
+test("the clutter filter follows individual resolution at the report date and ignores radiator obstructions", async () => {
+  const grouped = issue({ status: "en_cours", photoIds: [], roomFindings: [
+    { key: "room_clutter", label: "Chambre encombrée d’affaires", problemType: "room_cluttered", status: "resolu" },
+    { key: "lights", label: "Ampoule à remplacer", status: "ouvert" },
+  ], history: [historyEvent("2026-10-10T10:00:00Z", "ouvert"), {
+    ...historyEvent("2026-10-21T10:00:00Z", "en_cours"),
+    findingStates: [{ key: "room_clutter", status: "resolu" }, { key: "lights", status: "ouvert" }],
+    findingDetails: [{ key: "room_clutter", label: "Chambre encombrée d’affaires", problemType: "room_cluttered" }, { key: "lights", label: "Ampoule à remplacer" }],
+  }] });
+  const radiator = issue({ problemType: "radiator_obstructed", roomFindings: [{ key: "radiator_clear", label: "Radiateur caché ou encombré" }] });
+  const manual = issue({ problemType: "room_cluttered", photoIds: [] });
+  const state: State = { issues: [grouped, radiator, manual], inspections: [] };
+  assert.deepEqual(reportPendingIssues(state, "daily", date, "room_clutter").map(record => record.id), [grouped.id, manual.id]);
+  assert.deepEqual(reportPendingIssues(state, "monthly", "2026-10", "room_clutter").map(record => record.id), [manual.id]);
+  assert.equal(reportPendingIssues(state, "monthly", "2026-10").length, 3);
+  const doc = await buildReport({ ...options([radiator]), scope: "room_clutter" }, async () => {
+    assert.fail("empty clutter export must not request unrelated photos");
+  });
+  assert.match(pages(doc).map(page => page.text).join(" "), /Aucune chambre encombrée en attente/);
+});
+
+test("a corrected issue no longer uses an invalidated clutter classification in the current report", () => {
+  const corrected = issue({ title: "Éclairage en panne", roomFindingsActive: false, updatedAt: "2026-10-21T10:00:00Z",
+    roomFindings: [{ key: "room_clutter", label: "Chambre encombrée d’affaires" }], history: [
+      historyEvent("2026-10-10T10:00:00Z", "ouvert"),
+      { ...historyEvent("2026-10-21T10:00:00Z", "ouvert"), findingDetails: [{ key: "room_clutter", label: "Chambre encombrée d’affaires" }] },
+    ] });
+  const state: State = { issues: [corrected], inspections: [] };
+  assert.equal(reportPendingIssues(state, "daily", date, "room_clutter").length, 1);
+  assert.equal(reportPendingIssues(state, "monthly", "2026-10", "room_clutter").length, 0);
+});
+
+test("the default report loader uses the authenticated room-control endpoint for linked photos", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalReader = Object.getOwnPropertyDescriptor(globalThis, "FileReader");
+  const requests: URL[] = [];
+  const record = issue({ photoIds: [] });
+  const control = roomControl(record.id, ["linked-1", "linked-2"]);
+  class Reader {
+    result: string | null = null;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsDataURL(blob: Blob) {
+      void blob.arrayBuffer().then(buffer => {
+        this.result = `data:${blob.type};base64,${Buffer.from(buffer).toString("base64")}`;
+        this.onload?.();
+      }, () => this.onerror?.());
+    }
+  }
+  try {
+    Object.defineProperty(globalThis, "FileReader", { value: Reader, configurable: true, writable: true });
+    globalThis.fetch = async (input, init) => {
+      requests.push(new URL(String(input), "https://hotel.test"));
+      assert.equal(init?.cache, "no-cache");
+      return new Response(new Uint8Array(Buffer.from(image.split(",")[1], "base64")), { headers: { "Content-Type": "image/png" } });
+    };
+    const doc = await buildReport({ ...options([record]), state: { issues: [record], inspections: [], roomInspections: [control] } });
+    assert.equal(imageCount(pages(doc)), 2);
+    assert.deepEqual(requests.map(url => url.searchParams.get("index")), ["0", "1"]);
+    requests.forEach(url => {
+      assert.equal(url.pathname, `/api/photos/${control.id}`);
+      assert.equal(url.searchParams.get("collection"), "roomInspections");
     });
   } finally {
     globalThis.fetch = originalFetch;

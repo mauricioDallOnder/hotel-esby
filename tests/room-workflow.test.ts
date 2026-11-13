@@ -12,7 +12,7 @@ import { issueRoom, planRoomIssue, prepareRoomIssue } from "../lib/roomIssueMatc
 import { execute, executeEntry, readState } from "../lib/storage";
 
 const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "114", date: today(), actor: "Marie", notes: "", occupied: true, condition: "bon", cleaning: null,
+  type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "114", date: today(), actor: "Marie", notes: "", occupied: true, condition: "bon", cleaning: null,
   carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non", photosData: [],
   checks: roomChecks.map(c => ({ key: c.key, result: "ok" })), ...patch,
 });
@@ -27,7 +27,7 @@ test("new checks require a door closer answer, absence stays in history and old 
   input.checks.find(c => c.key === "door_closer")!.result = "absent";
   assert.equal(roomEntrySchema.safeParse(input).success, true);
   assert.ok(roomProblems(input).some(p => /Ferme-porte.*Absent/.test(p)));
-  const draft = normalizeRoomDraft({ ...input, schemaVersion: 3 as const, checks: input.checks.filter(c => !["door_closer", "radiator_clear"].includes(c.key)) });
+  const draft = normalizeRoomDraft({ ...input, schemaVersion: 3 as const, checks: input.checks.filter(c => !["door_closer", "radiator_clear", "room_clutter"].includes(c.key)) });
   assert.equal(draft.checks.find(c => c.key === "door_closer")?.result, "non_verifie");
   assert.equal(draft.checks.find(c => c.key === "radiator_clear")?.result, "non_verifie");
   assert.equal(draft.id, input.id);
@@ -35,7 +35,7 @@ test("new checks require a door closer answer, absence stays in history and old 
 
 test("v3 replay keeps the exact original parsed payload and hash without requiring the new check", () => {
   const v3 = { type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", cleaning: null,
-    checks: entry().checks.filter(c => !["door_closer", "radiator_clear"].includes(c.key)), carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 3, microwaveCleaning: null, fridgeCleaning: "propre" };
+    checks: entry().checks.filter(c => !["door_closer", "radiator_clear", "room_clutter"].includes(c.key)), carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 3, microwaveCleaning: null, fridgeCleaning: "propre" };
   const parsed = parseEntry(v3);
   assert.deepEqual(parsed, v3);
   const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -45,7 +45,7 @@ test("v3 replay keeps the exact original parsed payload and hash without requiri
 
 test("v2 queued controls keep their original fields and hash without later checks", () => {
   const v2 = { type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", cleaning: "faite",
-    checks: entry().checks.filter(c => !["door_closer", "radiator_clear"].includes(c.key)), carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 2 };
+    checks: entry().checks.filter(c => !["door_closer", "radiator_clear", "room_clutter"].includes(c.key)), carpet: "ok", carpetNotes: "", microwave: "non", photosData: [], bugs: "non", occupied: true, schemaVersion: 2 };
   const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   assert.deepEqual(parseEntry(v2), v2);
   assert.equal(hash(parseEntry(v2)), hash(v2));
@@ -53,7 +53,7 @@ test("v2 queued controls keep their original fields and hash without later check
 });
 
 test("an existing v4 draft gains an unanswered radiator check while a queued v4 control stays unchanged", () => {
-  const old = entry({ schemaVersion: 4, checks: entry().checks.filter(c => c.key !== "radiator_clear"),
+  const old = entry({ schemaVersion: 4, checks: entry().checks.filter(c => !["radiator_clear", "room_clutter"].includes(c.key)),
     inspectedAt: "2026-11-01T10:00:00Z", photosData: ["data:image/jpeg;base64,YQ=="],
     issueLinks: [{ key: "taps", issueId: createId() }], distinctProblemKeys: ["lights"] });
   const original = structuredClone(old);
@@ -62,8 +62,8 @@ test("an existing v4 draft gains an unanswered radiator check while a queued v4 
   assert.deepEqual(parsed.checks, old.checks);
   assert.equal(parsed.checks.some(c => c.key === "radiator_clear"), false);
   const draft = normalizeRoomDraft(old);
-  assert.equal(draft.schemaVersion, 5);
-  assert.deepEqual(draft.checks, [...old.checks, { key: "radiator_clear", result: "non_verifie" }]);
+  assert.equal(draft.schemaVersion, 6);
+  assert.deepEqual(draft.checks, [...old.checks, { key: "radiator_clear", result: "non_verifie" }, { key: "room_clutter", result: "non_verifie" }]);
   assert.deepEqual(draft.photosData, old.photosData);
   assert.deepEqual(draft.issueLinks, old.issueLinks);
   assert.deepEqual(draft.distinctProblemKeys, old.distinctProblemKeys);
@@ -204,7 +204,7 @@ test("old Google scripts reject the new room action before writes and keep a ret
   const original = globalThis.fetch; let requests = 0;
   globalThis.fetch = async (_url, options) => {
     requests++;
-    assert.equal(JSON.parse(String(options?.body)).action, "commitRoomInspectionV3");
+    assert.equal(JSON.parse(String(options?.body)).action, "commitRoomInspectionV4");
     return Response.json({ ok: false, code: 400, error: "Action invalide." });
   };
   try { await assert.rejects(executeEntry(entry()), error => (error as { code: number }).code === 503 && /redéployez/.test((error as Error).message)); assert.equal(requests, 1); }

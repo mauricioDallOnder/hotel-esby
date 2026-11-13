@@ -35,12 +35,10 @@ const menuItems = [
     path: "/anomalies",
   },
   { label: "Suivi des cafards", path: "/cafards" },
-  /* Menu masqué temporairement : décommenter pour réactiver.
   {
-    label: "Rapports & bilan mensuel",
+    label: "Rapports",
     path: "/relatorios",
   },
-  */
 ];
 
 type SidebarProps = {

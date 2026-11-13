@@ -14,7 +14,7 @@ test("a room marked free in Occupation leaves every checklist view and returns w
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   const inspection: RoomEntry = {
-    type: "createRoomInspection", schemaVersion: 5, id: crypto.randomUUID(), room: "106", date: "2026-10-01",
+    type: "createRoomInspection", schemaVersion: 6, id: crypto.randomUUID(), room: "106", date: "2026-10-01",
     inspectedAt: "2026-10-01T09:00:00.000Z", actor: "Test historique occupation", notes: "Observation fictive à conserver.",
     condition: "mauvais", occupied: true, cleaning: null, carpet: "ok", carpetNotes: "",
     microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non", photosData: [],

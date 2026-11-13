@@ -25,7 +25,7 @@ const availability = (patch: Partial<WorkEntry> = {}): WorkEntry => ({
   room: "114", date: "2026-10-20", actor: "Marie", notes: "", occurredAt: "2026-10-20T10:00:00.000Z", free: false, ...patch,
 });
 const inspection = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
-  type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "114", date: "2026-10-20", actor: "Marie",
+  type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "114", date: "2026-10-20", actor: "Marie",
   occupied: true, condition: "bon", cleaning: null, notes: "Présence constatée près de la porte.",
   carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre",
   bugs: "oui", photosData: [], checks: roomChecks.map(check => ({ key: check.key, result: "ok" })), ...patch,

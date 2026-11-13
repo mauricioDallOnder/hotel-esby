@@ -1,5 +1,49 @@
 # Hôtel Contrôle
 
+## Chambres encombrées e relatórios com fotos
+
+Em **Checklist des chambres → État et ménage**, a pergunta
+**Chambre encombrée d’affaires** registra o excesso de malas ou pertences que
+ocupa o quarto. Escolha **Non** ou **Oui** antes de salvar o controle. O atalho
+dos equipamentos não responde a essa pergunta; ela exige uma verificação própria.
+
+- **Non** fica no histórico do controle, sem criar um problema.
+- **Oui** cria um constat em **Problèmes techniques**, com quarto, data,
+  responsável, observações e fotos. Se houver um acompanhamento de encombrement
+  aberto para aquele quarto, ele será reutilizado. Quando houver várias fichas
+  possíveis, o resumo pede a escolha da ficha antes de salvar.
+- As fotos podem ser adicionadas em **Résumé**: até três por controle. Uma nova
+  visita conserva suas próprias fotos e fica vinculada ao acompanhamento existente.
+  Responder **Non** em uma visita posterior não encerra automaticamente a ficha;
+  a resolução continua sendo confirmada no acompanhamento do problema.
+- O histórico e o checklist impresso mostram **Non / Oui**. O modelo em branco
+  continua em uma página A4. Nos controles antigos, o item aparece como
+  **Non renseigné**, sem presumir uma resposta que não foi registrada.
+
+O menu **Rapports** está visível no computador e no celular. Escolha o período
+e, em **Contenu**, selecione **Tous les problèmes** ou **Chambres encombrées**.
+**Télécharger le PDF** inclui as fotos originais e as das inspeções vinculadas
+até a data do relatório, sem repetir a mesma foto de origem. Fotos indisponíveis
+ficam identificadas no documento, preservando as demais. A opção mensal permanece
+dentro de Rapports; o menu Tâches du jour continua oculto.
+
+### Publicação desta alteração
+
+1. Copie o arquivo completo `google-apps-script/Code.gs` para o projeto existente
+   e publique uma nova versão da **mesma implantação**, preservando URL, token,
+   planilha, fotos e gatilhos.
+2. Depois publique o app da branch aprovada. Os novos controles usam o formato
+   **v6** e a ação **`commitRoomInspectionV4`**. Um Apps Script antigo recusa a
+   nova ação antes de gravar; o controle fica conservado para nova tentativa.
+3. O campo fica no JSON e na coluna **Chambre encombrée d’affaires**, acrescentada
+   ao final de **Contrôles chambres**. Não é criada outra aba. Os problemas
+   continuam em **Anomalies**, apresentados no app como Problèmes techniques.
+
+Os formatos v2 a v5 e seus hashes de reenvio são preservados. Rascunhos ainda
+editáveis recebem o novo item sem resposta; controles já enviados continuam
+usando o conteúdo original. A rotação reconhece os controles antigos completos
+sem exigir o item que ainda não existia. GitHub/Vercel não publica o Apps Script.
+
 ## Confiabilidade, recuperação e desempenho — novembro de 2026
 
 ### 1. Preservar o trabalho e resolver envios pendentes
@@ -63,7 +107,8 @@ as buscas vazias têm mensagem explícita e o aviso de nova versão aparece dent
 1. Atualize `google-apps-script/Code.gs` e publique uma nova versão da **mesma**
    implantação Apps Script. Preserve token, URL, planilha, fotos e gatilhos.
 2. Publique o app a partir da branch aprovada. As novas ações protegidas são
-   `commitIssueV4`, `commitWorkEventV2`, `commitCafardFollowupV3` e `commitLaundryCycleV3`.
+   `commitIssueV4`, `commitRoomInspectionV4`, `commitWorkEventV2`,
+   `commitCafardFollowupV3` e `commitLaundryCycleV3`.
    Um script antigo recusa essas ações antes da gravação; as solicitações permanecem
    disponíveis para nova tentativa após a atualização.
 3. Em aparelhos com solicitações antigas, use **Voir tous les envois** e
@@ -122,7 +167,7 @@ O tipo manual **Réfrigérateur en panne** não muda essa regra do checklist.
 Atualize **`google-apps-script/Code.gs`** e publique uma nova versão da implantação
 existente **antes de publicar o app**. Preserve a URL, o token, a planilha, as fotos
 e os gatilhos. A escrita manual usa agora **`commitIssueV4`** e os controles usam
-**`commitRoomInspectionV3`**; um script antigo recusa essas operações com uma instrução
+**`commitRoomInspectionV4`** para o formato v6; um script antigo recusa essas operações com uma instrução
 de atualização, conservando os controles pendentes no aparelho. Os recibos de envios
 já confirmados permanecem aceitos. Edições operacionais antigas sem identidade do
 predecessor seguem a conferência explícita descrita acima.
@@ -442,7 +487,8 @@ um problema conhecido continua exigindo resposta individual.
   mantêm esse ponto como não informado. Rascunhos antigos recebem o campo como
   não verificado, para que a equipe o preencha.
 
-Novos controles usam o formato v5. Os formatos anteriores e seus hashes de reenvio
+O radiador foi acrescentado no formato v5; os novos controles usam agora v6,
+com o item de encombrement descrito acima. Os formatos anteriores e seus hashes de reenvio
 são preservados, inclusive os controles que aguardam sincronização no aparelho.
 A rotação continua reconhecendo os controles completos antigos sem exigir uma
 resposta que ainda não existia.

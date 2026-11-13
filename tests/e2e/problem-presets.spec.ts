@@ -79,7 +79,7 @@ async function finishRoomAnswers(dialog: Locator) {
   await dialog.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK", exact: true }).click();
   await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   for (const [label, answer] of [
-    ["Chambre occupée", "Occupée"], ["État général de la chambre", "Bon"], ["Présence de cafards ou nuisibles", "Aucun"],
+    ["Chambre occupée", "Occupée"], ["État général de la chambre", "Bon"], ["Chambre encombrée d’affaires", "Non"], ["Présence de cafards ou nuisibles", "Aucun"],
     ["État de la moquette", "OK"], ["Micro-ondes présent ?", "Non"], ["Propreté du minibar", "Propre"],
   ]) await dialog.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click();
   await dialog.getByRole("button", { name: "Continuer · Résumé", exact: true }).click();

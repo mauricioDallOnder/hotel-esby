@@ -19,7 +19,7 @@ function local(t: TestContext, state: State = { issues: [], inspections: [] }) {
   t.after(() => { previous.forEach(([key, value]) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; }); rmSync(directory, { recursive: true, force: true }); });
 }
 function room(): RoomEntry {
-  return parseEntry({ type: "createRoomInspection", id: createId(), schemaVersion: 5, room: "114", date: "2026-10-20", inspectedAt: "2026-10-20T10:00:00.000Z",
+  return parseEntry({ type: "createRoomInspection", id: createId(), schemaVersion: 6, room: "114", date: "2026-10-20", inspectedAt: "2026-10-20T10:00:00.000Z",
     actor: "Agent contrôle", notes: "Observation à conserver intégralement", condition: "bon", occupied: true, cleaning: null,
     checks: roomChecks.map(check => ({ key: check.key, result: check.key === "taps" ? "probleme" : "ok" })),
     carpet: "ok", carpetNotes: "", microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",
@@ -111,7 +111,7 @@ test("the exact Apps Script replay repairs a partial control before a complete r
     if (failRepair) throw new Error("Temporary service failure");
     records[collection].push(structuredClone(issue));
   };
-  const send = () => context.doPost({ postData: { contents: JSON.stringify({ action: "commitRoomInspectionV3", token: "test-token", collection: "roomInspections",
+  const send = () => context.doPost({ postData: { contents: JSON.stringify({ action: "commitRoomInspectionV4", token: "test-token", collection: "roomInspections",
     expectedVersion: 0, record, issue: roomIssue(record), photosData: entry.photosData,
   }) } });
   const first = send();

@@ -83,6 +83,7 @@ test("a room inspection routes a cafards detection to its own follow-up without 
   await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("Chambre occupée", "Occupée");
   await choose("État général de la chambre", "Bon");
+  await choose("Chambre encombrée d’affaires", "Non");
   await choose("Présence de cafards ou nuisibles", "Détectés");
   await expect(dialog.getByText(/cette détection apparaîtra dans « Suivi des cafards »/)).toBeVisible();
   await choose("État de la moquette", "OK");

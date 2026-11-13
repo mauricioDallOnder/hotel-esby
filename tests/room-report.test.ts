@@ -10,7 +10,7 @@ import { parseEntry, roomChecks, roomEntrySchema, type RoomEntry, type RoomInspe
 import { buildFreeRoomsReport, freeRoomRows } from "../lib/roomPdfExport";
 import { execute, executeEntry, readState } from "../lib/storage";
 
-const entry = (): RoomEntry => ({ type: "createRoomInspection", schemaVersion: 5, id: createId(), room: "114", date: today(), actor: "Marie", bugs: "non", notes: "", condition: "bon", occupied: false, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "sale", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
+const entry = (): RoomEntry => ({ type: "createRoomInspection", schemaVersion: 6, id: createId(), room: "114", date: today(), actor: "Marie", bugs: "non", notes: "", condition: "bon", occupied: false, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "sale", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
 const saved = (overrides: Partial<RoomInspection> = {}): RoomInspection => ({ ...entry(), version: 1, updatedAt: "2026-10-01T10:00:00Z", submissionHash: "hash", photoIds: [], photoId: null, ...overrides });
 
 // NOTA: Adicionada a palavra-chave 'async'
@@ -59,7 +59,7 @@ test("a corrupt room photo is labelled without preventing the other rooms from p
 });
 
 test("v2 pending payloads keep their original hash and cleaning answers", () => {
-  const v2 = { type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", cleaning: "faite", checks: entry().checks.filter(c => c.key !== "door_closer" && c.key !== "radiator_clear"), carpet: "ok", carpetNotes: "", microwave: "oui", photosData: [], occupied: true, schemaVersion: 2 };
+  const v2 = { type: "createRoomInspection", id: createId(), room: "114", date: today(), actor: "Marie", notes: "", condition: "bon", cleaning: "faite", checks: entry().checks.filter(c => !["door_closer", "radiator_clear", "room_clutter"].includes(c.key)), carpet: "ok", carpetNotes: "", microwave: "oui", photosData: [], occupied: true, schemaVersion: 2 };
   assert.deepEqual(parseEntry(v2), v2);
   assert.equal(createHash("sha256").update(JSON.stringify(parseEntry(v2))).digest("hex"), createHash("sha256").update(JSON.stringify(v2)).digest("hex"));
   assert.equal(roomEntrySchema.safeParse(v2).success, false);
