@@ -1054,7 +1054,7 @@ var WorkLogic = (function () {
 var exports = {};
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.laundryMachines = void 0;
+exports.laundryMachines = exports.roomVacancyLabels = void 0;
 exports.getLaundryMachine = getLaundryMachine;
 exports.getLaundryEndsAt = getLaundryEndsAt;
 exports.validateLaundryEntry = validateLaundryEntry;
@@ -1065,6 +1065,7 @@ exports.validateWorkEntry = validateWorkEntry;
 exports.roomAvailability = roomAvailability;
 exports.dailyTasks = dailyTasks;
 exports.familyComments = familyComments;
+exports.roomVacancyLabels = { available: "Libre", works: "En travaux" };
 // The visible numbers match the physical labels. Washers and dryers have
 // distinct IDs so a cycle can never reserve the wrong kind of appliance.
 exports.laundryMachines = [
@@ -1186,6 +1187,9 @@ function latestCafardObservationId(inspections, room) {
     return (latest === null || latest === void 0 ? void 0 : latest.id) || null;
 }
 function validateWorkEntry(entry, events, families, deletedFamilies = [], inspections = []) {
+    if (entry.vacancyReason !== undefined && (entry.kind !== "roomAvailability" || entry.free !== true ||
+        !["available", "works"].includes(entry.vacancyReason)))
+        return "Précisez « Libre » ou « En travaux » uniquement pour une chambre non occupée.";
     const current = latestWork(events, entry.kind).get(entry.targetId);
     if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
         return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
@@ -1212,7 +1216,11 @@ function validateWorkEntry(entry, events, families, deletedFamilies = [], inspec
 }
 function roomAvailability(room, events, latestInspection) {
     const manual = latestWork(events, "roomAvailability").get(room);
-    return { free: manual ? manual.free : (latestInspection === null || latestInspection === void 0 ? void 0 : latestInspection.occupied) === false ? true : (latestInspection === null || latestInspection === void 0 ? void 0 : latestInspection.occupied) === true ? false : undefined,
+    const free = manual ? manual.free : (latestInspection === null || latestInspection === void 0 ? void 0 : latestInspection.occupied) === false ? true : (latestInspection === null || latestInspection === void 0 ? void 0 : latestInspection.occupied) === true ? false : undefined;
+    // The boolean continues to mean unoccupied, including rooms blocked by work.
+    // Historical free rooms remain available until an operator changes their status.
+    const vacancyReason = free === true ? (manual === null || manual === void 0 ? void 0 : manual.vacancyReason) || "available" : undefined;
+    return { free, vacancyReason,
         source: manual, revision: manual ? manual.expectedRevision + 1 : 0 };
 }
 function dailyTasks(events, date) {

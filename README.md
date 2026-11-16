@@ -1,5 +1,43 @@
 # Hôtel Contrôle
 
+## Chambres libres ou en travaux — 16/11/2026
+
+Em **Occupation des chambres**, um único checkbox indica a ocupação:
+
+- Marcado: **Occupée**. Marcar o checkbox registra que há ocupantes no quarto.
+- Desmarcado: **Libre** ou **En travaux**, conforme a situação escolhida.
+  **Libre** significa disponível para ocupação; **En travaux** significa vazio,
+  mas indisponível enquanto os trabalhos estiverem em curso.
+- Uma ocupação ainda desconhecida continua indicada por um traço. O botão
+  **Marquer libre** permite escolher a situação sem registrar uma ocupação fictícia.
+
+Ao desmarcar **Occupée**, uma janela permite escolher **Libre** ou **En travaux**,
+acrescentar uma **Observation (facultative)** e confirmar em **Enregistrer**.
+A escolha e a observação são registradas juntas; **Annuler** não altera o quarto.
+Para corrigir a situação ou o texto posteriormente, use **Modifier** no cartão.
+A observação aparece no cartão e pode ser consultada integralmente nessa janela.
+Marcar o quarto como **Occupée** retira a situação de vacância e sua observação
+do cartão atual; os registros anteriores permanecem no histórico.
+
+Os filtros e contadores distinguem **Occupées**, **Libres**, **En travaux** e
+**Non renseignées** e respeitam a pesquisa e o andar. Quartos livres e em trabalhos
+ficam fora do checklist e da rotação. O PDF **Chambres libres** reúne apenas os
+disponíveis para ocupação e inclui suas observações de disponibilidade.
+Indicar **En travaux** não cria automaticamente um problema técnico.
+
+Os quartos anteriormente marcados livres continuam como **Libre** até que a
+equipe escolha outra situação. O app não presume quais deles estão em trabalhos.
+As mudanças continuam sendo salvas em **Suivi quotidien** (`workEvents`):
+`vacancyReason` no JSON do registro e a observação no campo existente `notes`
+(coluna **Texte**), com data, autor e controle de versão. Reenvios antigos mantêm
+seu conteúdo e sua confirmação original.
+
+**Publicação:** integrar o PR e publicar o app. A ação protegida
+`commitWorkEventV2` já conserva os novos dados no Apps Script existente; não há
+nova aba, migração de planilha ou necessidade de republicar o Apps Script para
+esta alteração. O arquivo `Code.gs` foi regenerado para manter as validações
+compartilhadas em sincronia nas próximas publicações do script.
+
 ## Correction du brouillon de suivi des cafards — 13/11/2026
 
 Depois de um tratamento seguido por uma nova detecção no checklist, o formulário

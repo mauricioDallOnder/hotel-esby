@@ -13,9 +13,13 @@ test("a mobile checkbox marks a never inspected room free, persists and updates 
   const before = await (await page.request.get("/api/hotel")).json();
   await context.setOffline(true);
   await markFree.click();
+  const availability = page.getByRole("dialog", { name: "Disponibilité · chambre 102", exact: true });
+  await expect(availability.getByRole("radio", { name: "Libre", exact: true })).toBeChecked();
+  await availability.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await expect(availability).toHaveCount(0);
   await expect(checkbox).not.toBeChecked();
   await expect(checkbox).toHaveAttribute("data-indeterminate", "false");
-  await expect(card.getByRole("status").getByText("Libre", { exact: true })).toBeVisible();
+  await expect(card.getByText("Libre", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: /^Libres :/ }).click();
   await expect(page.getByRole("checkbox", { name: "Chambre 102 occupée", exact: true })).toBeVisible();
@@ -23,7 +27,7 @@ test("a mobile checkbox marks a never inspected room free, persists and updates 
   await expect.poll(async () => (await (await page.request.get("/api/hotel?refresh=1")).json()).workEvents?.filter((e: WorkEntry) => e.kind === "roomAvailability" && e.room === "102").length).toBe(1);
   await page.reload();
   await expect(checkbox).not.toBeChecked();
-  await expect(card.getByRole("status").getByText("Libre", { exact: true })).toBeVisible();
+  await expect(card.getByText("Libre", { exact: true })).toBeVisible();
   const after = await (await page.request.get("/api/hotel")).json();
   expect(after.roomInspections?.length || 0).toBe(before.roomInspections?.length || 0);
   expect(after.issues.length).toBe(before.issues.length);

@@ -64,7 +64,9 @@ export default function RoomsPage() {
   const rotation = useMemo(() => roomRotation(currentHistory, day, dailyTarget, config?.intervalDays, deferred, eligibleRooms), [currentHistory, day, dailyTarget, config?.intervalDays, deferred, eligibleRooms]);
   const openByRoom = useMemo(() => new Map(rooms.map(n => [n, openRoomIssues(issues, n)])), [issues]);
   const visibleDeferred = deferred.filter(n => eligible.has(n) && !rotation.done.includes(n));
-  const free = rooms.filter(n => availability.get(n) === true);
+  const free = rooms.filter(n => availabilityStates.get(n)?.vacancyReason === "available");
+  const hasWorks = rooms.some(n => availabilityStates.get(n)?.vacancyReason === "works");
+  const emptyRotationMessage = hasWorks ? "Les chambres sont libres ou en travaux. Aucune tournée à prévoir." : "Toutes les chambres sont marquées libres. Aucune tournée à prévoir.";
   const hasPendingControls = currentHistory.some(record => record.date === day && eligible.has(record.room) && pendingIds.has(record.id) && completeRoomInspection(record));
   const nextRoom = rotation.plan.find(n => n !== room);
   const extraCount = Math.min(5, rotation.candidates.length);
@@ -162,7 +164,7 @@ export default function RoomsPage() {
                 </Button>;
               })}
             </Box>
-          </> : <Alert severity={rotation.total ? "success" : "info"}>{!rotation.total ? "Toutes les chambres sont marquées libres. Aucune tournée à prévoir." : rotation.candidates.length && rotation.done.length >= rotation.goal ? "Objectif du jour atteint. Vous pouvez poursuivre si vous avez encore du temps." : rotation.due.length ? "Les chambres restantes ont été reportées. Vous pouvez les reprendre ci-dessous." : "Tous les contrôles prévus sont à jour. Les prochains suivis restent programmés."}</Alert>}
+          </> : <Alert severity={rotation.total ? "success" : "info"}>{!rotation.total ? emptyRotationMessage : rotation.candidates.length && rotation.done.length >= rotation.goal ? "Objectif du jour atteint. Vous pouvez poursuivre si vous avez encore du temps." : rotation.due.length ? "Les chambres restantes ont été reportées. Vous pouvez les reprendre ci-dessous." : "Tous les contrôles prévus sont à jour. Les prochains suivis restent programmés."}</Alert>}
           {rotation.done.length >= rotation.goal && extraCount > 0 && <Button variant="contained" disabled={!config} onClick={extendTour} sx={{ minHeight: 48 }}>Ajouter {extraCount} chambre{extraCount > 1 ? "s" : ""} à la tournée</Button>}
           {rotation.candidates.length > rotation.plan.length && <Typography variant="body2" color="text.secondary">{rotation.candidates.length - rotation.plan.length} chambre(s) à contrôler restent après cette tournée. Elles gardent leur place dans la file.</Typography>}
           {rotation.due.length > 0 && <Button variant="text" onClick={() => showRooms("due")} sx={{ alignSelf: "flex-start", minHeight: 44 }}>Voir toutes les chambres à contrôler ({rotation.due.length})</Button>}
@@ -181,9 +183,9 @@ export default function RoomsPage() {
       </Stack>
       {exportError && <Alert severity="error">{exportError}</Alert>}
       <Stack spacing={1.5} id="room-checklist-filters" sx={{ scrollMarginTop: 88 }}>
-        <Typography variant="body2" color="text.secondary">Les chambres marquées libres sont exclues du checklist et de la tournée. Les chambres dont l’occupation n’est pas renseignée restent affichées. Une chambre réapparaît dès qu’elle est marquée occupée.</Typography>
+        <Typography variant="body2" color="text.secondary">Les chambres libres ou en travaux sont exclues du checklist et de la tournée. Les chambres dont l’occupation n’est pas renseignée restent affichées. Une chambre réapparaît dès qu’elle est marquée occupée.</Typography>
         <Button component={Link} href="/occupation" variant="text" sx={{ alignSelf: "flex-start", minHeight: 44 }}>Occupation des chambres</Button>
-        <Typography variant="caption" color="text.secondary">Décochez « Occupée » pour marquer une chambre libre et la retirer de cette liste. Un trait indique une occupation inconnue.</Typography>
+        <Typography variant="caption" color="text.secondary">Décochez « Occupée », choisissez « Libre » ou « En travaux », puis enregistrez. Une observation peut être ajoutée. Un trait indique une occupation inconnue.</Typography>
         <TextField label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }} role="group" aria-label="Filtrer par étage">{["all", ...roomGroups.map(g => g.label)].map(g => <Chip key={g} label={g === "all" ? "Tous les étages" : g} onClick={() => setGroup(g)} aria-pressed={group === g} color={group === g ? "primary" : "default"} variant={group === g ? "filled" : "outlined"} />)}</Stack>
         <Box role="group" aria-label="Filtrer par occupation" sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(3, minmax(0, 1fr))" }, gap: 1 }}>
