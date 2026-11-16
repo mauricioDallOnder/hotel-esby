@@ -8,6 +8,7 @@ import { cafardCases, cafardStatusLabels, cafardTreatmentReminder } from "@/lib/
 import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
 import { normalizeRoomDraft, roomCheckResultLabel, roomChecks, roomEntrySchema, roomFindings, roomProblems, type RoomCheckKey, type RoomEntry } from "@/lib/rooms";
 import { matchesRoomFinding, openRoomIssues, planRoomIssue } from "@/lib/roomIssueMatching";
+import { radiatorFireRiskRooms } from "@/lib/roomRotation";
 import { problemPresetsForCheck } from "@/lib/problemPresets";
 import { preparePhotos } from "@/lib/photos";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
@@ -34,6 +35,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const { issues } = useAppContext();
   const { enqueue } = useEntries();
   const { history, day } = useRoomObservations();
+  const fireRisk = useMemo(() => radiatorFireRiskRooms(history, day).has(room), [history, day, room]);
   const { events } = useWorkEvents();
   const theme = useTheme();
   const mobile = useMediaQuery(theme.breakpoints.down("sm"));
@@ -46,6 +48,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [], problemDetails: [],
   }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
   const value = draft.value;
+  const draftFireRisk = !!value?.checks.some(check => check.key === "radiator_clear" && check.result === "probleme");
   const fridgeResult = value?.checks.find(check => check.key === "fridge")?.result;
   const fridgePresence = fridgeResult === "absent" ? "non" : fridgeResult === "ok" || fridgeResult === "probleme" || value?.fridgePresent ? "oui" : "";
   const [step, setStep] = useState(0);
@@ -172,6 +175,10 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       <Stack direction="row" spacing={0.5} role="navigation" aria-label="Étapes du contrôle">{sections.map((section, index) => <Button key={section} disabled={busy || compressing} onClick={() => goStep(index)} variant={step === index ? "contained" : "text"} aria-current={step === index ? "step" : undefined} sx={{ flex: 1, px: 0.5 }}>{index + 1}. {section}</Button>)}</Stack>
     </DialogTitle>
     <DialogContent ref={content} dividers sx={{ px: { xs: 2, sm: 3 } }}>
+      {(fireRisk || draftFireRisk) && <Alert severity="error" aria-label="Priorité incendie" sx={{ mb: 2 }}>
+        <Typography variant="body2" sx={{ fontWeight: 700 }}>Risque d’incendie : radiateur encombré.</Typography>
+        <Typography variant="body2">Faites sécuriser la situation et prévenez la direction. Après enregistrement, la chambre reste prioritaire jusqu’à une nouvelle vérification « Libre ». Ce contrôle ne doit pas être reporté.</Typography>
+      </Alert>}
       {invalid.length > 0 && <Alert severity="error" sx={{ mb: 2 }}>Il reste des points à vérifier. Aucun contrôle n’a été enregistré.</Alert>}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {draft.error && <Alert severity="error">{draft.error}</Alert>}
@@ -193,8 +200,8 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
           </Alert>}
           {step === 0 && <>
             <Typography variant="body2" color="text.secondary">Un toucher par résultat. « Absent » indique que l’équipement n’existe pas dans la chambre.</Typography>
-            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.key !== "room_clutter" && c.result === "non_verifie" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
-            <Typography variant="caption" color="text.secondary">Le détecteur de fumée et le ferme-porte sont inclus. Pour le radiateur, OK signifie « Libre ». Les équipements déjà signalés restent à vérifier individuellement. L’encombrement de la chambre se vérifie à l’étape suivante. Les réponses saisies sont conservées.</Typography>
+            <Button variant="outlined" onClick={() => update({ checks: value.checks.map(c => c.key !== "room_clutter" && !(fireRisk && c.key === "radiator_clear") && c.result === "non_verifie" && !known.some(i => matchesRoomFinding(i, { key: c.key, label: "" })) ? { ...c, result: "ok" } : c) })}>J’ai vérifié : les équipements restants sont OK</Button>
+            <Typography variant="caption" color="text.secondary">Le détecteur de fumée et le ferme-porte sont inclus. Pour le radiateur, OK signifie « Libre ». Un radiateur déjà signalé encombré doit être vérifié individuellement. Les équipements déjà signalés restent à vérifier individuellement. L’encombrement de la chambre se vérifie à l’étape suivante. Les réponses saisies sont conservées.</Typography>
             {equipmentChecks.map(check => {
               const result = value.checks.find(item => item.key === check.key)?.result;
               const detailIndex = value.problemDetails?.findIndex(detail => detail.key === check.key) ?? -1;
@@ -208,7 +215,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
                 ? [{ value: "ok", label: "Libre", color: "success" }, { value: "probleme", label: "Caché", color: "error" }]
                 : [{ value: "ok", label: "OK", color: "success" }, { value: "probleme", label: "Problème", color: "error" }, { value: "absent", label: "Absent" }]}
               onChange={answer => updateCheck(check.key, answer)}
-              hint={<>{check.key === "door_closer" && <Typography variant="caption" sx={{ display: "block" }}>Ouvrir puis relâcher la porte : vérifier qu’elle se referme. Noter aussi l’absence du mécanisme dans le contrôle.</Typography>}{check.key === "radiator_clear" && <Typography variant="caption" sx={{ display: "block" }}>« Libre » : rien ne couvre ou ne cache le radiateur. « Caché » : un signalement sera ajouté dans « Problèmes techniques ».</Typography>}{known.filter(i => matchesRoomFinding(i, { key: check.key, label: "" })).map(i => <Typography key={i.id} variant="caption" color="warning.main" sx={{ display: "block" }}>Déjà signalé : {i.title}</Typography>)}</>} />
+              hint={<>{check.key === "door_closer" && <Typography variant="caption" sx={{ display: "block" }}>Ouvrir puis relâcher la porte : vérifier qu’elle se referme. Noter aussi l’absence du mécanisme dans le contrôle.</Typography>}{check.key === "radiator_clear" && <Typography variant="caption" sx={{ display: "block" }}>« Libre » : rien ne couvre ou ne cache le radiateur. « Caché » : risque d’incendie ; après enregistrement, la chambre devient prioritaire immédiatement, en plus du signalement dans « Problèmes techniques ».</Typography>}{known.filter(i => matchesRoomFinding(i, { key: check.key, label: "" })).map(i => <Typography key={i.id} variant="caption" color="warning.main" sx={{ display: "block" }}>Déjà signalé : {i.title}</Typography>)}</>} />
               {result === "probleme" && presets.length > 0 && <Stack spacing={1.5} sx={{ pl: { xs: 0, sm: 2 } }}>
                 <ProblemTypeSelect label={`Problème constaté · ${check.label}`} value={detail?.problemType || ""}
                   onChange={problemType => selectProblem(check.key, problemType)} options={presets} emptyLabel="Préciser le problème" disabled={busy || compressing}
@@ -226,7 +233,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
           {step === 1 && <>
             <QuickChoice label="Chambre occupée" value={value.occupied === true ? "oui" : value.occupied === false ? "non" : ""} options={[{ value: "oui", label: "Occupée" }, { value: "non", label: "Libre" }]} error={invalidField("occupied")} onChange={v => update({ occupied: v === "oui", cleaning: v === "oui" ? null : value.cleaning })} />
             <QuickChoice label="État général de la chambre" value={value.condition} options={[{ value: "bon", label: "Bon", color: "success" }, { value: "a_revoir", label: "À revoir", color: "warning" }, { value: "mauvais", label: "Mauvais", color: "error" }]} error={invalidField("condition")} onChange={condition => update({ condition })} />
-            <Typography variant="caption" color="text.secondary">« Mauvais » prévoit un nouveau contrôle prioritaire après quatre jours, sans créer de problème technique à lui seul.</Typography>
+            <Typography variant="caption" color="text.secondary">« Mauvais » prévoit un nouveau contrôle prioritaire après quatre jours, sans créer de problème technique à lui seul. Un radiateur encombré n’attend pas ce délai.</Typography>
             <QuickChoice label="Chambre encombrée d’affaires" value={value.checks.find(check => check.key === "room_clutter")?.result}
               options={[{ value: "ok", label: "Non", color: "success" }, { value: "probleme", label: "Oui", color: "error" }]}
               error={invalidField("checks.room_clutter")} onChange={result => updateCheck("room_clutter", result)}
@@ -263,7 +270,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
               const linked = known.find(issue => issue.id === explicit) || (!explicit && !needsChoice && matching.length === 1 ? matching[0] : undefined);
               const unavailable = !!explicit && !known.some(issue => issue.id === explicit);
               const options = [...matching, ...known.filter(issue => !matching.some(candidate => candidate.id === issue.id))];
-              const checkLabel = roomChecks.find(check => check.key === finding.key)?.label || finding.label;
+              const checkLabel = roomChecks.find(item => item.key === finding.key)?.label || finding.label;
               return <Stack key={finding.key} spacing={1.5} sx={{ p: 1.5, bgcolor: "action.hover", borderRadius: 2 }}>
                 <Typography sx={{ fontWeight: 700 }}>{finding.label}</Typography>
                 <Typography variant="caption" color={linked ? "warning.main" : needsChoice || unavailable ? "error.main" : "text.secondary"}>
@@ -287,7 +294,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
               <Typography variant="subtitle2">Autres constats conservés dans le contrôle</Typography>
               <Box component="ul" sx={{ mt: 0.5, mb: 0, pl: 3 }}>{otherProblems.map(label => <Typography component="li" variant="body2" key={label}>{label}</Typography>)}</Box>
             </Box>}
-            {value.condition === "mauvais" && <Alert severity="info">Mauvais état : nouveau contrôle prioritaire après quatre jours. Les autres chambres continuent de tourner pendant ce délai.</Alert>}
+            {value.condition === "mauvais" && <Alert severity="info">{fireRisk || draftFireRisk ? "Le suivi de l’état général attend quatre jours ; la priorité incendie, elle, reste immédiate." : "Mauvais état : nouveau contrôle prioritaire après quatre jours. Les autres chambres continuent de tourner pendant ce délai."}</Alert>}
             <TextField label="Observations et problèmes constatés" multiline minRows={2} value={value.notes} onChange={e => update({ notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} helperText="Facultatif : les boutons décrivent déjà les constats. Les détails restent dans l’historique." />
             <Typography variant="subtitle2">Photos · {value.photosData.length}/3</Typography>
             <Stack direction="row" spacing={1}>
@@ -309,7 +316,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       </>}
       <Stack direction="row" sx={{ justifyContent: "space-between" }}>
         {step > 0 && <Button disabled={busy || compressing} onClick={() => goStep(step - 1)}>Retour</Button>}
-        {!recovery && <Button disabled={busy || compressing} onClick={onDefer}>Reporter à demain</Button>}
+        {!recovery && <Button disabled={busy || compressing || fireRisk || draftFireRisk} onClick={onDefer}>Reporter à demain</Button>}
       </Stack>
     </DialogActions>
   </Dialog>;

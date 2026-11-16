@@ -11,7 +11,7 @@ import { RoomChecklistPrintDialog } from "@/components/RoomChecklistPrintDialog"
 import { displayDate, today } from "@/lib/domain";
 import { cleaningText, roomGroups, rooms, type RoomEntry } from "@/lib/rooms";
 import { roomObservations } from "@/lib/roomObservations";
-import { completeRoomInspection, daysSince, roomRotation } from "@/lib/roomRotation";
+import { completeRoomInspection, daysSince, radiatorFireRiskRooms, roomRotation } from "@/lib/roomRotation";
 import { openRoomIssues } from "@/lib/roomIssueMatching";
 import { RoomAvailabilityCheckbox } from "@/components/RoomAvailabilityCheckbox";
 import { useWorkEvents } from "@/lib/useWorkEvents";
@@ -19,11 +19,11 @@ import { roomAvailabilityView } from "@/lib/roomAvailabilityView";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
 
 type Preferences = { dailyGoal: number; intervalDays: number; deferredDay: string; deferred: string[]; extendedDay?: string; extendedGoal?: number };
-const filters = { all: "Toutes", occupied: "Occupées", unknown: "Non renseignées", target: "Tournée du jour", due: "À contrôler", never: "Sans contrôle complet", problems: "Problèmes techniques" };
+const filters = { all: "Toutes", occupied: "Occupées", unknown: "Non renseignées", fire: "Urgences incendie", target: "Tournée du jour", due: "À contrôler", never: "Sans contrôle complet", problems: "Problèmes techniques" };
 const occupancyFilters = ["all", "occupied", "unknown"] as const;
-const workflowFilters = ["target", "due", "never", "problems"] as const;
+const workflowFilters = ["fire", "target", "due", "never", "problems"] as const;
 const filterColors = { all: "primary", occupied: "info", unknown: "inherit" } as const;
-const rotationReasons = { never: "À compléter", overdue: "En retard", followup: "Suivi · 4 j", scheduled: "Planifié", done: "Fait" } as const;
+const rotationReasons = { fire: "Incendie · urgent", never: "À compléter", overdue: "En retard", followup: "Suivi · 4 j", scheduled: "Planifié", done: "Fait" } as const;
 export default function RoomsPage() {
   const { roomInspections = [], issues, hotelName } = useAppContext();
   const { pending } = useEntries();
@@ -59,11 +59,13 @@ export default function RoomsPage() {
   const { latest, history: currentHistory, pendingIds } = useMemo(() => roomObservations(roomInspections, pending, day), [roomInspections, pending, day]);
   const availabilityStates = useMemo(() => roomAvailabilityView(workEvents, latest), [workEvents, latest]);
   const availability = useMemo(() => new Map([...availabilityStates].map(([room, state]) => [room, state.free])), [availabilityStates]);
-  const eligibleRooms = useMemo(() => rooms.filter(n => availability.get(n) !== true), [availability]);
+  const activeFireRisk = useMemo(() => radiatorFireRiskRooms(currentHistory, day), [currentHistory, day]);
+  // An occupancy change is not proof that an obstructed radiator has been cleared.
+  const eligibleRooms = useMemo(() => rooms.filter(n => availability.get(n) !== true || activeFireRisk.has(n)), [availability, activeFireRisk]);
   const eligible = new Set(eligibleRooms);
   const rotation = useMemo(() => roomRotation(currentHistory, day, dailyTarget, config?.intervalDays, deferred, eligibleRooms), [currentHistory, day, dailyTarget, config?.intervalDays, deferred, eligibleRooms]);
   const openByRoom = useMemo(() => new Map(rooms.map(n => [n, openRoomIssues(issues, n)])), [issues]);
-  const visibleDeferred = deferred.filter(n => eligible.has(n) && !rotation.done.includes(n));
+  const visibleDeferred = deferred.filter(n => eligible.has(n) && !rotation.done.includes(n) && !activeFireRisk.has(n));
   const free = rooms.filter(n => availabilityStates.get(n)?.vacancyReason === "available");
   const hasWorks = rooms.some(n => availabilityStates.get(n)?.vacancyReason === "works");
   const emptyRotationMessage = hasWorks ? "Les chambres sont libres ou en travaux. Aucune tournée à prévoir." : "Toutes les chambres sont marquées libres. Aucune tournée à prévoir.";
@@ -83,6 +85,10 @@ export default function RoomsPage() {
   }
   function deferRoom() {
     if (!room || !config) return;
+    if (activeFireRisk.has(room)) {
+      setMessage(`Chambre ${room} : radiateur encombré, risque d’incendie. Ce contrôle urgent ne peut pas être reporté.`);
+      return;
+    }
     changePreference({ deferredDay: day, deferred: [...new Set([...deferred, room])] });
     setMessage(`Chambre ${room} reportée à demain. Son brouillon est conservé ; elle n’est pas comptée comme contrôlée.`);
     setRoom(rotation.done.length < rotation.goal ? rotation.candidates.find(n => n !== room) || null : null);
@@ -102,6 +108,7 @@ export default function RoomsPage() {
     unknown: scopedRooms.filter(n => availability.get(n) === undefined).length,
   };
   const visibleGroups = scopedGroups.map(g => ({ ...g, rooms: g.rooms.filter(n => {
+    if (filter === "fire") return rotation.fireRiskRooms.includes(n);
     if (filter === "target") return rotation.plan.includes(n) || rotation.done.includes(n);
     if (filter === "due") return rotation.due.includes(n);
     if (filter === "never") return rotation.neverRooms.includes(n);
@@ -129,9 +136,15 @@ export default function RoomsPage() {
           <LinearProgress aria-label="Objectif du jour" variant="determinate" value={rotation.goal ? Math.min(100, rotation.done.length / rotation.goal * 100) : 0} sx={{ height: 8, borderRadius: 4 }} />
           <Box>
             <Typography variant="body2"><strong>{rotation.covered} / {rotation.total}</strong> chambres avec un contrôle complet dans les {rotation.interval} derniers jours.</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>D’abord les chambres sans contrôle complet, puis les contrôles dont l’échéance est la plus ancienne. Le mauvais état déclenche un suivi après 4 jours.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>Radiateur encombré : contrôle de sécurité immédiat, avant la rotation normale, jusqu’à vérification « Libre ». Sinon, d’abord les chambres sans contrôle complet, puis les échéances les plus anciennes. Le mauvais état déclenche un suivi après 4 jours.</Typography>
           </Box>
+          {rotation.fireRiskRooms.length > 0 && <Alert severity="error" aria-label="Priorités incendie" sx={{ "& .MuiAlert-message": { minWidth: 0 } }}>
+            <Typography sx={{ fontWeight: 700 }}>Risque d’incendie · radiateur encombré dans {rotation.fireRiskRooms.length} chambre(s).</Typography>
+            <Typography variant="body2">Faites sécuriser la situation et prévenez la direction. Ces contrôles restent prioritaires, même si l’objectif du jour est atteint. Une nouvelle vérification « Libre » est nécessaire pour lever l’alerte.</Typography>
+            <Button color="error" onClick={() => showRooms("fire")} sx={{ mt: 0.5 }}>Voir les chambres à risque</Button>
+          </Alert>}
           <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }}>
+            {rotation.fireRiskRooms.length > 0 && <Chip label={`Urgences incendie : ${rotation.fireRiskRooms.length}`} color="error" onClick={() => showRooms("fire")} variant="outlined" />}
             <Chip label={`${rotation.due.length} à contrôler`} onClick={() => showRooms("due")} color={rotation.due.length ? "primary" : "default"} variant="outlined" />
             <Chip label={`${rotation.neverRooms.length} sans contrôle complet`} onClick={() => showRooms("never")} variant="outlined" />
             <Chip label={`${rotation.overdueRooms.length} en retard`} color={rotation.overdueRooms.length ? "warning" : "default"} variant="outlined" />
@@ -148,12 +161,12 @@ export default function RoomsPage() {
             </Alert>}
           </Stack>}
           {rotation.plan.length ? <>
-            <Button variant="contained" size="large" onClick={() => setRoom(rotation.plan[0])} disabled={!config}>Continuer la tournée · chambre {rotation.plan[0]}</Button>
+            <Button variant="contained" color={rotation.fireRiskRooms.includes(rotation.plan[0]) ? "error" : "primary"} size="large" onClick={() => setRoom(rotation.plan[0])} disabled={!config}>{rotation.fireRiskRooms.includes(rotation.plan[0]) ? "Contrôle urgent" : "Continuer la tournée"} · chambre {rotation.plan[0]}</Button>
             <Box role="group" aria-label="Chambres de la tournée" sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(3, minmax(0, 1fr))", sm: "repeat(5, minmax(0, 1fr))" }, gridAutoRows: "1fr", gap: 1 }}>
               {rotation.plan.map((n, index) => {
                 const priority = rotation.priorityRooms.includes(n);
                 const detail = rotation.byRoom.get(n)!;
-                return <Button key={n} variant="outlined" color={priority ? "warning" : "primary"} onClick={() => setRoom(n)}
+                return <Button key={n} variant="outlined" color={detail.fireRisk ? "error" : priority ? "warning" : "primary"} onClick={() => setRoom(n)}
                   aria-label={`Ouvrir la chambre ${n} dans la tournée`} aria-describedby={`rotation-status-${n}`}
                   sx={{ minWidth: 0, minHeight: 96, height: "100%", width: "100%", px: 0.5, py: 1 }}>
                   <Stack spacing={0.25} sx={{ alignItems: "center", width: "100%", minWidth: 0 }}>
@@ -165,7 +178,7 @@ export default function RoomsPage() {
               })}
             </Box>
           </> : <Alert severity={rotation.total ? "success" : "info"}>{!rotation.total ? emptyRotationMessage : rotation.candidates.length && rotation.done.length >= rotation.goal ? "Objectif du jour atteint. Vous pouvez poursuivre si vous avez encore du temps." : rotation.due.length ? "Les chambres restantes ont été reportées. Vous pouvez les reprendre ci-dessous." : "Tous les contrôles prévus sont à jour. Les prochains suivis restent programmés."}</Alert>}
-          {rotation.done.length >= rotation.goal && extraCount > 0 && <Button variant="contained" disabled={!config} onClick={extendTour} sx={{ minHeight: 48 }}>Ajouter {extraCount} chambre{extraCount > 1 ? "s" : ""} à la tournée</Button>}
+          {!rotation.fireRiskRooms.length && rotation.done.length >= rotation.goal && extraCount > 0 && <Button variant="contained" disabled={!config} onClick={extendTour} sx={{ minHeight: 48 }}>Ajouter {extraCount} chambre{extraCount > 1 ? "s" : ""} à la tournée</Button>}
           {rotation.candidates.length > rotation.plan.length && <Typography variant="body2" color="text.secondary">{rotation.candidates.length - rotation.plan.length} chambre(s) à contrôler restent après cette tournée. Elles gardent leur place dans la file.</Typography>}
           {rotation.due.length > 0 && <Button variant="text" onClick={() => showRooms("due")} sx={{ alignSelf: "flex-start", minHeight: 44 }}>Voir toutes les chambres à contrôler ({rotation.due.length})</Button>}
           {visibleDeferred.length > 0 && <details><summary style={{ cursor: "pointer" }}>{visibleDeferred.length} chambre(s) reportée(s) aujourd’hui</summary><Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1, mt: 1 }}>{visibleDeferred.map(n => <Button key={n} onClick={() => { changePreference({ deferred: deferred.filter(item => item !== n) }); setRoom(n); }}>Reprendre {n}</Button>)}</Stack></details>}
@@ -183,7 +196,7 @@ export default function RoomsPage() {
       </Stack>
       {exportError && <Alert severity="error">{exportError}</Alert>}
       <Stack spacing={1.5} id="room-checklist-filters" sx={{ scrollMarginTop: 88 }}>
-        <Typography variant="body2" color="text.secondary">Les chambres libres ou en travaux sont exclues du checklist et de la tournée. Les chambres dont l’occupation n’est pas renseignée restent affichées. Une chambre réapparaît dès qu’elle est marquée occupée.</Typography>
+        <Typography variant="body2" color="text.secondary">Les chambres libres ou en travaux sont exclues du checklist normal, sauf lorsqu’un radiateur encombré exige un contrôle urgent. Les chambres dont l’occupation n’est pas renseignée restent affichées.</Typography>
         <Button component={Link} href="/occupation" variant="text" sx={{ alignSelf: "flex-start", minHeight: 44 }}>Occupation des chambres</Button>
         <Typography variant="caption" color="text.secondary">Décochez « Occupée », choisissez « Libre » ou « En travaux », puis enregistrez. Une observation peut être ajoutée. Un trait indique une occupation inconnue.</Typography>
         <TextField label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
@@ -197,7 +210,7 @@ export default function RoomsPage() {
         </Box>
         <Typography variant="caption" color="text.secondary">Les compteurs suivent la recherche et l’étage sélectionné.</Typography>
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }} role="group" aria-label="Filtrer les contrôles">
-          {workflowFilters.map(key => <Chip key={key} label={filters[key]} onClick={() => setFilter(key)} aria-pressed={filter === key} color={filter === key ? "primary" : "default"} variant={filter === key ? "filled" : "outlined"} />)}
+          {workflowFilters.map(key => <Chip key={key} label={filters[key]} onClick={() => setFilter(key)} aria-pressed={filter === key} color={key === "fire" ? "error" : filter === key ? "primary" : "default"} variant={filter === key ? "filled" : "outlined"} />)}
         </Stack>
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1, alignItems: "center", justifyContent: "space-between" }}>
           <Typography variant="body2" color="text.secondary" role="status">{visibleCount} chambre(s) affichée(s) sur {rotation.total}</Typography>
@@ -211,15 +224,17 @@ export default function RoomsPage() {
           {g.rooms.map(n => {
             const record = latest.get(n), open = openByRoom.get(n) || [], done = rotation.done.includes(n), target = rotation.plan.includes(n), priority = rotation.priorityRooms.includes(n);
             const detail = rotation.byRoom.get(n)!;
-            const borderColor = availability.get(n) === false ? "info.main" : "grey.400";
+            const fireRisk = rotation.fireRiskRooms.includes(n);
+            const borderColor = fireRisk ? "error.main" : availability.get(n) === false ? "info.main" : "grey.400";
             return <Paper component="article" key={n} aria-label={`Chambre ${n}`} variant="outlined" sx={{ p: 1.5, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", borderColor: "divider", borderTop: "4px solid", borderTopColor: borderColor }}>
               <Stack spacing={1} sx={{ flex: 1 }}>
-                <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}><Typography variant="h4" component="h3" sx={{ fontSize: 36, lineHeight: 1.2, fontWeight: 800 }}>{n}</Typography>{done && <Chip label="Fait" color="success" size="small" />}</Stack>
+                <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}><Typography variant="h4" component="h3" sx={{ fontSize: 36, lineHeight: 1.2, fontWeight: 800 }}>{n}</Typography>{done && !fireRisk && <Chip label="Fait" color="success" size="small" />}</Stack>
                 <Typography variant="caption">{detail.lastComplete ? `Contrôle complet : ${displayDate(detail.lastComplete)}` : "Sans contrôle complet"}</Typography>
                 {record && !completeRoomInspection(record) && <Typography variant="caption" color="text.secondary">Visite partielle : {displayDate(record.date)}</Typography>}
                 {detail.reason === "overdue" && <Typography variant="caption" color="warning.main">Contrôle complet en retard</Typography>}
-                {priority && <Typography variant="caption" color="warning.main" sx={{ fontWeight: 700 }}>Mauvais état · suivi à faire</Typography>}
-                {detail.waitingUntil && <Typography variant="caption" color="text.secondary">Mauvais état · suivi le {displayDate(detail.waitingUntil)}</Typography>}
+                {fireRisk && <Typography variant="caption" color="error.main" sx={{ fontWeight: 800 }}>Risque d’incendie · radiateur encombré · contrôle urgent</Typography>}
+                {priority && !fireRisk && <Typography variant="caption" color="warning.main" sx={{ fontWeight: 700 }}>Mauvais état · suivi à faire</Typography>}
+                {detail.waitingUntil && !fireRisk && <Typography variant="caption" color="text.secondary">Mauvais état · suivi le {displayDate(detail.waitingUntil)}</Typography>}
                 {detail.reason === "scheduled" && detail.dueOn && !detail.waitingUntil && <Typography variant="caption" color="text.secondary">Prochain contrôle : {displayDate(detail.dueOn)}</Typography>}
                 <RoomAvailabilityCheckbox room={n} availability={availabilityStates.get(n)!} inspection={record} inspectionPending={!!record && pendingIds.has(record.id)} />
                 {record?.occupied === false && <Typography variant="caption">Dernier contrôle · Ménage {cleaningText(record).toLowerCase()}</Typography>}
@@ -227,7 +242,7 @@ export default function RoomsPage() {
                 {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">Contrôle en attente d’envoi</Typography>}
                 {visibleDeferred.includes(n) && <Typography variant="caption">Reportée à demain</Typography>}
                 <Box sx={{ flex: 1 }} />
-                <Button variant={target ? "contained" : "outlined"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ minHeight: 48 }}>{done ? "Recontrôler" : "Contrôler"}</Button>
+                <Button variant={target ? "contained" : "outlined"} color={fireRisk ? "error" : "primary"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ minHeight: 48 }}>{done ? "Recontrôler" : "Contrôler"}</Button>
                 <Button aria-label={`Historique de la chambre ${n}`} onClick={() => setHistoryRoom(n)}>Historique</Button>
               </Stack>
             </Paper>;
