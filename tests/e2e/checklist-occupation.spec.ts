@@ -8,6 +8,12 @@ async function login(page: Page) {
 async function state(page: Page): Promise<State> {
   return (await page.request.get("/api/hotel?fresh=1")).json();
 }
+async function confirmFree(page: Page, room: string) {
+  const dialog = page.getByRole("dialog", { name: `Disponibilité · chambre ${room}`, exact: true });
+  await expect(dialog.getByRole("radio", { name: "Libre", exact: true })).toBeChecked();
+  await dialog.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+}
 
 test("a room marked free in Occupation leaves every checklist view and returns with its history when occupied again", async ({ page }, testInfo) => {
   test.setTimeout(90000);
@@ -31,6 +37,7 @@ test("a room marked free in Occupation leaves every checklist view and returns w
   const occupied = page.getByRole("checkbox", { name: "Chambre 106 occupée", exact: true });
   await expect(occupied).toBeChecked();
   await occupied.click();
+  await confirmFree(page, "106");
   await expect(occupied).not.toBeChecked();
   await expect.poll(async () => (await state(page)).workEvents?.filter(event => event.kind === "roomAvailability" && event.room === "106").map(event => event.free)).toEqual([true]);
 
@@ -87,6 +94,7 @@ test("an accepted offline free change hides the room immediately while a blocked
   await expect(markFree).toBeVisible();
   await context.setOffline(true);
   await markFree.click({ timeout: 10000 });
+  await confirmFree(page, "107");
   await expect(offlineRoom).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Ouvrir la chambre 107 dans la tournée", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Toutes : 84", exact: true })).toBeVisible();
@@ -101,6 +109,7 @@ test("an accepted offline free change hides the room immediately while a blocked
   const blockedRoom = page.getByRole("article", { name: "Chambre 108", exact: true });
   const rejected = page.waitForResponse(response => response.url().endsWith("/api/entries") && response.status() === 409);
   await blockedRoom.getByRole("button", { name: "Marquer libre", exact: true }).click();
+  await confirmFree(page, "108");
   await rejected;
   await expect(blockedRoom).toBeVisible();
   await expect(blockedRoom.getByRole("checkbox")).toHaveAttribute("aria-checked", "mixed");

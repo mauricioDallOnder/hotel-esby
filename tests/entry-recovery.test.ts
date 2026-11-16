@@ -6,7 +6,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { test, type TestContext } from "node:test";
 import { createId, type Issue, type State } from "../lib/domain";
-import { buildRecoveredWorkEntry, canReplaceWorkRequest, inspectEntryRecovery, isCompleteEntryReceipt, recoveryStateIdentity } from "../lib/entryRecovery";
+import { buildRecoveredWorkEntry, canReplaceWorkRequest, inspectEntryRecovery, isCompleteEntryReceipt, recoveryStateIdentity, workRequestDetails } from "../lib/entryRecovery";
 import type { PendingEntry } from "../lib/entryQueue";
 import { parseEntry, roomChecks, roomIssue, workEntrySchema, type RoomEntry, type RoomInspection, type WorkEntry, type WorkEvent } from "../lib/rooms";
 import { executeEntry, readPhoto, readState } from "../lib/storage";
@@ -35,6 +35,28 @@ function saved(entry: WorkEntry): WorkEvent {
 }
 function queued(entry: RoomEntry | WorkEntry): PendingEntry { return { entry, protocol: 2, attempted: true, blocked: true, blockedReason: "conflict" }; }
 const empty = (): State => ({ issues: [], inspections: [], workEvents: [], familyEvents: [], roomInspections: [] });
+
+test("vacancy conflict review distinguishes works and keeps its observation in the confirmed replacement", async () => {
+  const base = workEntrySchema.parse({ ...work(), kind: "roomAvailability", targetId: "114", room: "114", done: undefined,
+    deleted: undefined, free: true, vacancyReason: "available", notes: "" });
+  const original = workEntrySchema.parse({ ...base, id: createId(), expectedRevision: 1, expectedPreviousEventId: base.id,
+    vacancyReason: "works", notes: "Peinture en cours, attendre le séchage." });
+  const remote = saved(workEntrySchema.parse({ ...base, id: createId(), expectedRevision: 1, expectedPreviousEventId: base.id,
+    free: false, vacancyReason: undefined, notes: "" }));
+  const item = queued(original), snapshot = structuredClone(item);
+  const review = await inspectEntryRecovery(item, { ...empty(), workEvents: [saved(base), remote] }, [item]);
+  assert.match(workRequestDetails(original), /Chambre en travaux/);
+  assert.match(workRequestDetails(original), /Peinture en cours/);
+  assert.match(workRequestDetails(remote), /Chambre occupée/);
+  assert.match(workRequestDetails(base), /Chambre libre/);
+  const replacement = buildRecoveredWorkEntry(review, [item], { id: createId(), at: "2026-11-16T09:00:00.000Z", date: "2026-11-16" });
+  assert.equal(replacement.vacancyReason, "works");
+  assert.equal(replacement.free, true);
+  assert.equal(replacement.notes, original.notes);
+  assert.equal(replacement.expectedPreviousEventId, remote.id);
+  assert.equal(replacement.expectedRevision, 2);
+  assert.deepEqual(item, snapshot);
+});
 
 test("a stale room link can be corrected without losing its date, answers, notes or photos", async t => {
   const issue: Issue = { id: createId(), version: 2, date: "2026-10-19", createdAt: "2026-10-19T10:00:00.000Z", updatedAt: "2026-10-21T10:00:00.000Z",

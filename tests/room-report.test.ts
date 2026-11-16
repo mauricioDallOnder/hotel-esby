@@ -6,8 +6,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
 import { createId, today } from "../lib/domain";
-import { parseEntry, roomChecks, roomEntrySchema, type RoomEntry, type RoomInspection } from "../lib/rooms";
-import { buildFreeRoomsReport, freeRoomRows } from "../lib/roomPdfExport";
+import { parseEntry, roomChecks, roomEntrySchema, type RoomEntry, type RoomInspection, type WorkEntry } from "../lib/rooms";
+import { buildFreeRoomsReport, freeRoomRecords, freeRoomRows } from "../lib/roomPdfExport";
 import { execute, executeEntry, readState } from "../lib/storage";
 
 const entry = (): RoomEntry => ({ type: "createRoomInspection", schemaVersion: 6, id: createId(), room: "114", date: today(), actor: "Marie", bugs: "non", notes: "", condition: "bon", occupied: false, cleaning: "faite", carpet: "ok", carpetNotes: "", microwave: "oui", microwaveCleaning: "propre", fridgeCleaning: "sale", photosData: [], checks: roomChecks.map(c => ({ key: c.key, result: "ok" })) });
@@ -90,4 +90,34 @@ test("manual availability overrides inspection occupancy without changing the hi
   assert.equal(freeRoomRows([old], [work])[0][0], "114");
   assert.equal(old.occupied, true);
   assert.equal(freeRoomRows([saved()], [{ ...work, free: false }]).length, 0);
+});
+
+test("available-room PDF excludes works and prints availability notes even without a room inspection", async () => {
+  const availability = (room: string, vacancyReason?: WorkEntry["vacancyReason"], notes = ""): WorkEntry => ({
+    type: "createWorkEvent", id: createId(), kind: "roomAvailability", targetId: room, room,
+    expectedRevision: 0, expectedPreviousEventId: null, free: true,
+    ...(vacancyReason ? { vacancyReason } : {}),
+    date: today(), actor: "Agent", notes, occurredAt: new Date().toISOString(),
+  });
+  const history = [saved({ room: "114", occupied: true }), saved({ room: "115" }), saved({ room: "116" })];
+  const workEvents = [
+    availability("114", "available", "CLE_DISPONIBLE"),
+    availability("115", "works", "TRAVAUX_EN_COURS"),
+    availability("116"),
+    availability("117", "available", "PRETE_SANS_CONTROLE"),
+  ];
+  const rows = freeRoomRows(history, workEvents);
+  assert.deepEqual(rows.map(row => row[0]), ["114", "116", "117"]);
+  assert.deepEqual(freeRoomRecords(history, workEvents).map(record => record.room), ["114", "116"]);
+  assert.match(rows[0][6], /CLE_DISPONIBLE/);
+  assert.equal(rows[2][1], "Aucun contrôle");
+  assert.match(rows[2][6], /PRETE_SANS_CONTROLE/);
+  assert.equal(history[0].occupied, true);
+
+  const doc = await buildFreeRoomsReport({ hotelName: "Test", history, workEvents });
+  const text = [...doc.output().matchAll(/stream\n([\s\S]*?)\nendstream/g)]
+    .map(match => inflateSync(Buffer.from(match[1], "binary")).toString("latin1")).join(" ");
+  assert.match(text, /CLE_DISPONIBLE/);
+  assert.match(text, /PRETE_SANS_CONTROLE/);
+  assert.doesNotMatch(text, /TRAVAUX_EN_COURS/);
 });

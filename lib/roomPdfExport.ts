@@ -10,16 +10,19 @@ type Options = { hotelName: string; history: (RoomEntry | RoomInspection)[]; wor
 
 export function freeRoomRecords(history: Options["history"], workEvents: WorkEntry[] = []) {
   return [...latestRoomRecords(history).values()]
-    .filter(record => roomAvailability(record.room, workEvents, record).free === true)
+    .filter(record => roomAvailability(record.room, workEvents, record).vacancyReason === "available")
     .sort((a, b) => a.room.localeCompare(b.room, "fr", { numeric: true }));
 }
 
 export function freeRoomRows(history: Options["history"], workEvents: WorkEntry[] = []) {
   const latest = latestRoomRecords(history);
-  return rooms.filter(room => roomAvailability(room, workEvents, latest.get(room)).free === true).map(room => {
+  return rooms.filter(room => roomAvailability(room, workEvents, latest.get(room)).vacancyReason === "available").map(room => {
       const record = latest.get(room);
       const source = roomAvailability(room, workEvents, record).source;
-      const availabilityNote = source ? `Disponibilité indiquée le ${displayDate(source.date)} · ${source.actor}${"updatedAt" in source ? "" : " · En attente d’envoi"}` : "";
+      const availabilityNote = source ? [
+        `Disponibilité indiquée le ${displayDate(source.date)} · ${source.actor}${"updatedAt" in source ? "" : " · En attente d’envoi"}`,
+        source.notes ? `Observation de disponibilité : ${source.notes}` : "",
+      ].filter(Boolean).join("\n") : "";
       if (!record) return [room, "Aucun contrôle", "Non renseigné", "Non renseigné", "Non vérifié", "Non vérifié", availabilityNote, ""];
 
       const fridge = record.checks.find(check => check.key === "fridge")?.result;
@@ -65,11 +68,11 @@ export async function buildFreeRoomsReport({ hotelName, history, workEvents = []
 
   const doc = new jsPDF({ orientation: "landscape", compress: true });
   doc.setFontSize(18);
-  doc.text("Chambres libres · État actuel", 14, 18);
+  doc.text("Chambres libres · Disponibles à l’occupation", 14, 18);
   doc.setFontSize(10);
   doc.text(`${hotelName} · Export du ${displayDate(today())} · ${rows.length} chambre(s) libre(s)`, 14, 26);
   doc.setFontSize(9);
-  doc.text("Disponibilité actuelle ; état et équipements selon le dernier contrôle. Vérifiez les dates avant attribution.", 14, 33);
+  doc.text("Chambres en travaux exclues. État selon le dernier contrôle ; vérifiez les dates avant attribution.", 14, 33);
   
   autoTable(doc, {
     startY: 39,

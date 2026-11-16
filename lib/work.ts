@@ -3,6 +3,9 @@ import type { FamilyEntry, FamilyEvent, RoomEntry, RoomInspection, WorkEntry, Wo
 
 type Work = WorkEntry | WorkEvent;
 
+export const roomVacancyLabels = { available: "Libre", works: "En travaux" } as const;
+export type RoomVacancyReason = keyof typeof roomVacancyLabels;
+
 // The visible numbers match the physical labels. Washers and dryers have
 // distinct IDs so a cycle can never reserve the wrong kind of appliance.
 export const laundryMachines = [
@@ -122,6 +125,9 @@ export function latestCafardObservationId(inspections: readonly (RoomEntry | Roo
 }
 
 export function validateWorkEntry(entry: WorkEntry, events: Work[], families: (FamilyEntry | FamilyEvent)[], deletedFamilies: string[] = [], inspections: readonly (RoomEntry | RoomInspection)[] = []) {
+  if (entry.vacancyReason !== undefined && (entry.kind !== "roomAvailability" || entry.free !== true ||
+    !["available", "works"].includes(entry.vacancyReason)))
+    return "Précisez « Libre » ou « En travaux » uniquement pour une chambre non occupée.";
   const current = latestWork(events, entry.kind).get(entry.targetId);
   if ((current ? current.expectedRevision + 1 : 0) !== entry.expectedRevision)
     return "Ce suivi a été modifié ailleurs. Actualisez, annulez la modification en attente puis recommencez.";
@@ -143,7 +149,11 @@ export function validateWorkEntry(entry: WorkEntry, events: Work[], families: (F
 
 export function roomAvailability(room: string, events: Work[], latestInspection?: RoomEntry | RoomInspection) {
   const manual = latestWork(events, "roomAvailability").get(room);
-  return { free: manual ? manual.free : latestInspection?.occupied === false ? true : latestInspection?.occupied === true ? false : undefined,
+  const free = manual ? manual.free : latestInspection?.occupied === false ? true : latestInspection?.occupied === true ? false : undefined;
+  // The boolean continues to mean unoccupied, including rooms blocked by work.
+  // Historical free rooms remain available until an operator changes their status.
+  const vacancyReason: RoomVacancyReason | undefined = free === true ? manual?.vacancyReason || "available" : undefined;
+  return { free, vacancyReason,
     source: manual, revision: manual ? manual.expectedRevision + 1 : 0 };
 }
 

@@ -11,6 +11,12 @@ async function login(page: Page) {
 async function state(page: Page): Promise<State> {
   return (await page.request.get("/api/hotel?fresh=1")).json();
 }
+async function confirmFree(page: Page, room: string) {
+  const dialog = page.getByRole("dialog", { name: `Disponibilité · chambre ${room}`, exact: true });
+  await expect(dialog.getByRole("radio", { name: "Libre", exact: true })).toBeChecked();
+  await dialog.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+}
 
 test("the mobile occupancy menu keeps unknown rooms separate and synchronizes the occupied checkbox with the checklist", async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -31,7 +37,7 @@ test("the mobile occupancy menu keeps unknown rooms separate and synchronizes th
   await context.setOffline(true);
   await checkbox.click();
   await expect(checkbox).toBeChecked();
-  await expect(card.getByRole("status").getByText("Occupée", { exact: true })).toBeVisible();
+  await expect(card.getByText("Occupée", { exact: true })).toBeVisible();
   await expect(card.getByText(/En attente d’envoi/)).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await context.setOffline(false);
@@ -45,6 +51,7 @@ test("the mobile occupancy menu keeps unknown rooms separate and synchronizes th
   await page.goto("/occupation");
   await expect(checkbox).toBeChecked();
   await checkbox.click();
+  await confirmFree(page, "101");
   await expect(checkbox).not.toBeChecked();
   await expect(checkbox).toHaveAttribute("data-indeterminate", "false");
   await expect.poll(async () => (await state(page)).workEvents?.filter(event => event.kind === "roomAvailability" && event.room === "101").map(event => event.free)).toEqual([false, true]);
@@ -69,10 +76,11 @@ test("an unknown room can be marked free directly without recording a temporary 
   const card = page.getByRole("article", { name: "Chambre 110", exact: true });
   await expect(card.getByRole("checkbox")).toHaveAttribute("aria-checked", "mixed");
   await card.getByRole("button", { name: "Marquer libre", exact: true }).click();
+  await confirmFree(page, "110");
   await expect.poll(async () => (await state(page)).workEvents?.filter(event => event.kind === "roomAvailability" && event.room === "110").map(event => event.free)).toEqual([true]);
   await expect(card.getByRole("checkbox")).not.toBeChecked();
   await expect(card.getByRole("checkbox")).toHaveAttribute("data-indeterminate", "false");
-  await expect(card.getByRole("status").getByText("Libre", { exact: true })).toBeVisible();
+  await expect(card.getByText("Libre", { exact: true })).toBeVisible();
   await expect(card.getByRole("button", { name: "Marquer libre", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /^Libres :/ }).click();
   await expect(card).toBeVisible();

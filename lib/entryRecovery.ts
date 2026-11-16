@@ -119,7 +119,7 @@ export function pendingEntryLabel(entry: Entry) {
 
 export function workRequestDetails(entry: WorkEntry) {
   const lines = [`${entry.date.split("-").reverse().join("/")} · ${entry.actor}`];
-  if (entry.kind === "roomAvailability") lines.push(entry.free ? "Chambre libre" : "Chambre occupée");
+  if (entry.kind === "roomAvailability") lines.push(entry.free ? entry.vacancyReason === "works" ? "Chambre en travaux" : "Chambre libre" : "Chambre occupée");
   if (entry.kind === "dailyTask") lines.push(entry.deleted ? "Suppression de la tâche" : entry.done ? "Tâche terminée" : "Tâche à faire");
   if (entry.kind === "collectedItem") {
     lines.push(`${entry.itemName} · ${entry.room ? `Chambre ${entry.room}` : "Chambre non identifiée"}`);
