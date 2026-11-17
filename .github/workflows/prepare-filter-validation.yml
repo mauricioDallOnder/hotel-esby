@@ -1,0 +1,32 @@
+name: Prepare isolated filter validation
+on:
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/prepare-filter-validation.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Bundle public source and locked development dependencies
+        run: |
+          mkdir -p /tmp/hotel-filter-validation
+          git archive HEAD | tar -x -C /tmp/hotel-filter-validation
+          cp -a node_modules /tmp/hotel-filter-validation/node_modules
+          tar -czf /tmp/hotel-filter-validation.tar.gz -C /tmp/hotel-filter-validation .
+      - uses: actions/upload-artifact@v5
+        with:
+          name: hotel-filter-validation
+          path: /tmp/hotel-filter-validation.tar.gz
+          retention-days: 1
+          compression-level: 0
