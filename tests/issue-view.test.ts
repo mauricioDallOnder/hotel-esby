@@ -122,3 +122,38 @@ test("pending age uses Paris calendar days, clamps future dates and tolerates un
   assert.equal(issueAge(issue({ date: "2026-10-18" }), "2026-10-17"), 0);
   assert.equal(issueAge(issue({ date: "" }), "2026-10-17"), 0);
 });
+
+test("room clutter, repairs and historic cafard issues use their recorded type or an unambiguous legacy description", () => {
+  const radiator = issue({ id: "radiator", title: "Radiateur encombré d’affaires" });
+  const clutter = issue({ id: "clutter", title: "Chambre 204 très encombrée de valises", description: "" });
+  const cleared = issue({ id: "cleared", title: "Chambre non encombrée", description: "Éclairage à réparer" });
+  const bugs = issue({ id: "bugs", title: "Présence de blattes", description: "Plusieurs blattes observées." });
+  const treatment = issue({ id: "treatment", title: "Contrôle de chambre", description: "Gel appliqué contre les cafards." });
+  const afterTreatment = issue({ id: "after-treatment", title: "Suivi des cafards", description: "Aucun cafard observé." });
+  const noBugs = issue({ id: "no-bugs", title: "Vérification cafards", description: "Aucun cafard. Ampoule cassée." });
+  const typed = issue({ id: "typed", title: "Affaires à déplacer", problemType: "room_cluttered" });
+  const corrected = issue({ id: "corrected", roomFindingsActive: false, roomFindings: [{ key: "room_clutter", label: "Chambre encombrée" }] });
+  const records = [radiator, clutter, cleared, bugs, treatment, afterTreatment, noBugs, typed, corrected];
+  const ids = (kind: IssueFilters["kind"]) => selectIssues(records, { ...defaultIssueFilters, kind }).map(record => record.id).sort();
+  assert.deepEqual(ids("technical"), ["cleared", "corrected", "no-bugs", "radiator"]);
+  assert.deepEqual(ids("room_clutter"), ["clutter", "typed"]);
+  assert.deepEqual(ids("cafards"), ["after-treatment", "bugs", "treatment"]);
+  assert.equal(ids("all").length, records.length);
+});
+
+test("a mixed control appears once and shortcuts only count pending findings of the selected type", () => {
+  const mixed = issue({ priority: "critique", status: "en_cours", roomFindings: [
+    { key: "room_clutter", label: "Chambre encombrée", status: "resolu" },
+    { key: "lights", label: "Éclairage en panne", status: "ouvert" },
+    { key: "taps", label: "Robinet à changer", status: "en_cours" },
+  ] });
+  const clutterFilters: IssueFilters = { ...defaultIssueFilters, kind: "room_clutter" };
+  assert.deepEqual(selectIssues([mixed], clutterFilters), []);
+  assert.deepEqual(selectIssues([mixed], { ...clutterFilters, status: "resolu" }), [mixed]);
+  assert.deepEqual(issueShortcuts([mixed], clutterFilters).map(shortcut => shortcut.count), [0, 0, 0]);
+  const repairs: IssueFilters = { ...defaultIssueFilters, kind: "technical" };
+  assert.deepEqual(selectIssues([mixed], repairs), [mixed]);
+  assert.deepEqual(issueShortcuts([mixed], repairs).map(shortcut => shortcut.count), [1, 1, 0]);
+  assert.deepEqual(selectIssues([mixed], { ...repairs, status: "resolu" }), []);
+  assert.deepEqual(selectIssues([{ ...mixed, status: "resolu" }], { ...repairs, status: "resolu" }).map(record => record.id), [mixed.id]);
+});

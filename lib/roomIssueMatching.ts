@@ -51,7 +51,7 @@ type Finding = NonNullable<Issue["roomFindings"]>[number];
 
 // Room clutter is a room-wide observation. A radiator or door handle covered
 // by belongings remains a different finding, even in the same room.
-function hasRoomClutter(text: string) {
+export function hasRoomClutter(text: string) {
   return text.split(/[.!?;,\n]+/).some(clause => {
     const value = normalizeIssueText(clause);
     if (/\b(?:non|pas|plus|jamais)(?: \w+){0,2} encombre\w*\b/.test(value) ||
@@ -242,14 +242,16 @@ export function duplicateRoomIssueMessage(issue: Issue) {
   return `Un problème similaire est déjà ouvert dans la chambre ${issueRoom(issue)} : ${issue.title}. Ouvrez ce signalement ou précisez qu’il s’agit d’un équipement différent.`;
 }
 
-/** Only an unambiguous pest report is routed away from technical repairs. */
-export function isCafardTechnicalReport(candidate: IssueCandidate) {
+/** New anomalies require a positive sighting. Historical records can also
+ * describe an application, a planned inspection or the absence of pests. */
+export function isCafardTechnicalReport(candidate: Pick<IssueCandidate, "title" | "description" | "problemType">, mode: "new" | "historical" = "new") {
   const pests = /\b(?:cafards?|blattes?)\b/;
   const clauses = (text: string) => text.split(/[.!?;,\n]+|\bmais\b|\bet\s+(?=(?:des?\s+)?(?:cafards?|blattes?)\b)/i).map(normalizeIssueText).filter(Boolean);
   const description = clauses(candidate.description || "");
   // A precise negative observation takes precedence over a generic title.
   const observations = description.some(text => pests.test(text)) ? description : clauses(candidate.title || "");
-  const positive = observations.some(text => pests.test(text) &&
+  if (!observations.some(text => pests.test(text))) return false;
+  const positive = mode === "historical" || observations.some(text => pests.test(text) &&
     !/\b(?:aucuns?|sans)\s+(?:cafards?|blattes?)\b/.test(text) &&
     !/\b(?:aucune|absence de)\s+(?:(?:presence|traces?|signes?)\s+de\s+)?(?:cafards?|blattes?)\b/.test(text) &&
     !/\bpas\s+(?:du tout\s+)?de\s+(?:cafards?|blattes?)\b/.test(text) &&
