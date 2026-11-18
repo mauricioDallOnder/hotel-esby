@@ -609,6 +609,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeIssueText = normalizeIssueText;
 exports.issueRoom = issueRoom;
 exports.openRoomIssues = openRoomIssues;
+exports.hasRoomClutter = hasRoomClutter;
 exports.matchesRoomFinding = matchesRoomFinding;
 exports.findDuplicateOpenIssue = findDuplicateOpenIssue;
 exports.validateIssueDistinction = validateIssueDistinction;
@@ -891,14 +892,17 @@ function validateIssueDistinction(candidate, issues, current) {
 function duplicateRoomIssueMessage(issue) {
     return `Un problème similaire est déjà ouvert dans la chambre ${issueRoom(issue)} : ${issue.title}. Ouvrez ce signalement ou précisez qu’il s’agit d’un équipement différent.`;
 }
-/** Only an unambiguous pest report is routed away from technical repairs. */
-function isCafardTechnicalReport(candidate) {
+/** New anomalies require a positive sighting. Historical records can also
+ * describe an application, a planned inspection or the absence of pests. */
+function isCafardTechnicalReport(candidate, mode = "new") {
     const pests = /\b(?:cafards?|blattes?)\b/;
     const clauses = (text) => text.split(/[.!?;,\n]+|\bmais\b|\bet\s+(?=(?:des?\s+)?(?:cafards?|blattes?)\b)/i).map(normalizeIssueText).filter(Boolean);
     const description = clauses(candidate.description || "");
     // A precise negative observation takes precedence over a generic title.
     const observations = description.some(text => pests.test(text)) ? description : clauses(candidate.title || "");
-    const positive = observations.some(text => pests.test(text) &&
+    if (!observations.some(text => pests.test(text)))
+        return false;
+    const positive = mode === "historical" || observations.some(text => pests.test(text) &&
         !/\b(?:aucuns?|sans)\s+(?:cafards?|blattes?)\b/.test(text) &&
         !/\b(?:aucune|absence de)\s+(?:(?:presence|traces?|signes?)\s+de\s+)?(?:cafards?|blattes?)\b/.test(text) &&
         !/\bpas\s+(?:du tout\s+)?de\s+(?:cafards?|blattes?)\b/.test(text) &&

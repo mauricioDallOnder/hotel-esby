@@ -316,13 +316,15 @@ export function createId(): string {
   ].join("-");
 }
 
+const parisDay = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Paris",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 export function today(now = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
+  return parisDay.format(now);
 }
 
 export function displayDate(date: string): string {
@@ -588,11 +590,7 @@ export function eventAt(
   issue: Issue,
   end: string
 ): Event | undefined {
-  return issue.history
-    .filter(
-      (e) => today(new Date(e.at)) <= end
-    )
-    .at(-1);
+  return issue.history.findLast(event => today(new Date(event.at)) <= end);
 }
 
 export function monthlySummary(

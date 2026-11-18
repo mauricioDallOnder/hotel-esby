@@ -62,7 +62,7 @@ Fini les informations dispersées entre carnets, messages et tableaux : Hôtel C
 
 [![Écran Rapports sur téléphone : période et type de contenu à exporter](docs/images/demo-rapports.png)](docs/images/demo-rapports.png)
 
-**Ce que vous voyez :** le choix de la période et du type de problème. Les rapports peuvent notamment isoler les **chambres encombrées d'affaires** et réunir les photos des visites rattachées à un même problème.
+Dans **Rapports**, choisissez un jour ou un mois, puis le contenu du PDF. Vous pouvez isoler les **problèmes techniques**, les **chambres encombrées** ou les **problèmes résolus**. Le **rapport complet** réunit les problèmes encore à traiter à la fin de la période et ceux résolus pendant celle-ci. Les photos des visites liées à un même signalement sont regroupées.
 
 ### 7. Les situations de sécurité sont signalées clairement
 
@@ -79,7 +79,7 @@ Fini les informations dispersées entre carnets, messages et tableaux : Hôtel C
 | **Vue d'ensemble** | Repérer rapidement les informations utiles pour la journée. |
 | **Checklist des chambres** | Organiser les visites, consigner l'état du mobilier et des équipements, ajouter des photos et retrouver les contrôles. |
 | **Occupation des chambres** | Distinguer **Occupée**, **Libre** et **En travaux**, avec une observation facultative. |
-| **Problèmes techniques** | Signaler un défaut, suivre une intervention et éviter de recréer un problème encore ouvert. |
+| **Problèmes techniques** | Filtrer les problèmes techniques, les chambres encombrées ou les cafards. Le filtre Cafards ouvre le suivi existant de chaque chambre. |
 | **Suivi des cafards** | Conserver les détections, les traitements et les vérifications dans le même dossier par chambre. |
 | **Lingerie** | Suivre les lave-linge et sèche-linge, leur temps restant et le retrait des vêtements. |
 | **Objets récupérés** | Noter la collecte, la conservation et la restitution d'un objet. |

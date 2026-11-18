@@ -1,7 +1,20 @@
-import { eventAt, issuePhotoIds, monthlySummary, today, type Issue, type State } from "./domain";
+import { displayDate, eventAt, statuses, today, type Event, type Issue, type State, type Status } from "./domain";
+import { findingKind, standaloneIssueKind } from "./issueCategory";
+import { aggregateFindingStatus, findingDetailsText, type IssueFinding } from "./issueFindings";
+import { cafardReportRows } from "./cafardReport";
+import type { ReportPhoto } from "./reportPhotos";
+export { reportPhotos, indexReportPhotos, type ReportPhoto } from "./reportPhotos";
 
-export type ReportScope = "all" | "room_clutter";
+export type ReportScope = "all" | "technical" | "room_clutter" | "resolved" | "complete";
 export type ReportKind = "daily" | "monthly";
+
+export const reportScopes = {
+  all: { label: "Tous les problèmes à traiter", heading: "Problèmes à traiter", empty: "Aucun problème en attente." },
+  technical: { label: "Problèmes techniques", heading: "Problèmes techniques à traiter", empty: "Aucun problème technique en attente." },
+  room_clutter: { label: "Chambres encombrées", heading: "Chambres encombrées", empty: "Aucune chambre encombrée en attente." },
+  resolved: { label: "Problèmes résolus", heading: "Problèmes résolus sur la période", empty: "Aucun problème résolu sur la période." },
+  complete: { label: "Rapport complet", heading: "Rapport complet des problèmes", empty: "Aucun problème en attente ou résolu sur la période." },
+} as const;
 
 export function dailyIssues(state: State, date: string): Issue[] {
   const linked = new Set(state.inspections.filter(inspection => inspection.date === date)
@@ -11,65 +24,116 @@ export function dailyIssues(state: State, date: string): Issue[] {
       issue.history.some(event => today(new Date(event.at)) === date)));
 }
 
-function clutterFindings(issue: Issue, end: string) {
-  // A later free-text correction keeps old findings for history but must not
-  // classify the current report using equipment that no longer describes it.
-  if (issue.roomFindingsActive === false && today(new Date(issue.updatedAt)) <= end) return [];
-  const event = eventAt(issue, end);
-  const findings = event?.findingDetails || issue.roomFindings || [];
-  return findings.filter(finding => finding.key === "room_clutter" || finding.problemType === "room_cluttered");
-}
-
-export function isRoomClutterIssue(issue: Issue, end: string): boolean {
-  return issue.problemType === "room_cluttered" || clutterFindings(issue, end).length > 0;
-}
-
 export function reportPeriodEnd(kind: ReportKind, period: string): string {
   if (kind === "daily") return period;
   const [year, month] = period.split("-").map(Number);
   return `${period}-${new Date(Date.UTC(year, month, 0)).getUTCDate()}`;
 }
 
-export function reportPendingIssues(state: State, kind: ReportKind, period: string, scope: ReportScope = "all"): Issue[] {
-  const end = reportPeriodEnd(kind, period);
-  const issues = kind === "monthly" ? monthlySummary(state, period).issues : dailyIssues(state, period);
-  return issues.filter(issue => {
-    const event = eventAt(issue, end);
-    if ((event?.status ?? "ouvert") === "resolu") return false;
-    if (scope === "all") return true;
-    if (!isRoomClutterIssue(issue, end)) return false;
-    const findings = clutterFindings(issue, end);
-    // A grouped issue may remain open for another repair after the room has
-    // been cleared. Use the states recorded at the report date, not today's.
-    return !findings.length || findings.some(finding =>
-      event?.findingStates?.find(state => state.key === finding.key)?.status !== "resolu");
-  });
-}
-
-export type ReportPhoto = {
-  photoId: string;
-  sourceId: string;
-  index: number;
-  collection: "issues" | "roomInspections";
-  date: string;
+type DatedEvent = { event: Event; day: string };
+type Resolution = { event?: Event; day: string };
+export type ReportRow = {
+  issue: Issue;
+  title: string;
+  description: string;
+  status: Status;
+  photos?: ReportPhoto[];
 };
 
-/** Only persisted issue links may attach another control's photos to a report. */
-export function reportPhotos(issue: Issue, state: State, end: string): ReportPhoto[] {
-  const photos: ReportPhoto[] = [];
-  const seen = new Set<string>();
-  const add = (record: Pick<Issue, "id" | "date" | "photoId" | "photoIds">, collection: ReportPhoto["collection"]) => {
-    if (record.date > end) return;
-    issuePhotoIds(record).forEach((photoId, index) => {
-      if (seen.has(photoId)) return;
-      seen.add(photoId);
-      photos.push({ photoId, sourceId: record.id, index, collection, date: record.date });
-    });
-  };
-  add(issue, "issues");
-  const related = (state.roomInspections || []).filter(record => record.date <= end &&
-    (record.id === issue.id || record.relatedIssueIds?.includes(issue.id)))
-    .sort((a, b) => a.date.localeCompare(b.date) || a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id));
-  for (const record of related) add(record, "roomInspections");
-  return photos;
+function statusIn(event: Event, key?: string): Status {
+  if (!key || event.status === "resolu") return event.status;
+  return event.findingStates?.find(state => state.key === key)?.status ?? event.status;
+}
+
+// A later note on a closed item is not another resolution. A reopening
+// starts a new interval, independently for each finding in a grouped issue.
+function resolutionSince(history: DatedEvent[], start: string, key?: string) {
+  let resolution: DatedEvent | undefined;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = history[i];
+    if (statusIn(entry.event, key) !== "resolu") break;
+    if (entry.day < start) return;
+    resolution = entry;
+  }
+  return resolution;
+}
+
+export function reportRows(state: State, kind: ReportKind, period: string, scope: ReportScope): ReportRow[] {
+  const end = reportPeriodEnd(kind, period);
+  const start = kind === "daily" ? period : period + "-01";
+  const rows: ReportRow[] = [];
+  const cafards = cafardReportRows(state, start, end, scope);
+  for (const issue of state.issues) {
+    if (issue.date > end || cafards.replacedIssueIds.has(issue.id)) continue;
+    const history = issue.history.map(event => ({ event, day: today(new Date(event.at)) })).filter(entry => entry.day <= end);
+    const last = history.at(-1)?.event;
+    const updated = new Date(issue.updatedAt);
+    const updatedDay = Number.isFinite(updated.getTime()) ? today(updated) : undefined;
+    const currentByEnd = !!updatedDay && updatedDay <= end;
+    const latestSnapshot = currentByEnd && last === issue.history.at(-1);
+    const status = last?.status ?? (currentByEnd ? issue.status : "ouvert");
+    const findings = issue.roomFindingsActive === false && currentByEnd ? [] : last?.findingDetails ?? issue.roomFindings ?? [];
+    const row = { issue, title: issue.title, description: issue.description, status };
+    const mixedCafards = cafards.mixedIssueIds.has(issue.id);
+
+    if (scope === "all" && !mixedCafards) {
+      if (status !== "resolu") rows.push(row);
+      continue;
+    }
+
+    const categoryOnly = scope === "technical" || scope === "room_clutter";
+    if (categoryOnly && status === "resolu") continue;
+    const sections: string[] = [];
+    const selectedStates: { status: Status }[] = [];
+    const resolutions = new Map<Resolution, string[]>();
+    const legacyResolution = !issue.history.length && updatedDay && currentByEnd && updatedDay >= start
+      ? { day: updatedDay } : undefined;
+    // Manual reports have one item. Structured checklists can contain
+    // several distinct categories and resolution dates under one issue ID.
+    const items: (IssueFinding | undefined)[] = findings.length ? findings : [undefined];
+    for (const finding of items) {
+      if (mixedCafards && finding && findingKind(finding) === "cafards") continue;
+      if (categoryOnly && (finding ? findingKind(finding) : standaloneIssueKind(issue)) !== scope) continue;
+      const storedStatus = latestSnapshot && finding && !last?.findingStates && status !== "resolu" ? finding.status : undefined;
+      const itemStatus = storedStatus ?? (last ? statusIn(last, finding?.key) : status);
+      const detail = finding ? findingDetailsText([finding]) : issue.description;
+      if (itemStatus === "resolu") {
+        if (scope !== "complete" && scope !== "resolved") continue;
+        const resolution = resolutionSince(history, start, finding?.key) ?? legacyResolution;
+        if (!resolution) continue;
+        const details = resolutions.get(resolution);
+        if (details) details.push(detail);
+        else resolutions.set(resolution, [detail]);
+      } else {
+        if (scope === "resolved") continue;
+        sections.push(scope === "complete" && finding ? `${statuses[itemStatus]} · ${detail}` : detail);
+      }
+      selectedStates.push({ status: itemStatus });
+    }
+    if (!selectedStates.length) continue;
+    const partial = selectedStates.length < items.length;
+    const useHistoricalDetails = findings.length > 0 && !latestSnapshot;
+    if (partial || useHistoricalDetails) row.title = `Constat · ${issue.location}`;
+    for (const [{ day, event }, details] of resolutions) {
+      const heading = event ? `Résolu le ${displayDate(day)} · ${event.actor}`
+        : `Fiche résolue · Dernière mise à jour le ${displayDate(day)} (date de résolution inconnue)`;
+      sections.push([heading, ...details, event?.note].filter(Boolean).join("\n"));
+    }
+    if (scope === "complete" && latestSnapshot && findings.length) {
+      // Checklist descriptions start with generated finding labels. Keep the
+      // inspector's additional observations without repeating those labels.
+      const findingLines = new Set(findings.flatMap(finding =>
+        [finding.label, finding.description || "", findingDetailsText([finding])].flatMap(text => text.split("\n").map(line => line.trim()))));
+      const notes = issue.description.split("\n").filter(line => line.trim() && !findingLines.has(line.trim()));
+      if (notes.length) sections.push(notes.join("\n"));
+    }
+    if (!categoryOnly || partial || useHistoricalDetails) row.description = sections.join("\n");
+    row.status = aggregateFindingStatus(selectedStates, status);
+    rows.push(row);
+  }
+  return rows.concat(cafards.rows);
+}
+
+export function reportPendingIssues(state: State, kind: ReportKind, period: string, scope: "all" | "technical" | "room_clutter" = "all"): Issue[] {
+  return reportRows(state, kind, period, scope).map(row => row.issue);
 }

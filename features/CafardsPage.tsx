@@ -10,7 +10,8 @@ import { useAppContext } from "@/context/AppContext";
 import { useEntries } from "@/context/EntriesContext";
 import { cafardCases, cafardStatusLabels, cafardTreatmentReminder, emptyCafardCase, type CafardCase, type CafardStatus } from "@/lib/cafards";
 import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
-import { displayDate } from "@/lib/domain";
+import { displayDate, statuses, type Issue } from "@/lib/domain";
+import { defaultIssueFilters, selectIssues } from "@/lib/issueView";
 import { roomGroups } from "@/lib/rooms";
 import { useRoomObservations } from "@/lib/useRoomObservations";
 import { useWorkEvents } from "@/lib/useWorkEvents";
@@ -92,12 +93,13 @@ function CafardCard({ record, day, pending, onEdit }: { record: CafardCase; day:
   </Paper>;
 }
 
-export default function CafardsPage() {
+export default function CafardsPage({ onOpenLegacyIssue }: { onOpenLegacyIssue?: (issue: Issue) => void }) {
   const { issues } = useAppContext();
   const { history, pendingIds, day } = useRoomObservations();
   const { events, isPending } = useWorkEvents();
   const { ready } = useEntries();
-  const records = useMemo(() => cafardCases(history, events, cafardSeedsFromIssues(issues)), [history, events, issues]);
+  const seeds = useMemo(() => cafardSeedsFromIssues(issues), [issues]);
+  const records = useMemo(() => cafardCases(history, events, seeds), [history, events, seeds]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<CafardFilter>("pending");
   const [editing, setEditing] = useState<CafardCase | null>(null);
@@ -110,15 +112,28 @@ export default function CafardsPage() {
   const visible = scoped.filter(record => matchesFilter(record, filter, day));
   const groups = roomGroups.map(group => ({ ...group, records: visible.filter(record => (group.rooms as readonly string[]).includes(record.room)) })).filter(group => group.records.length);
   const existing = records.find(record => record.room === room);
+  // Some historical reports name a common area instead of a single room. Keep
+  // those accessible without listing room reports twice alongside their case.
+  const legacy = useMemo(() => {
+    if (!onOpenLegacyIssue || !["pending", "all", "resolu"].includes(filter)) return [];
+    const linked = new Set(seeds.flatMap(seed => seed.sourceIssueIds));
+    return selectIssues(issues.filter(issue => !linked.has(issue.id)), {
+      ...defaultIssueFilters, kind: "cafards", status: filter === "all" || filter === "resolu" ? filter : "pending", query: search,
+    });
+  }, [onOpenLegacyIssue, issues, seeds, filter, search]);
   function openRoom() {
     if (!room) return;
     setEditing(existing || emptyCafardCase(room));
     setAdding(false);
   }
+  const addRoom = <Button variant="contained" startIcon={<Add />} disabled={!ready} onClick={() => { setRoom(""); setAdding(true); }} sx={{ minHeight: 48, flexShrink: 0 }}>Ajouter une chambre</Button>;
   return <>
-    <ConnectionBar />
-    <PageTitle title="Suivi des cafards" description="Détections, applications de produit et vérifications par chambre."
-      action={<Button variant="contained" startIcon={<Add />} disabled={!ready} onClick={() => { setRoom(""); setAdding(true); }} sx={{ minHeight: 48, flexShrink: 0 }}>Ajouter une chambre</Button>} />
+    {onOpenLegacyIssue ? <Stack direction={{ xs: "column", sm: "row" }} sx={{ justifyContent: "space-between", alignItems: { sm: "center" }, gap: 1 }}>
+      <Typography component="h2" variant="h5">Suivi des cafards</Typography>{addRoom}
+    </Stack> : <>
+      <ConnectionBar />
+      <PageTitle title="Suivi des cafards" description="Détections, applications de produit et vérifications par chambre." action={addRoom} />
+    </>}
     <Stack spacing={3}>
       {saved && <Alert severity="success" onClose={() => setSaved(null)} closeText="Masquer ce message">
         Suivi de la chambre {saved.room} conservé.{saved.status === "resolu" ? " Retrouvez-le en choisissant « Résolu » dans le filtre." : ""}
@@ -140,7 +155,7 @@ export default function CafardsPage() {
         </Stack>
         <Typography variant="caption" color="text.secondary" role="status">{visible.length} {visible.length === 1 ? "chambre affichée" : "chambres affichées"}. Les nombres du filtre suivent la recherche.</Typography>
       </Stack>
-      {!groups.length && <Alert severity="info">Aucun suivi ne correspond à cette recherche.</Alert>}
+      {!groups.length && !legacy.length && <Alert severity="info">Aucun suivi ne correspond à cette recherche.</Alert>}
       {groups.map(group => <Box component="section" key={group.label} aria-label={group.label}>
         <Typography component="h2" variant="h6" sx={{ mb: 1.5 }}>{group.label} · {group.records.length}</Typography>
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(3, minmax(0, 1fr))" }, alignItems: "start", gap: 2 }}>
@@ -149,6 +164,12 @@ export default function CafardsPage() {
             onEdit={() => setEditing(record)} />)}
         </Box>
       </Box>)}
+      {!!legacy.length && <Stack spacing={1}>
+        <Typography component="h3" variant="h6">Signalements sans suivi de chambre</Typography>
+        {legacy.map(issue => <Button key={issue.id} variant="outlined" onClick={() => onOpenLegacyIssue?.(issue)}>
+          {issue.location} · {issue.title} · {statuses[issue.status]}
+        </Button>)}
+      </Stack>}
     </Stack>
     {adding && <Dialog open fullWidth maxWidth="xs" onClose={() => setAdding(false)} aria-labelledby="add-cafard-title">
       <DialogTitle id="add-cafard-title">Ajouter une chambre au suivi</DialogTitle>

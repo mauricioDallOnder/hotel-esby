@@ -1,18 +1,24 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { Alert, Box, Button, Chip, Collapse, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { useAppContext } from "@/context/AppContext";
 import { categories, displayDate, issuePhotoIds, issueResponsible, priorities, statuses, today, type Issue } from "@/lib/domain";
-import { defaultIssueFilters, issueAge, issueShortcuts, lastIntervention, selectIssues, type IssueFilters } from "@/lib/issueView";
+import { defaultIssueFilters, issueAge, issueView, lastIntervention, type IssueFilters } from "@/lib/issueView";
+import { findingKind, issueKindLabels, type IssueKind } from "@/lib/issueCategory";
 import { ConnectionBar, EmptyState, IssueBadges, PageTitle } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
 import { IssuePhoto } from "@/components/IssuePhoto";
 import { deviceStore } from "@/lib/deviceStore";
 import { type ActiveIssueDraft, type IssueDraft } from "@/lib/issueDraft";
-import { issueFindingProgress } from "@/lib/issueFindings";
+import { issueFindingProgress, issueFindingStatus } from "@/lib/issueFindings";
 
-function IssueCard({ issue, onOpen, direction }: { issue: Issue; onOpen: () => void; direction: boolean }) {
+const CafardsPage = dynamic(() => import("@/features/CafardsPage"), {
+  loading: () => <Typography role="status">Chargement du suivi des cafards…</Typography>,
+});
+
+function IssueCard({ issue, kind, onOpen, direction }: { issue: Issue; kind: IssueFilters["kind"]; onOpen: () => void; direction: boolean }) {
   const [photosOpen, setPhotosOpen] = useState(false);
   const photos = issuePhotoIds(issue), last = lastIntervention(issue), age = issueAge(issue, today()), responsible = issueResponsible(issue);
   const progress = issueFindingProgress(issue);
@@ -29,6 +35,9 @@ function IssueCard({ issue, onOpen, direction }: { issue: Issue; onOpen: () => v
       </Box>
       <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{issue.description}</Typography>
       {progress.total > 1 && <Typography variant="body2" sx={{ fontWeight: 700 }}>{progress.pending} / {progress.total} problème(s) restant(s) · {progress.resolved} résolu(s)</Typography>}
+      {kind !== "all" && issue.roomFindingsActive !== false && progress.total > 1 &&
+        issue.roomFindings?.filter(finding => findingKind(finding) === kind).map(finding =>
+          <Typography key={finding.key} variant="body2">{finding.label} · {statuses[issueFindingStatus(issue, finding)]}</Typography>)}
       <Box sx={{ bgcolor: "action.hover", borderRadius: 1.5, p: 1.25 }}>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>{responsible ? `Responsable : ${responsible}` : "Responsable non renseigné"}</Typography>
         <Typography variant="caption" color="text.secondary">{last ? `Dernier suivi · ${new Date(last.at).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" })} · ${last.actor}` : "Aucune intervention enregistrée"}</Typography>
@@ -74,20 +83,27 @@ export default function IssuesPage() {
   }
   function change(patch: Partial<IssueFilters>) { setFilters(current => ({ ...current, ...patch })); setLimit(24); }
   function reset() { setFilters(defaultIssueFilters); setLimit(24); }
-  const filtered = useMemo(() => selectIssues(issues, filters), [issues, filters]);
-  const shortcuts = useMemo(() => issueShortcuts(issues, filters), [issues, filters]);
+  const cafards = filters.kind === "cafards";
+  const { filtered, shortcuts } = useMemo(() => cafards ? { filtered: [], shortcuts: [] } : issueView(issues, filters), [cafards, issues, filters]);
   const statusChoices = { pending: "Non résolues", ouvert: statuses.ouvert, en_cours: statuses.en_cours, resolu: statuses.resolu, all: "Toutes" };
   const extraCount = Number(filters.category !== "all") + Number(filters.unassigned);
   const invalidRange = Boolean(filters.from && filters.to && filters.from > filters.to);
   const changed = JSON.stringify(filters) !== JSON.stringify(defaultIssueFilters);
   return <>
     <ConnectionBar />
-    <PageTitle eyebrow="Maintenance" title="Problèmes techniques" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={<Button variant="contained" startIcon={<Add />} onClick={() => openDialog("new")}>Signaler une anomalie</Button>} />
+    <PageTitle eyebrow="Maintenance" title="Problèmes techniques" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={!cafards && <Button variant="contained" startIcon={<Add />} onClick={() => openDialog("new")}>Signaler une anomalie</Button>} />
     <Stack spacing={2.5}>
       {message && <Alert severity="success" onClose={() => setMessage("")}>{message}</Alert>}
       {activeDraft && (!activeDraft.issueId || role === "direction") && <Alert severity="info">Un brouillon de problème technique est conservé sur cet appareil, avec son texte et ses photos.
         <Button color="inherit" onClick={resumeDraft}>Reprendre le brouillon</Button>
       </Alert>}
+      <Stack direction="row" useFlexGap role="group" aria-label="Filtrer par type de problème" sx={{ flexWrap: "wrap", gap: 1 }}>
+        {Object.entries({ all: "Tous les types", ...issueKindLabels }).map(([kind, label]) =>
+          <Chip key={kind} label={label} onClick={() => change({ kind: kind as "all" | IssueKind })}
+            color={filters.kind === kind ? "primary" : "default"} variant={filters.kind === kind ? "filled" : "outlined"}
+            aria-pressed={filters.kind === kind} sx={{ minHeight: 40 }} />)}
+      </Stack>
+      {cafards ? <CafardsPage onOpenLegacyIssue={openDialog} /> : <>
       <Stack spacing={0.75}>
         <Box role="group" aria-label="Vues rapides des anomalies" sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }}>
           {shortcuts.map(shortcut => <Button key={shortcut.id} variant={shortcut.selected ? "contained" : "outlined"} aria-pressed={shortcut.selected} onClick={() => { setFilters(shortcut.filters); setLimit(24); }} sx={{ flexDirection: "column", alignItems: "flex-start", justifyContent: "space-between", p: { xs: 1.25, sm: 2 }, textTransform: "none", textAlign: "left", minWidth: 0, gap: 1 }}>
@@ -126,9 +142,10 @@ export default function IssuesPage() {
         </TextField>
       </Stack>
       {!filtered.length ? <EmptyState title="Aucune anomalie dans cette sélection" detail="Modifiez les filtres pour retrouver un signalement, ou signalez un nouveau problème." /> : <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>
-        {filtered.slice(0, limit).map(issue => <IssueCard key={issue.id} issue={issue} direction={role === "direction"} onOpen={() => openDialog(issue)} />)}
+        {filtered.slice(0, limit).map(issue => <IssueCard key={issue.id} issue={issue} kind={filters.kind} direction={role === "direction"} onOpen={() => openDialog(issue)} />)}
       </Box>}
       {filtered.length > limit && <Button variant="outlined" onClick={() => setLimit(n => n + 24)}>Afficher plus · {filtered.length - limit} restante(s)</Button>}
+      </>}
     </Stack>
     {dialog && <IssueDialog key={(dialog === "new" ? "new" : dialog.id) + (restoredDraftKey || "")} draftKey={restoredDraftKey} issue={dialog === "new" ? undefined : dialog} onOpenExisting={openDialog} onClose={() => setDialog(null)} onSaved={saved => setMessage(dialog === "new" ? "Anomalie enregistrée." : `Suivi enregistré · ${statuses[saved.status]}.${saved.status === "resolu" && filters.status === "pending" ? " Retrouvez-la avec le filtre Résolu." : ""}`)} />}
   </>;

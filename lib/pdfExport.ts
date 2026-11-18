@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
-import { displayDate, type Issue, type State } from "./domain";
+import { displayDate, statuses, type Issue, type State } from "./domain";
 import { loadPhotoData, photoSource } from "./photos";
-import { reportPendingIssues, reportPeriodEnd, reportPhotos, type ReportPhoto, type ReportScope } from "./reportData";
+import { indexReportPhotos, reportPeriodEnd, reportRows, reportScopes, type ReportPhoto, type ReportScope } from "./reportData";
 export { dailyIssues } from "./reportData";
 
 type ReportOptions = {
@@ -55,7 +55,7 @@ export async function buildReport(
     doc.setFontSize(10);
     doc.text(normalizeText(subtitle), PAGE_WIDTH - RIGHT, 13, { align: "right" });
   }
-  function checkPage(neededSpace: number, continuedIssue?: Issue) {
+  function checkPage(neededSpace: number, continuedIssue?: Pick<Issue, "title" | "location">) {
     if (y + neededSpace <= CONTENT_BOTTOM) return;
     doc.addPage();
     pageHeader();
@@ -75,7 +75,7 @@ export async function buildReport(
       y += 3;
     }
   }
-  function writeLines(lines: string[], size: number, style: string, lineHeight: number, color: number, issue?: Issue) {
+  function writeLines(lines: string[], size: number, style: string, lineHeight: number, color: number, issue?: Pick<Issue, "title" | "location">) {
     for (const line of lines) {
       checkPage(lineHeight, issue);
       doc.setFont("helvetica", style);
@@ -94,17 +94,20 @@ export async function buildReport(
   doc.setTextColor(35, 50, 45);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
-  doc.text(scope === "room_clutter" ? "Chambres encombrées" : "Problèmes à traiter", LEFT, y);
+  doc.text(reportScopes[scope].heading, LEFT, y);
   y += 12;
 
-  const unresolvedIssues = reportPendingIssues(state, kind, period, scope);
-  if (!unresolvedIssues.length) writeLines([scope === "room_clutter" ? "Aucune chambre encombrée en attente." : "Aucun problème en attente."], 11, "normal", 5, 50);
+  const rows = reportRows(state, kind, period, scope);
+  const getPhotos = indexReportPhotos(state, end);
+  if (!rows.length) writeLines([reportScopes[scope].empty], 11, "normal", 5, 50);
 
-  for (const [issueIndex, issue] of unresolvedIssues.entries()) {
-    const attachments = reportPhotos(issue, state, end);
-    const titleLines = split(issue.title, 12, "bold");
-    const metaLines = split(`${issue.location} · Constat du ${displayDate(issue.date)}`, 9, "italic");
-    const descLines = split(issue.description, 10);
+  for (const [issueIndex, { issue, title, description, status, photos }] of rows.entries()) {
+    const attachments = photos ?? getPhotos(issue);
+    const continuedIssue = { title, location: issue.location };
+    const titleLines = split(title, 12, "bold");
+    const statusLabel = scope === "complete" || scope === "resolved" ? ` · ${statuses[status]}` : "";
+    const metaLines = split(`${issue.location} · Constat du ${displayDate(issue.date)}${statusLabel}`, 9, "italic");
+    const descLines = split(description, 10);
     const headingHeight = titleLines.length * 5.5 + metaLines.length * 4.5 + 3;
     const blockHeight = headingHeight + descLines.length * 4.5 + 4 + Math.ceil(attachments.length / PHOTO_COLUMNS) * PHOTO_ROW_HEIGHT;
     // Keep normal-size problems together. Longer descriptions flow across pages instead of being clipped.
@@ -112,13 +115,13 @@ export async function buildReport(
     writeLines(titleLines, 12, "bold", 5.5, 35);
     writeLines(metaLines, 9, "italic", 4.5, 100);
     y += 3;
-    writeLines(descLines, 10, "normal", 4.5, 50, issue);
+    writeLines(descLines, 10, "normal", 4.5, 50, continuedIssue);
     y += 4;
 
     // Load at most one row at a time, preserving every attachment and its original index.
     for (let start = 0; start < attachments.length; start += PHOTO_COLUMNS) {
       const photos = await Promise.all(attachments.slice(start, start + PHOTO_COLUMNS).map((photo, column) => getPhoto(issue, start + column, photo)));
-      checkPage(PHOTO_ROW_HEIGHT, issue);
+      checkPage(PHOTO_ROW_HEIGHT, continuedIssue);
       for (const [column, data] of photos.entries()) {
         const index = start + column;
         const x = LEFT + column * (PHOTO_WIDTH + PHOTO_GAP);
@@ -175,6 +178,12 @@ function loadPhoto(_issue: Issue, _index: number, photo: ReportPhoto): Promise<s
 
 export async function downloadReport(options: ReportOptions) {
   const doc = await buildReport(options);
-  const prefix = options.scope === "room_clutter" ? "chambres-encombrees" : options.kind === "daily" ? "rapport-quotidien" : "bilan-mensuel";
+  const prefix = {
+    all: options.kind === "daily" ? "rapport-quotidien" : "bilan-mensuel",
+    room_clutter: "chambres-encombrees",
+    technical: "problemes-techniques",
+    resolved: "problemes-resolus",
+    complete: "rapport-complet",
+  }[options.scope ?? "all"];
   doc.save(`${prefix}-${options.period}.pdf`);
 }

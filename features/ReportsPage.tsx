@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Box,
@@ -24,32 +24,33 @@ import {
   PageTitle,
   StatCards,
 } from "@/components/HotelUI";
-import { isRoomClutterIssue, reportPendingIssues, reportPeriodEnd, reportPhotos, type ReportScope } from "@/lib/reportData";
+import { indexReportPhotos, reportPeriodEnd, reportRows, reportScopes, type ReportScope } from "@/lib/reportData";
 export default function ReportsPage() {
-  const { issues, inspections, roomInspections = [], hotelName } = useAppContext();
+  const { issues, inspections, roomInspections, workEvents, hotelName } = useAppContext();
   const [kind, setKind] = useState<"daily" | "monthly">("daily");
   const [scope, setScope] = useState<ReportScope>("all");
-  const [date, setDate] = useState(today());
-  const [month, setMonth] = useState(today().slice(0, 7));
+  const currentDay = today();
+  const [date, setDate] = useState(currentDay);
+  const [month, setMonth] = useState(currentDay.slice(0, 7));
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
   const valid =
     kind === "daily"
-      ? /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today()
-      : /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month <= today().slice(0, 7);
+      ? /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= currentDay
+      : /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month <= currentDay.slice(0, 7);
   const period = kind === "daily" ? date : month;
-  const end = valid ? reportPeriodEnd(kind, period) : today();
-  const reportState = { issues, inspections, roomInspections };
-  const scopedIssues = scope === "all" ? issues : issues.filter(issue => isRoomClutterIssue(issue, end));
-  const summary =
-    valid && kind === "monthly"
-      ? monthlySummary({ issues: scopedIssues, inspections }, month)
-      : null;
+  const end = valid ? reportPeriodEnd(kind, period) : currentDay;
+  const reportState = useMemo(() => ({ issues, inspections, roomInspections, workEvents }), [issues, inspections, roomInspections, workEvents]);
+  const summary = useMemo(() => valid && kind === "monthly" && scope === "all"
+    ? monthlySummary({ issues, inspections }, month) : null, [valid, kind, scope, issues, inspections, month]);
   const rounds =
     kind === "daily"
       ? inspections.filter((i) => i.date === date)
       : summary?.inspections || [];
-  const pending = valid ? reportPendingIssues(reportState, kind, period, scope) : [];
+  const getPhotos = useMemo(() => indexReportPhotos(reportState, end), [reportState, end]);
+  const preview = useMemo(() => valid ? reportRows(reportState, kind, period, scope).map(row => ({
+    ...row, photoCount: (row.photos ?? getPhotos(row.issue)).length,
+  })) : [], [valid, reportState, kind, period, scope, getPhotos]);
   async function exportPdf() {
     setExporting(true);
     setError("");
@@ -74,7 +75,7 @@ export default function ReportsPage() {
       <PageTitle
         eyebrow="Les faits, en un document"
         title="Rapports"
-        description="Exportez les problèmes à traiter avec toutes les photos des contrôles associés."
+        description="Téléchargez les problèmes à traiter et les résolutions, avec les photos des contrôles associés."
       />
       <Paper variant="outlined" sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(4, minmax(0, 1fr))" } }}>
@@ -82,24 +83,25 @@ export default function ReportsPage() {
             select
             label="Type de rapport"
             value={kind}
+            disabled={exporting}
             onChange={(e) => setKind(e.target.value as typeof kind)}
           >
             <MenuItem value="daily">Rapport quotidien</MenuItem>
             <MenuItem value="monthly">Bilan mensuel</MenuItem>
           </TextField>
-          <TextField select label="Contenu" value={scope} onChange={e => setScope(e.target.value as ReportScope)}>
-            <MenuItem value="all">Tous les problèmes</MenuItem>
-            <MenuItem value="room_clutter">Chambres encombrées</MenuItem>
+          <TextField select label="Contenu" value={scope} disabled={exporting} onChange={e => setScope(e.target.value as ReportScope)}>
+            {Object.entries(reportScopes).map(([value, { label }]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
           </TextField>
           {kind === "daily" ? (
             <TextField
               type="date"
               label="Date"
               value={date}
+              disabled={exporting}
               onChange={(e) => setDate(e.target.value)}
               slotProps={{
                 inputLabel: { shrink: true },
-                htmlInput: { max: today() },
+                htmlInput: { max: currentDay },
               }}
             />
           ) : (
@@ -107,10 +109,11 @@ export default function ReportsPage() {
               type="month"
               label="Mois"
               value={month}
+              disabled={exporting}
               onChange={(e) => setMonth(e.target.value)}
               slotProps={{
                 inputLabel: { shrink: true },
-                htmlInput: { max: today().slice(0, 7) },
+                htmlInput: { max: currentDay.slice(0, 7) },
               }}
             />
           )}
@@ -125,8 +128,9 @@ export default function ReportsPage() {
           </Button>
         </Box>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-          Le PDF contient les problèmes encore en attente à la date choisie et toutes leurs photos enregistrées jusqu’à cette date.
-          {scope === "room_clutter" && " Seuls les signalements de chambres encombrées sont sélectionnés."}
+          {scope === "resolved" ? "Résolutions du jour ou du mois choisi, y compris les éléments réparés d’une fiche encore ouverte. Les éléments rouverts avant la fin de la période sont exclus."
+            : scope === "complete" ? "Problèmes encore en attente à la fin de la période et éléments résolus pendant celle-ci, regroupés par fiche."
+            : "Problèmes encore en attente à la fin de la période choisie, avec leurs photos enregistrées jusqu’à cette date."}
         </Typography>
       </Paper>
       {error && (
@@ -140,29 +144,29 @@ export default function ReportsPage() {
         </Alert>
       ) : (
         <>
-          {scope === "room_clutter" ? (
+          {scope !== "all" ? (
             <StatCards items={[
-              { label: kind === "daily" ? "Nouveaux signalements du jour" : "Nouveaux signalements du mois", value: scopedIssues.filter(issue => kind === "daily" ? issue.date === date : issue.date.startsWith(month)).length },
-              { label: "Signalements en attente", value: pending.length },
+              { label: "Fiches dans le PDF", value: preview.length },
+              { label: "Photos associées", value: preview.reduce((sum, row) => sum + row.photoCount, 0) },
             ]} />
           ) : summary ? (
             <StatCards
               items={[
                 {
-                  label: "Report du mois précédent",
+                  label: "Anomalies reportées du mois précédent",
                   value: summary.pendingStart.length,
                 },
                 {
-                  label: "Nouveaux problèmes",
+                  label: "Anomalies créées dans le mois",
                   value: summary.newIssues.length,
                 },
                 {
-                  label: "Résolues dans le mois",
+                  label: "Anomalies passées à résolu",
                   value: summary.resolvedCount,
                 },
                 {
-                  label: "Restantes en fin de période",
-                  value: summary.pendingEnd.length,
+                  label: "Fiches à traiter dans le PDF",
+                  value: preview.length,
                 },
               ]}
             />
@@ -177,7 +181,7 @@ export default function ReportsPage() {
                   label: "Nouveaux problèmes",
                   value: issues.filter((i) => i.date === date).length,
                 },
-                { label: "Non résolues à cette date", value: pending.length },
+                { label: "Non résolues à cette date", value: preview.length },
               ]}
             />
           )}
@@ -243,25 +247,26 @@ export default function ReportsPage() {
           </>}
           <Box sx={{ mt: 4 }}>
             <Typography variant="h5" sx={{ mb: 2 }}>
-              {scope === "room_clutter" ? "Chambres encombrées à traiter" : "Problèmes non résolus"}{" "}
-              {summary ? "en fin de période" : "à cette date"}
+              {reportScopes[scope].heading}
             </Typography>
-            {!pending.length ? (
+            {!preview.length ? (
               <Typography color="text.secondary">
-                {scope === "room_clutter" ? "Aucune chambre encombrée en attente pour cette période. Les réponses « Oui » du checklist apparaîtront ici après leur enregistrement." : "Aucun problème en attente."}
+                {reportScopes[scope].empty}
               </Typography>
             ) : (
               <Stack spacing={1}>
-                {pending.map((issue) => (
+                {preview.map(({ issue, title, description, status, photoCount }) => (
                   <Paper key={issue.id} variant="outlined" sx={{ p: 2 }}>
                     <Typography sx={{ fontWeight: 700 }}>
-                      {issue.title}
+                      {title}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       {issue.location} · Constat du {displayDate(issue.date)}
+                      {(scope === "complete" || scope === "resolved") && ` · ${statuses[status]}`}
                     </Typography>
+                    {scope !== "all" && <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{description}</Typography>}
                     <Typography variant="body2" color="text.secondary">
-                      {reportPhotos(issue, reportState, end).length} photo(s) dans le PDF
+                      {photoCount} photo(s) dans le PDF
                     </Typography>
                   </Paper>
                 ))}

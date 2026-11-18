@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { inflateSync } from "node:zlib";
 import { applyCommand, createId, issueResponsible, monthlySummary, type Issue, type State } from "../lib/domain";
 import { buildReport } from "../lib/pdfExport";
+import { indexReportPhotos } from "../lib/reportPhotos";
 import { reportPendingIssues, reportPhotos } from "../lib/reportData";
 import type { RoomInspection } from "../lib/rooms";
 
@@ -258,6 +259,15 @@ function roomControl(issueId: string, photoIds: string[], patch: Partial<RoomIns
   };
 }
 
+test("a shared inspection keeps distinct source indices for each linked issue", () => {
+  const first = issue({ photoIds: ["original"] });
+  const second = issue({ photoIds: [] });
+  const shared = roomControl(first.id, ["original", "shared"], { relatedIssueIds: [second.id, first.id, first.id] });
+  const getPhotos = indexReportPhotos({ issues: [first, second], inspections: [], roomInspections: [shared] }, date);
+  assert.deepEqual(getPhotos(first).map(p => [p.sourceId, p.index]), [[first.id, 0], [shared.id, 1]]);
+  assert.deepEqual(getPhotos(second).map(p => [p.sourceId, p.index]), [[shared.id, 0], [shared.id, 1]]);
+});
+
 test("clutter reports include all original and explicitly linked control photos once, within the period", async t => {
   const clutter = issue({ title: "Chambre encombrée d’affaires", description: "Des bagages occupent une grande partie de la chambre.",
     room: "204", roomFindings: [{ key: "room_clutter", label: "Chambre encombrée d’affaires", problemType: "room_cluttered" }] });
@@ -361,5 +371,94 @@ test("the default report loader uses the authenticated room-control endpoint for
     globalThis.fetch = originalFetch;
     if (originalReader) Object.defineProperty(globalThis, "FileReader", originalReader);
     else Reflect.deleteProperty(globalThis, "FileReader");
+  }
+});
+
+test("technical and clutter PDFs isolate the selected findings of a mixed room inspection", async () => {
+  const grouped = issue({
+    title: "Contrôle de chambre", description: "FUITE_ACTIVE\nVALISES_ENTREE\nBLATTES_DETECTEES",
+    roomFindings: [
+      { key: "leaks", label: "FUITE_ACTIVE" },
+      { key: "room_clutter", label: "VALISES_ENTREE" },
+      { key: "bugs", label: "BLATTES_DETECTEES" },
+    ],
+  });
+  const pests = issue({ title: "Cafards dans la chambre", description: "Présence de cafards dans la chambre." });
+  for (const scope of ["technical", "room_clutter"] as const) {
+    const doc = await buildReport({ ...options([grouped, pests]), scope }, async record => {
+      assert.equal(record.id, grouped.id);
+      return image;
+    });
+    const text = pages(doc).map(page => page.text).join(" ");
+    assert.ok(text.includes(scope === "technical" ? "FUITE_ACTIVE" : "VALISES_ENTREE"));
+    assert.ok(!text.includes(scope === "technical" ? "VALISES_ENTREE" : "FUITE_ACTIVE"));
+    assert.doesNotMatch(text, /BLATTES_DETECTEES|Présence de cafards dans la chambre/);
+    assert.equal(imageCount(pages(doc)), 3);
+  }
+});
+
+test("resolved and complete PDFs use resolution transitions, Paris dates and individual finding states", async () => {
+  const opened = historyEvent("2026-09-01T09:00:00Z", "ouvert");
+  const resolution = { ...historyEvent("2026-10-19T22:30:00Z", "resolu"), actor: "Alex", note: "Pièce remplacée." };
+  const grouped = issue({ date: "2026-09-01", title: "Contrôle groupé", description: "POIGNEE_REPAREE\nPRISE_EN_PANNE\nPrévenir la réception avant la visite.",
+    status: "en_cours", roomFindings: [{ key: "handle", label: "POIGNEE_REPAREE" }, { key: "socket", label: "PRISE_EN_PANNE" }],
+    history: [opened, { ...resolution, status: "en_cours", findingStates: [{ key: "handle", status: "resolu" }, { key: "socket", status: "ouvert" }] }],
+  });
+  const closed = issue({ title: "RESOLUTION_DU_JOUR", date: "2026-09-01", history: [opened, resolution,
+    { ...resolution, at: date + "T15:00:00Z", actor: "Marc", note: "Correction administrative." },
+    historyEvent("2026-11-01T10:00:00Z", "ouvert")] });
+  const reopened = issue({ title: "DEJA_REOUVERT", history: [opened, resolution, historyEvent(date + "T12:00:00Z", "ouvert")] });
+  const old = issue({ title: "RESOLUTION_ANCIENNE", date: "2026-09-01", status: "resolu",
+    history: [opened, historyEvent("2026-09-30T08:00:00Z", "resolu"), { ...resolution, note: "Note seule." }] });
+  for (const kind of ["daily", "monthly"] as const) {
+    for (const scope of ["resolved", "complete"] as const) {
+      const calls: string[] = [];
+      const doc = await buildReport({ ...options([grouped, closed, reopened, old], kind), scope }, async record => {
+        calls.push(record.id);
+        return image;
+      });
+      const text = pages(doc).map(page => page.text).join(" ");
+      assert.match(text, /RESOLUTION_DU_JOUR/);
+      assert.match(text, /POIGNEE_REPAREE/);
+      assert.match(text, /20\/10\/2026/);
+      assert.match(text, /Alex/);
+      assert.match(text, /Pièce remplacée/);
+      assert.doesNotMatch(text, /RESOLUTION_ANCIENNE|Correction administrative/);
+      assert.equal(text.includes("DEJA_REOUVERT"), scope === "complete");
+      assert.equal(text.includes("PRISE_EN_PANNE"), scope === "complete");
+      assert.equal(text.includes("Prévenir la réception avant la visite."), scope === "complete");
+      assert.equal(calls.filter(id => id === grouped.id).length, 3, "one gallery for a partially resolved room");
+      assert.ok(!calls.includes(old.id));
+    }
+  }
+});
+
+test("a closed legacy issue without events uses its only known timestamp and labels that limitation", async () => {
+  const legacy = issue({ title: "FICHE_ANCIENNE", date: "2026-09-01", updatedAt: date + "T11:00:00Z", status: "resolu", history: [] });
+  const old = issue({ title: "ARCHIVE_SEPTEMBRE", date: "2026-09-01", status: "resolu", history: [] });
+  const doc = await buildReport({ ...options([legacy, old]), scope: "resolved" }, async () => null);
+  const text = pages(doc).map(page => page.text).join(" ");
+  assert.match(text, /FICHE_ANCIENNE/);
+  assert.match(text, /date de résolution inconnue/);
+  assert.match(text, /Dernière mise à jour le 20\/10\/2026/);
+  assert.doesNotMatch(text, /ARCHIVE_SEPTEMBRE|Résolu le 20/);
+});
+
+test("a canonical pest resolution and an outstanding repair share a room without duplicating the legacy pest finding", async () => {
+  const grouped = issue({ room: "204", title: "Contrôle de chambre", description: "ROBINET_EN_PANNE\nANCIEN_CONSTAT_CAFARDS",
+    roomFindings: [{ key: "taps", label: "ROBINET_EN_PANNE" }, { key: "bugs", label: "ANCIEN_CONSTAT_CAFARDS" }] });
+  const state: State = { issues: [grouped], inspections: [], workEvents: [{
+    id: createId(), type: "createWorkEvent", kind: "cafardFollowup", room: "204", targetId: "204", date,
+    occurredAt: date + "T17:00:00Z", updatedAt: date + "T17:00:00Z", expectedRevision: 0, version: 1,
+    cafardStatus: "resolu", detectedOn: date, resolvedOn: date, product: "", treatedOn: null,
+    notes: "Vérification terminée.", actor: "Anna", submissionHash: "test",
+  }] };
+  for (const scope of ["complete", "resolved"] as const) {
+    const doc = await buildReport({ ...options(state.issues), state, scope }, async () => image);
+    const text = pages(doc).map(page => page.text).join(" ");
+    assert.match(text, /Cafards · Chambre 204/);
+    assert.match(text, /Vérification terminée/);
+    assert.doesNotMatch(text, /ANCIEN_CONSTAT_CAFARDS/);
+    assert.equal(text.includes("ROBINET_EN_PANNE"), scope === "complete");
   }
 });
