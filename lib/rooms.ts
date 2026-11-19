@@ -130,9 +130,11 @@ const roomEntryV3Schema = roomFields.extend({
 }));
 
 // Keep field order stable because the parsed payload is the offline receipt hash.
-function quickChoiceRoomSchema<V extends 4 | 5 | 6 | 7>(version: V, requiredChecks: readonly { key: RoomCheckKey }[]) {
+function quickChoiceRoomSchema<V extends 4 | 5 | 6>(version: V, requiredChecks: readonly { key: RoomCheckKey }[]) {
   return roomFields.extend({
-  occupied: z.boolean(), schemaVersion: z.literal(version).default(version),
+  // V6 and V7 use the same questions. One schema keeps field-level errors
+  // available to the form when several answers are missing at once.
+  occupied: z.boolean(), schemaVersion: version === 6 ? z.literal([6, 7]).default(6) : z.literal(version).default(version),
   microwaveCleaning: applianceCleaning, fridgeCleaning: applianceCleaning,
   inspectedAt: z.iso.datetime().optional(),
   distinctProblemKeys: z.array(z.string().min(1).max(80)).max(30).optional(),
@@ -199,7 +201,7 @@ function quickChoiceRoomSchema<V extends 4 | 5 | 6 | 7>(version: V, requiredChec
 }
 const roomEntryV4Schema = quickChoiceRoomSchema(4, roomChecksV4);
 const roomEntryV5Schema = quickChoiceRoomSchema(5, roomChecksV5);
-export const roomEntrySchema = z.union([quickChoiceRoomSchema(6, roomChecks), quickChoiceRoomSchema(7, roomChecks)]);
+export const roomEntrySchema = quickChoiceRoomSchema(6, roomChecks);
 
 export const workEntrySchema = z.object({
   type: z.literal("createWorkEvent"), id: z.string().uuid(),

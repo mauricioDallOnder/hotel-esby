@@ -159,6 +159,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
         : check),
       fridgePresent: present === "oui",
       fridgeCleaning: present === "non" ? null : value.fridgeCleaning || "non_verifie",
+      ...(present === "non" ? { issueLinks: value.issueLinks?.filter(link => link.key !== "fridge") } : {}),
     });
   }
   async function submit(next = false) {
@@ -335,7 +336,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
                   {linked ? `Déjà signalé : ${linked.title} · aucun doublon` : needsChoice ? "Choix du suivi nécessaire" : unavailable ? "Le suivi choisi n’est plus disponible." : repair ? "Choisissez la fiche à résoudre." : optional ? "Constat conservé dans le contrôle. Association facultative." : "Nouveau signalement"}
                 </Typography>
                 {(known.length > 0 || unavailable) && <TextField select fullWidth label={`Associer au problème existant · ${checkLabel}`} value={explicit || ""} disabled={busy || compressing}
-                  error={needsChoice || unavailable} helperText={linked ? linked.description : "Tous les problèmes techniques ouverts de cette chambre sont proposés."}
+                  error={needsChoice || unavailable} helperText={linked ? linked.description !== finding.label && linked.description !== linked.title && linked.description : "Tous les problèmes techniques ouverts de cette chambre sont proposés."}
                   onChange={event => {
                     const issue = known.find(item => item.id === event.target.value);
                     changeLink(finding.key, issue ? linkToIssue(finding.key, issue, repair ? "resolved" : "present") : undefined);

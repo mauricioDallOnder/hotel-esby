@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { createId, today } from "../lib/domain";
 import { reportPhotos, reportRows } from "../lib/reportData";
-import { roomChecks, type RoomEntry } from "../lib/rooms";
+import { roomChecks, roomEntrySchema, type RoomEntry } from "../lib/rooms";
 import { roomRotation } from "../lib/roomRotation";
 import { execute, executeEntry, readPhoto, readState } from "../lib/storage";
 
@@ -33,6 +33,17 @@ async function knownIssue(title: string) {
   } });
   return id;
 }
+
+test("validation identifies the exact fields to correct in current and previous checklists", () => {
+  for (const schemaVersion of [6, 7] as const) {
+    const entry = { ...inspection(["damage"]), schemaVersion, actor: "", problemDetails: [] };
+    const result = roomEntrySchema.safeParse(entry);
+    assert.equal(result.success, false);
+    const fields = result.error.issues.map(issue => issue.path.join("."));
+    assert.ok(fields.includes("actor"));
+    assert.ok(fields.includes("problemDetails"));
+  }
+});
 
 test("323 commits the repaired toilet, obstructed heater and a new fault with one immutable inspection receipt", async () => {
   reset();
