@@ -83,7 +83,8 @@ Dans **Rapports**, choisissez un jour ou un mois, puis le contenu du PDF. Vous p
 | **Vue d'ensemble** | Repérer rapidement les informations utiles pour la journée. |
 | **Checklist des chambres** | Organiser les visites, consigner l'état du mobilier et des équipements, ajouter des photos et retrouver les contrôles. |
 | **Occupation des chambres** | Distinguer **Occupée**, **Libre** et **En travaux**, avec une observation facultative. |
-| **Problèmes techniques** | Filtrer les problèmes techniques, les chambres encombrées ou les cafards. Le filtre Cafards ouvre le suivi existant de chaque chambre. |
+| **Problèmes techniques** | Consulter les pannes et les réparations. Le filtre Cafards ouvre le suivi existant de chaque chambre. |
+| **État général de chambre** | Retrouver les remarques sur les chambres encombrées, y compris celles déjà enregistrées, avec leurs photos et leur historique. Pour ajouter un constat, cochez **Oui** à **Chambre encombrée d’affaires** dans la checklist. Le filtre **Résolu** permet de retrouver les constats clôturés. |
 | **Suivi des cafards** | Conserver les détections, les traitements et les vérifications dans le même dossier par chambre. |
 | **Lingerie** | Suivre les lave-linge et sèche-linge, leur temps restant et le retrait des vêtements. |
 | **Objets récupérés** | Noter la collecte, la conservation et la restitution d'un objet. |

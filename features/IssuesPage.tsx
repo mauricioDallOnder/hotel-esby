@@ -1,25 +1,35 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { Alert, Box, Button, Chip, Collapse, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import Add from "@mui/icons-material/Add";
 import { useAppContext } from "@/context/AppContext";
 import { categories, displayDate, issuePhotoIds, issueResponsible, priorities, statuses, today, type Issue } from "@/lib/domain";
 import { defaultIssueFilters, issueAge, issueView, lastIntervention, type IssueFilters } from "@/lib/issueView";
-import { findingKind, issueKindLabels, type IssueKind } from "@/lib/issueCategory";
+import { findingKind, issueKindLabels } from "@/lib/issueCategory";
 import { ConnectionBar, EmptyState, IssueBadges, PageTitle } from "@/components/HotelUI";
 import { IssueDialog } from "@/components/IssueDialog";
 import { IssuePhoto } from "@/components/IssuePhoto";
 import { deviceStore } from "@/lib/deviceStore";
 import { type ActiveIssueDraft, type IssueDraft } from "@/lib/issueDraft";
-import { issueFindingProgress, issueFindingStatus } from "@/lib/issueFindings";
+import { aggregateFindingStatus, findingDetailsText, issueFindingProgress, issueFindingStatus } from "@/lib/issueFindings";
 
 const CafardsPage = dynamic(() => import("@/features/CafardsPage"), {
   loading: () => <Typography role="status">Chargement du suivi des cafards…</Typography>,
 });
 
-function IssueCard({ issue, kind, onOpen, direction }: { issue: Issue; kind: IssueFilters["kind"]; onOpen: () => void; direction: boolean }) {
+function IssueCard({ issue: original, kind, onOpen, direction }: { issue: Issue; kind: IssueFilters["kind"]; onOpen: () => void; direction: boolean }) {
   const [photosOpen, setPhotosOpen] = useState(false);
+  const findings = original.roomFindingsActive !== false ? original.roomFindings : undefined;
+  const matching = findings?.filter(finding => findingKind(finding) === kind);
+  // A mixed inspection has one shared history. Only its card is scoped to this page.
+  let issue = original;
+  if (matching?.length && matching.length !== findings?.length) {
+    const states = matching.map(finding => ({ status: issueFindingStatus(original, finding) }));
+    issue = { ...original, roomFindings: matching, title: matching.map(finding => finding.label).join(" · "),
+      description: findingDetailsText(matching), status: aggregateFindingStatus(states, original.status) };
+  }
   const photos = issuePhotoIds(issue), last = lastIntervention(issue), age = issueAge(issue, today()), responsible = issueResponsible(issue);
   const progress = issueFindingProgress(issue);
   return <Paper component="article" aria-label={`${issue.location} · ${issue.title}`} variant="outlined" sx={{ p: 2, minWidth: 0, borderLeft: "4px solid", borderLeftColor: issue.status === "resolu" ? "success.main" : issue.priority === "critique" ? "error.main" : issue.priority === "haute" ? "warning.main" : "divider" }}>
@@ -52,9 +62,10 @@ function IssueCard({ issue, kind, onOpen, direction }: { issue: Issue; kind: Iss
   </Paper>;
 }
 
-export default function IssuesPage() {
+export default function IssuesPage({ roomCondition = false }: { roomCondition?: boolean }) {
   const { issues, role } = useAppContext();
-  const [filters, setFilters] = useState<IssueFilters>(defaultIssueFilters);
+  const initialFilters: IssueFilters = { ...defaultIssueFilters, kind: roomCondition ? "room_clutter" : "technical" };
+  const [filters, setFilters] = useState<IssueFilters>(initialFilters);
   const [advanced, setAdvanced] = useState(false);
   const [limit, setLimit] = useState(24);
   const [dialog, setDialog] = useState<Issue | "new" | null>(null);
@@ -82,27 +93,32 @@ export default function IssuesPage() {
     setRestoredDraftKey(activeDraft.key); setDialog(record || "new");
   }
   function change(patch: Partial<IssueFilters>) { setFilters(current => ({ ...current, ...patch })); setLimit(24); }
-  function reset() { setFilters(defaultIssueFilters); setLimit(24); }
+  function reset() { setFilters(initialFilters); setLimit(24); }
   const cafards = filters.kind === "cafards";
   const { filtered, shortcuts } = useMemo(() => cafards ? { filtered: [], shortcuts: [] } : issueView(issues, filters), [cafards, issues, filters]);
+  const showDraft = activeDraft && (!activeDraft.issueId || role === "direction") &&
+    (!roomCondition || filtered.some(issue => issue.id === activeDraft.issueId));
   const statusChoices = { pending: "Non résolues", ouvert: statuses.ouvert, en_cours: statuses.en_cours, resolu: statuses.resolu, all: "Toutes" };
   const extraCount = Number(filters.category !== "all") + Number(filters.unassigned);
   const invalidRange = Boolean(filters.from && filters.to && filters.from > filters.to);
-  const changed = JSON.stringify(filters) !== JSON.stringify(defaultIssueFilters);
+  const changed = JSON.stringify(filters) !== JSON.stringify(initialFilters);
   return <>
     <ConnectionBar />
-    <PageTitle eyebrow="Maintenance" title="Problèmes techniques" description="Les priorités, les responsables et les dernières interventions en un coup d’œil." action={!cafards && <Button variant="contained" startIcon={<Add />} onClick={() => openDialog("new")}>Signaler une anomalie</Button>} />
+    <PageTitle eyebrow={roomCondition ? "Chambres" : "Maintenance"} title={roomCondition ? "État général de chambre" : "Problèmes techniques"}
+      description={roomCondition ? "Remarques, photos et suivi des chambres encombrées." : "Les priorités, les responsables et les dernières interventions en un coup d’œil."}
+      action={roomCondition ? <Button component={Link} href="/checklist" variant="contained">Contrôler une chambre</Button> :
+        !cafards && <Button variant="contained" startIcon={<Add />} onClick={() => openDialog("new")}>Signaler une anomalie</Button>} />
     <Stack spacing={2.5}>
       {message && <Alert severity="success" onClose={() => setMessage("")}>{message}</Alert>}
-      {activeDraft && (!activeDraft.issueId || role === "direction") && <Alert severity="info">Un brouillon de problème technique est conservé sur cet appareil, avec son texte et ses photos.
+      {showDraft && <Alert severity="info">Un brouillon de signalement est conservé sur cet appareil, avec son texte et ses photos.
         <Button color="inherit" onClick={resumeDraft}>Reprendre le brouillon</Button>
       </Alert>}
-      <Stack direction="row" useFlexGap role="group" aria-label="Filtrer par type de problème" sx={{ flexWrap: "wrap", gap: 1 }}>
-        {Object.entries({ all: "Tous les types", ...issueKindLabels }).map(([kind, label]) =>
-          <Chip key={kind} label={label} onClick={() => change({ kind: kind as "all" | IssueKind })}
+      {!roomCondition && <Stack direction="row" useFlexGap role="group" aria-label="Filtrer par type de problème" sx={{ flexWrap: "wrap", gap: 1 }}>
+        {(["technical", "cafards"] as const).map(kind =>
+          <Chip key={kind} label={issueKindLabels[kind]} onClick={() => change({ kind })}
             color={filters.kind === kind ? "primary" : "default"} variant={filters.kind === kind ? "filled" : "outlined"}
             aria-pressed={filters.kind === kind} sx={{ minHeight: 40 }} />)}
-      </Stack>
+      </Stack>}
       {cafards ? <CafardsPage onOpenLegacyIssue={openDialog} /> : <>
       <Stack spacing={0.75}>
         <Box role="group" aria-label="Vues rapides des anomalies" sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1 }}>
@@ -141,7 +157,8 @@ export default function IssuesPage() {
           <MenuItem value="recent">Plus récentes d’abord</MenuItem><MenuItem value="oldest">Plus anciennes d’abord</MenuItem><MenuItem value="priority">Priorité, puis ancienneté</MenuItem><MenuItem value="updated">Dernières interventions</MenuItem>
         </TextField>
       </Stack>
-      {!filtered.length ? <EmptyState title="Aucune anomalie dans cette sélection" detail="Modifiez les filtres pour retrouver un signalement, ou signalez un nouveau problème." /> : <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>
+      {!filtered.length ? <EmptyState title={roomCondition ? "Aucune chambre encombrée dans cette sélection" : "Aucune anomalie dans cette sélection"}
+        detail={roomCondition ? "Pour signaler un encombrement, cochez « Oui » lors du contrôle de la chambre." : "Modifiez les filtres pour retrouver un signalement, ou signalez un nouveau problème."} /> : <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>
         {filtered.slice(0, limit).map(issue => <IssueCard key={issue.id} issue={issue} kind={filters.kind} direction={role === "direction"} onOpen={() => openDialog(issue)} />)}
       </Box>}
       {filtered.length > limit && <Button variant="outlined" onClick={() => setLimit(n => n + 24)}>Afficher plus · {filtered.length - limit} restante(s)</Button>}
