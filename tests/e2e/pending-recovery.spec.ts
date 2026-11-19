@@ -108,7 +108,7 @@ test("a refused checklist reopens its full local contents and is atomically repl
   expect(replacement.id).not.toBe(original.id);
   expect(replacement.date).toBe(original.date);
   expect(replacement.notes).toBe(original.notes);
-  expect(replacement.schemaVersion).toBe(6);
+  expect(replacement.schemaVersion).toBe(7);
   expect(replacement.checks).toEqual([...original.checks, { key: "room_clutter", result: "ok" }]);
   expect(replacement.photosData).toEqual(original.photosData);
   expect(control.state.roomInspections).toHaveLength(1);

@@ -3,6 +3,7 @@ import { parseEntry, workEntrySchema, type Entry, type EntryChange, type RoomIns
 import { dependsOnEntry, sameWorkTarget, type PendingEntry } from "./entryQueue";
 import { latestCafardObservationId, latestWork, validateWorkEntry, validateWorkPredecessor } from "./work";
 import { submissionHash } from "./submissionHash";
+import { hasInspectionUpdates } from "./roomInspectionReceipt";
 
 export type EntryRecoveryReview = {
   kind: "saved" | "partial" | "missing" | "different";
@@ -24,7 +25,8 @@ export async function isCompleteEntryReceipt(item: PendingEntry, receipt: EntryC
   if (receipt?.collection !== expectedCollection || receipt.record?.id !== item.entry.id || receipt.record?.version !== 1 ||
     !Number.isFinite(Date.parse(receipt.record.updatedAt)) || receipt.record.submissionHash !== await entrySubmissionHash(item)) return false;
   return receipt.collection !== "roomInspections" || receipt.record.issueSyncVersion === 2 && typeof receipt.record.createdIssue === "boolean" &&
-    (!receipt.record.createdIssue || receipt.issue?.id === receipt.record.id);
+    (!receipt.record.createdIssue || receipt.issue?.id === receipt.record.id) &&
+    item.entry.type === "createRoomInspection" && hasInspectionUpdates(receipt.record, receipt.updatedIssues, item.entry.issueLinks);
 }
 
 /** A successful live read is necessary, but an ID alone is not a receipt. */
@@ -41,11 +43,17 @@ export async function inspectEntryRecovery(item: PendingEntry, state: State, pen
       Number.isFinite(Date.parse(sameId[0].updatedAt))) {
       const record = sameId[0];
       const receipt = { collection, record,
-        ...(collection === "roomInspections" ? { issue: state.issues.find(issue => issue.id === record.id) } : {}),
+        ...(item.entry.type === "createRoomInspection" ? {
+          issue: state.issues.find(issue => issue.id === record.id),
+          ...(item.entry.issueLinks?.some(link => link.outcome) ? {
+            updatedIssues: state.issues.filter(issue => (record as RoomInspection).relatedIssueIds?.includes(issue.id)),
+          } : {}),
+        } : {}),
       } as EntryChange;
       if (collection === "roomInspections") {
         const inspection = record as RoomInspection;
         if (inspection.issueSyncVersion !== 2 || typeof inspection.createdIssue !== "boolean" ||
+          item.entry.type !== "createRoomInspection" || !hasInspectionUpdates(inspection, state.issues, item.entry.issueLinks) ||
           inspection.createdIssue && !state.issues.some(issue => issue.id === inspection.id))
           return { ...base, kind: "partial", receipt, message: "Le contrôle est présent, mais la confirmation de son suivi technique est incomplète. Réessayez cet envoi d’origine pour terminer la synchronisation sans créer un autre contrôle." };
       }

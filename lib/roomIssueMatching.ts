@@ -1,8 +1,8 @@
 // Pure functions shared by the browser, local storage and the generated Apps Script bundle.
 import type { Issue } from "./domain";
-import type { RoomInspection } from "./rooms";
+import type { RoomInspection, RoomIssueAssociation, RoomIssueLink } from "./rooms";
 import { getProblemPreset, problemPresets, type ProblemType } from "./problemPresets";
-import { issueFindingStatus, issueMatchingSnapshot } from "./issueFindings";
+import { aggregateFindingStatus, issueFindingStates, issueFindingStatus, issueMatchingSnapshot } from "./issueFindings";
 
 export function normalizeIssueText(text: string) {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
@@ -129,7 +129,7 @@ export function matchesRoomFinding(issue: Issue, finding: Finding) {
       : issue.problemType === "room_cluttered";
     // "Rien de cassé : Problème" does not identify an object. It can suggest
     // existing room repairs for a human choice, but clutter is not a repair.
-    return !clutterOnly && !isCafardTechnicalReport(issue);
+    return !clutterOnly && !isCafardTechnicalReport(issue, "historical");
   }
   if (issue.roomFindings?.length) return issue.roomFindings.some(item => item.key === finding.key &&
     (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
@@ -291,7 +291,7 @@ export function shouldCheckIssueDuplicate(candidate: Issue, current?: Issue) {
     JSON.stringify(candidate.distinctFromIssueIds) !== JSON.stringify(current.distinctFromIssueIds));
 }
 
-type RoomIssueRecord = Pick<RoomInspection, "room" | "issueLinks" | "distinctProblemKeys" | "notes">;
+type RoomIssueRecord = Pick<RoomInspection, "room" | "issueLinks" | "distinctProblemKeys" | "notes"> & Partial<Pick<RoomInspection, "checks">>;
 
 function exactTypedDescription(issue: Issue, finding: Finding) {
   if (issue.roomFindingsActive === false) return false;
@@ -305,6 +305,8 @@ function exactTypedDescription(issue: Issue, finding: Finding) {
 /** A preview never throws; write boundaries reject conflicts before any photos or rows are written. */
 export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRecord, issues: readonly Issue[]) {
   const conflicts: string[] = [], requiresChoice: string[] = [];
+  const associations: RoomIssueAssociation[] = [];
+  const related = new Set<string>();
   const findings = candidate?.roomFindings || [];
   const links = record.issueLinks || [];
   for (const link of links) {
@@ -312,14 +314,36 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
       conflicts.push("Choisissez un seul problème existant par équipement.");
       continue;
     }
-    if (!findings.some(finding => finding.key === link.key)) {
+    const repairing = link.outcome === "resolved";
+    const checked = record.checks?.find(check => check.key === link.key);
+    if (link.outcome ? checked?.result !== (repairing ? "ok" : "probleme") : !findings.some(finding => finding.key === link.key)) {
       conflicts.push("Le problème associé ne correspond plus à un équipement signalé dans ce contrôle. Vérifiez votre sélection.");
       continue;
     }
     const existing = issues.find(issue => issue.id === link.issueId);
     if (!existing || existing.status === "resolu" || issueRoom(existing) !== record.room)
       conflicts.push("Le problème associé a été résolu, déplacé ou supprimé. Actualisez puis choisissez un problème encore ouvert dans cette chambre.");
-    else {
+    else if (link.outcome) {
+      const target = targetFinding(existing, link);
+      if (existing.version !== link.expectedVersion) {
+        conflicts.push(`La fiche « ${existing.title} » a changé. Vérifiez sa nouvelle version puis confirmez l’association.`);
+      } else if (isCafardTechnicalReport(existing, "historical") || target?.key === "bugs") {
+        conflicts.push(cafardTechnicalReportMessage());
+      } else if (repairing && existing.roomFindingsActive === false && (existing.roomFindings?.length || 0) > 1) {
+        conflicts.push(`Les équipements de « ${existing.title} » ont été reclassés. Vérifiez leurs détails dans Problèmes techniques avant de résoudre cet élément.`);
+      } else if ((link.findingKey || (existing.roomFindingsActive !== false && existing.roomFindings?.length)) && !target) {
+        conflicts.push(`Choisissez l’élément concerné dans la fiche « ${existing.title} ».`);
+      } else if (target && issueFindingStatus(existing, target) === "resolu") {
+        conflicts.push(`L’élément « ${target.label} » est déjà résolu. Vérifiez l’association.`);
+      } else if (associations.some(item => item.issueId === existing.id && item.findingKey === target?.key)) {
+        conflicts.push(`Le même problème de la fiche « ${existing.title} » est associé à deux équipements. Vérifiez vos choix.`);
+      } else {
+        related.add(existing.id);
+        associations.push({ key: link.key, issueId: existing.id, ...(target ? { findingKey: target.key } : {}),
+          label: target?.label || existing.title, source: "existing", outcome: link.outcome,
+          status: repairing ? "resolu" : target ? issueFindingStatus(existing, target) : existing.status });
+      }
+    } else {
       const finding = findings.find(item => item.key === link.key)!;
       const resolved = (existing.roomFindings || []).filter(item => issueFindingStatus(existing, item) === "resolu");
       const resolvedMatch = resolved.some(item => matchesRoomFinding({ ...existing, status: "ouvert", roomFindingsActive: true,
@@ -328,33 +352,49 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
         conflicts.push("Cet équipement est déjà résolu dans la fiche choisie. Signalez la nouvelle panne ou demandez à la direction de rouvrir cet élément avant de l’associer.");
     }
   }
-  if (!candidate) return { issue: undefined, relatedIssueIds: [] as string[], conflicts, requiresChoice };
+  if (!candidate) return { issue: undefined, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
   const open = openRoomIssues(issues, record.room);
-  const related = new Set<string>();
+  function associate(finding: Finding, existing: Issue) {
+    related.add(existing.id);
+    if (associations.some(item => item.key === finding.key)) return;
+    const targets = issueMatchingSnapshot(existing).roomFindings?.filter(item => item.key === finding.key);
+    const target = targets?.length === 1 ? targets[0] : undefined;
+    associations.push({ key: finding.key, issueId: existing.id, ...(target ? { findingKey: target.key } : {}),
+      label: target?.label || existing.title, source: "existing", outcome: "present", status: target ? issueFindingStatus(existing, target) : existing.status });
+  }
   const remaining = findings.filter(finding => {
     // Older queued drafts may still carry distinctProblemKeys. They cannot
     // bypass the single open follow-up for the same room checklist finding.
     const explicit = record.issueLinks?.find(link => link.key === finding.key);
     if (explicit) {
       const existing = open.find(issue => explicit.issueId === issue.id);
-      if (existing) { related.add(existing.id); return false; }
+      if (existing) { associate(finding, existing); return false; }
       return true; // A stale link must never silently create a replacement.
     }
-    const matching = open.filter(issue => matchesRoomFinding(issue, finding));
+    const matching = open.filter(issue => !isCafardTechnicalReport(issue, "historical") && matchesRoomFinding(issue, finding) &&
+      !associations.some(item => item.outcome === "resolved" && item.issueId === issue.id && (!item.findingKey || item.findingKey === finding.key)));
     if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && finding.problemType !== "room_cluttered" && !exactTypedDescription(matching[0], finding)) ||
       (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
       requiresChoice.push(finding.key);
       conflicts.push(`Un problème similaire est déjà ouvert pour « ${getProblemPreset(finding.problemType)?.label || finding.label} ». Choisissez le signalement à réutiliser ou précisez un problème différent.`);
       return true;
     }
-    if (matching.length === 1) { related.add(matching[0].id); return false; }
+    if (matching.length === 1) { associate(finding, matching[0]); return false; }
     return true;
   });
-  if (conflicts.length || (candidate.roomFindings?.length && !remaining.length)) return { issue: undefined, relatedIssueIds: [...related], conflicts, requiresChoice };
+  if (conflicts.length || (candidate.roomFindings?.length && !remaining.length)) return { issue: undefined, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
   const issue = { ...candidate, roomFindings: remaining,
     description: remaining.length ? [...remaining.map(finding => finding.label), ...(record.notes && !remaining.some(f => f.label === record.notes) ? [record.notes] : [])].join("\n").slice(0, 4000) : candidate.description };
   if (isCafardTechnicalReport(issue)) conflicts.push(cafardTechnicalReportMessage());
-  return { issue: conflicts.length ? undefined : issue, relatedIssueIds: [...related], conflicts, requiresChoice };
+  for (const finding of remaining) associations.push({ key: finding.key, issueId: issue.id, findingKey: finding.key,
+    label: finding.label, source: "created", outcome: "present", status: "ouvert" });
+  return { issue: conflicts.length ? undefined : issue, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
+}
+
+function targetFinding(issue: Issue, link: RoomIssueLink) {
+  if (issue.roomFindingsActive === false) return undefined;
+  return link.findingKey ? issue.roomFindings?.find(item => item.key === link.findingKey)
+    : issue.roomFindings?.length === 1 ? issue.roomFindings[0] : undefined;
 }
 
 export function validateRoomIssuePlan(candidate: Issue | undefined, record: RoomIssueRecord, issues: readonly Issue[]): string | undefined {
@@ -377,9 +417,52 @@ export function prepareRoomIssue(candidate: Issue | undefined, record: RoomInspe
   }
   const plan = planRoomIssue(candidate, record, issues);
   if (plan.conflicts.length) throw new Error(plan.conflicts[0]);
+  if (record.schemaVersion === 7) {
+    const unconfirmed = plan.associations.find(item => item.source === "existing" &&
+      !record.issueLinks?.some(link => link.key === item.key && link.issueId === item.issueId && link.outcome));
+    if (unconfirmed) throw new Error(`Un signalement correspondant est disponible : « ${unconfirmed.label} ». Vérifiez la fiche puis confirmez l’association.`);
+  }
   record.relatedIssueIds = plan.relatedIssueIds;
+  record.issueAssociations = plan.associations;
   record.createdIssue = !!plan.issue;
   record.newIssueFindingKeys = plan.issue?.roomFindings?.map(f => f.key) || [];
   record.issueSyncVersion = 2;
   return plan.issue;
+}
+
+/** Plan all changes against one locked state before the storage driver writes anything. */
+export function prepareRoomInspection(candidate: Issue | undefined, record: RoomInspection, issues: Issue[]) {
+  const issue = prepareRoomIssue(candidate, record, issues);
+  const updates = new Map<string, RoomIssueLink[]>();
+  for (const link of record.issueLinks || []) {
+    if (!link.outcome) continue;
+    const group = updates.get(link.issueId) || [];
+    group.push(link);
+    updates.set(link.issueId, group);
+  }
+  const updatedIssues: Issue[] = [];
+  for (const [id, links] of updates) {
+    const current = issues.find(item => item.id === id)!;
+    const history = current.history || [];
+    // A confirmed replay may read a newer version modified by another inspection.
+    if (history.some(event => event.inspectionId === record.id)) continue;
+    if (links.some(link => link.expectedVersion !== current.version))
+      throw new Error(`La fiche « ${current.title} » a changé. Vérifiez sa nouvelle version puis confirmez l’association.`);
+    const resolved = links.filter(link => link.outcome === "resolved");
+    const resolvedKeys = new Set(resolved.map(link => targetFinding(current, link)?.key));
+    const roomFindings = current.roomFindingsActive === false ? undefined : current.roomFindings?.map(finding => ({ ...finding,
+      status: resolvedKeys.has(finding.key) ? "resolu" as const : issueFindingStatus(current, finding) }));
+    const status = resolved.length ? aggregateFindingStatus(roomFindings || [], "resolu") : current.status;
+    const note = links.map(link => {
+      const association = record.issueAssociations?.find(item => item.key === link.key);
+      return [association?.label || current.title, link.outcome === "resolved" ? "Résolu lors du contrôle" : "Toujours présent", link.note].filter(Boolean).join(" · ");
+    }).join("\n");
+    const event = { at: record.updatedAt, actor: record.actor, inspectionId: record.id,
+      note: [`Contrôle de la chambre ${record.room} du ${record.date.split("-").reverse().join("/")}.`, note, record.notes].filter(Boolean).join("\n"),
+      status, priority: current.priority, assignee: current.assignee,
+      ...(roomFindings?.length ? { findingStates: issueFindingStates({ roomFindings, status }) } : {}) };
+    updatedIssues.push({ ...current, ...(roomFindings ? { roomFindings } : {}), status,
+      updatedAt: record.updatedAt, version: current.version + 1, history: [...history, event] });
+  }
+  return { issue, updatedIssues };
 }

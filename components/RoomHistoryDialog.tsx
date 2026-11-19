@@ -41,8 +41,8 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
   const record = records.find(r => r.id === selectedId);
   const previous = record ? records.slice(records.indexOf(record) + 1).find(r => r.room === record.room) : undefined;
   const visible = records.filter(r => (!start || r.date >= start) && (!end || r.date <= end) &&
-    `${r.room} ${r.actor} ${r.notes} ${roomProblems(r).join(" ")}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr")) &&
-    (filter === "all" || (filter === "problems" ? roomProblems(r).length > 0 : filter === "blocked" ? blockedIds.has(r.id) : !("updatedAt" in r) && !blockedIds.has(r.id))));
+    `${r.room} ${r.actor} ${r.notes} ${roomProblems(r).join(" ")} ${"issueAssociations" in r ? (r.issueAssociations || []).map(item => item.label).join(" ") : ""}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr")) &&
+    (filter === "all" || (filter === "problems" ? roomProblems(r).length > 0 || !!r.issueLinks?.length : filter === "blocked" ? blockedIds.has(r.id) : !("updatedAt" in r) && !blockedIds.has(r.id))));
   const syncLabel = (record: Record) => blockedIds.has(record.id) ? "À vérifier · envoi suspendu" : "updatedAt" in record ? "Enregistré sur le serveur" : "En attente d’envoi";
   const open = room ? openRoomIssues(issues, room) : [];
   const linked = record && "relatedIssueIds" in record ? issues.filter(i => record.relatedIssueIds?.includes(i.id) || (record.createdIssue && i.id === record.id)) : [];
@@ -84,6 +84,13 @@ export function RoomHistoryDialog({ room, history, issues = [], onClose }: { roo
         <Result label="Ménage" text={cleaningText(record)} status={record.occupied === true || !record.cleaning ? "neutral" : record.cleaning === "faite" ? "ok" : "bad"} />
         <Typography variant="h6">Constats lors de cette visite</Typography>
         {roomProblems(record).length ? roomProblems(record).map((p, i) => <Alert severity="warning" key={i}>{p}</Alert>) : <Typography>Aucun problème signalé.</Typography>}
+        {"issueAssociations" in record && !!record.issueAssociations?.length && <Box>
+          <Typography variant="subtitle2">Anomalies lors du contrôle</Typography>
+          {record.issueAssociations.map(link => <Typography key={link.key} variant="body2">
+            {link.label} · {link.source === "created" ? "Signalé" : link.outcome === "resolved" ? "Résolu lors du contrôle" : "Toujours présent"}
+            {record.issueLinks?.find(item => item.key === link.key)?.note && <> · {record.issueLinks.find(item => item.key === link.key)?.note}</>}
+          </Typography>)}
+        </Box>}
         {linked.length > 0 && <Box><Typography variant="subtitle2">Anomalies associées · statut actuel</Typography>{linked.map(i => <Typography key={i.id} variant="body2">{i.title} · {statuses[i.status]}{i.id !== record.id ? " · déjà signalée, non dupliquée" : ""}</Typography>)}</Box>}
         {previous && <details><summary style={{ cursor: "pointer" }}>Évolution des équipements depuis le {displayDate(previous.date)} · {changes.length} changement(s)</summary><Stack spacing={1} sx={{ mt: 1 }}>{changes.length ? changes.map((change, i) => <Typography key={i} variant="body2">{change}</Typography>) : <Typography variant="body2">Mêmes réponses pour les équipements.</Typography>}</Stack></details>}
         <Button variant="outlined" onClick={() => setShowAll(!showAll)} aria-expanded={showAll}>{showAll ? "Masquer les points de contrôle" : "Afficher tous les points de contrôle"}</Button>

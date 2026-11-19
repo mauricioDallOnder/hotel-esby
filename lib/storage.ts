@@ -5,7 +5,8 @@ import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChang
 import { today } from "./domain";
 import { validateWorkEntry, validateWorkPredecessor } from "./work";
 import { commandOperation, hasCommandReceipt, isCommandReplay, stampCommandReceipt } from "./commandReceipt";
-import { prepareRoomIssue, validateRoomIssuePlan } from "./roomIssueMatching";
+import { prepareRoomInspection } from "./roomIssueMatching";
+import { hasInspectionUpdates } from "./roomInspectionReceipt";
 import { ReadCache } from "./readCache";
 import {
   applyCommand,
@@ -114,7 +115,7 @@ export async function google<T>(payload: Record<string, unknown>, timeoutMs = 55
       );
     }
     
-    if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitIssueV4", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitRoomInspectionV4", "commitWorkEvent", "commitWorkEventV2", "commitCafardFollowupV2", "commitCafardFollowupV3", "commitLaundryCycle", "commitLaundryCycleV2", "commitLaundryCycleV3"].includes(String(payload.action)) && result.error === "Action invalide.")
+    if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitIssueV4", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitRoomInspectionV4", "commitRoomInspectionV5", "commitWorkEvent", "commitWorkEventV2", "commitCafardFollowupV2", "commitCafardFollowupV3", "commitLaundryCycle", "commitLaundryCycleV2", "commitLaundryCycleV3"].includes(String(payload.action)) && result.error === "Action invalide.")
       throw new DomainError(["commitIssueV2", "commitIssueV3", "commitIssueV4"].includes(String(payload.action))
         ? "Mettez à jour et redéployez le fichier Google Apps Script avant d’enregistrer ce problème. Votre demande est conservée sur cet appareil."
         : "Mettez à jour et redéployez le fichier Google Apps Script avant de synchroniser ces modifications. Elles restent conservées sur cet appareil.", 503);
@@ -260,7 +261,7 @@ export async function readPhoto(issueId: string, index = 0, collection: "issues"
   
   if (!Number.isInteger(index) || index < 0 || !photoId)
     throw new DomainError("Photo introuvable.", 404);
-  if (!/^[\da-f-]{36}(?:-[0-2])?$/i.test(photoId))
+  if (!/^(?:room-)?[\da-f-]{36}(?:-[0-2])?$/i.test(photoId))
     throw new DomainError("Photo invalide.");
     
   return readFileSync(path.join(directory(), "photos", photoId + ".jpg"));
@@ -296,7 +297,8 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   if (storageMode() === "sheets") {
     try {
       const protectedPredecessor = change.collection === "workEvents" && change.record.expectedPreviousEventId !== undefined;
-      const action = change.collection === "roomInspections" ? (change.record.schemaVersion || 1) >= 6 ? "commitRoomInspectionV4" : "commitRoomInspectionV3"
+      const action = change.collection === "roomInspections" ? change.record.schemaVersion === 7 ? "commitRoomInspectionV5"
+        : (change.record.schemaVersion || 1) >= 6 ? "commitRoomInspectionV4" : "commitRoomInspectionV3"
         : change.collection === "workEvents" ? change.record.kind === "laundryCycle" ? protectedPredecessor ? "commitLaundryCycleV3" : "commitLaundryCycleV2"
           : change.record.kind === "cafardFollowup" ? protectedPredecessor ? "commitCafardFollowupV3" : "commitCafardFollowupV2"
             : protectedPredecessor ? "commitWorkEventV2" : "commitWorkEvent" : "commitEntry";
@@ -305,6 +307,10 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
         throw new DomainError("Mettez à jour le déploiement Apps Script pour enregistrer ces données.", 503);
       if (change.collection === "roomInspections" && (receipt.collection !== "roomInspections" || receipt.record.issueSyncVersion !== 2))
         throw new DomainError("Mettez à jour le déploiement Apps Script pour éviter les anomalies en double.", 503);
+      if (change.collection === "roomInspections" && receipt.collection === "roomInspections" &&
+        (typeof receipt.record.createdIssue !== "boolean" || (receipt.record.createdIssue && receipt.issue?.id !== entry.id) ||
+        !hasInspectionUpdates(receipt.record, receipt.updatedIssues, change.record.issueLinks)))
+        throw new DomainError("Le suivi des anomalies de ce contrôle n’est pas confirmé. Réessayez le même envoi.", 503);
       return receipt;
     } finally { stateCache.clear(); }
   }
@@ -316,7 +322,12 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   const existing = (state[collection] || []).find(item => item.id === entry.id);
   if (existing) {
     if (existing.submissionHash !== submissionHash) throw new DomainError("Ce numéro d’enregistrement existe avec un contenu différent.", 409);
-    return { collection, record: existing, ...(collection === "roomInspections" ? { issue: state.issues.find(i => i.id === existing.id) } : {}) } as EntryChange;
+    if (entry.type === "createRoomInspection" && "checks" in existing) {
+      const updatedIssues = state.issues.filter(issue => existing.issueLinks?.some(link => link.outcome && link.issueId === issue.id));
+      return { collection: "roomInspections", record: existing, issue: state.issues.find(i => i.id === existing.id),
+        ...(updatedIssues.length ? { updatedIssues } : {}) };
+    }
+    return { collection, record: existing } as EntryChange;
   }
   
   if (entry.type === "createWorkEvent") {
@@ -325,15 +336,26 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
     if (error) throw new DomainError(error, 409);
   }
   if (change.collection === "roomInspections") {
-    const error = validateRoomIssuePlan(change.issue, change.record, state.issues);
-    if (error) throw new DomainError(error, 409);
+    if (state.issues.some(issue => issue.id === entry.id))
+      throw new DomainError("Le numéro du contrôle est déjà utilisé par une anomalie.", 409);
+    try {
+      const plan = prepareRoomInspection(change.issue, change.record, state.issues);
+      change.issue = plan.issue;
+      if (plan.updatedIssues.length) {
+        change.updatedIssues = plan.updatedIssues;
+        const updates = new Map(plan.updatedIssues.map(issue => [issue.id, issue]));
+        state.issues = state.issues.map(issue => updates.get(issue.id) || issue);
+      }
+    } catch (error) {
+      throw new DomainError(error instanceof Error ? error.message : "L’association des anomalies a échoué.", 409);
+    }
   }
   mkdirSync(directory(), { recursive: true });
   
   if (change.collection === "roomInspections" && photosData.length) {
     mkdirSync(path.join(directory(), "photos"), { recursive: true });
     change.record.photoIds = photosData.map((photo, index) => {
-      const id = `${record.id}-${index}`;
+      const id = `room-${record.id}-${index}`;
       writeFileSync(path.join(directory(), "photos", id + ".jpg"), Buffer.from(photo.split(",")[1], "base64"), { mode: 0o600 });
       return id;
     });
@@ -341,7 +363,6 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   }
   
   if (change.collection === "roomInspections") {
-    change.issue = prepareRoomIssue(change.issue, change.record, state.issues);
     state.roomInspections = [...(state.roomInspections || []), change.record];
     if (change.issue) {
       change.issue.photoIds = change.record.photoIds;

@@ -68,7 +68,7 @@ test("clutter needs an explicit answer after bulk equipment OK and Non creates n
   expect(saved.issues).toHaveLength(0);
   expect(saved.roomInspections).toHaveLength(1);
   expect(saved.roomInspections![0].checks.find(check => check.key === "room_clutter")?.result).toBe("ok");
-  expect(saved.roomInspections![0].schemaVersion).toBe(6);
+  expect(saved.roomInspections![0].schemaVersion).toBe(7);
 });
 
 test("mobile clutter controls reuse the open problem and Rapports exports all original and follow-up photos", async ({ page }, testInfo) => {

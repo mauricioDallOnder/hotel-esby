@@ -76,13 +76,8 @@ export function reportRows(state: State, kind: ReportKind, period: string, scope
     const row = { issue, title: issue.title, description: issue.description, status };
     const mixedCafards = cafards.mixedIssueIds.has(issue.id);
 
-    if (scope === "all" && !mixedCafards) {
-      if (status !== "resolu") rows.push(row);
-      continue;
-    }
-
     const categoryOnly = scope === "technical" || scope === "room_clutter";
-    if (categoryOnly && status === "resolu") continue;
+    if ((categoryOnly || scope === "all") && status === "resolu") continue;
     const sections: string[] = [];
     const selectedStates: { status: Status }[] = [];
     const resolutions = new Map<Resolution, string[]>();
@@ -127,7 +122,7 @@ export function reportRows(state: State, kind: ReportKind, period: string, scope
       const notes = issue.description.split("\n").filter(line => line.trim() && !findingLines.has(line.trim()));
       if (notes.length) sections.push(notes.join("\n"));
     }
-    if (!categoryOnly || partial || useHistoricalDetails) row.description = sections.join("\n");
+    if ((scope !== "all" && !categoryOnly) || partial || useHistoricalDetails) row.description = sections.join("\n");
     row.status = aggregateFindingStatus(selectedStates, status);
     rows.push(row);
   }

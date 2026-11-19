@@ -228,7 +228,7 @@ export default function RoomsPage() {
             const borderColor = fireRisk ? "error.main" : availability.get(n) === false ? "info.main" : "grey.400";
             return <Paper component="article" key={n} aria-label={`Chambre ${n}`} variant="outlined" sx={{ p: 1.5, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", borderColor: "divider", borderTop: "4px solid", borderTopColor: borderColor }}>
               <Stack spacing={1} sx={{ flex: 1 }}>
-                <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}><Typography variant="h4" component="h3" sx={{ fontSize: 36, lineHeight: 1.2, fontWeight: 800 }}>{n}</Typography>{done && !fireRisk && <Chip label="Fait" color="success" size="small" />}</Stack>
+                <Stack direction="row" useFlexGap sx={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}><Typography variant="h4" component="h3" sx={{ fontSize: 36, lineHeight: 1.2, fontWeight: 800 }}>{n}</Typography>{done && !fireRisk && record && !pendingIds.has(record.id) && <Chip label="Fait" color="success" size="small" />}</Stack>
                 <Typography variant="caption">{detail.lastComplete ? `Contrôle complet : ${displayDate(detail.lastComplete)}` : "Sans contrôle complet"}</Typography>
                 {record && !completeRoomInspection(record) && <Typography variant="caption" color="text.secondary">Visite partielle : {displayDate(record.date)}</Typography>}
                 {detail.reason === "overdue" && <Typography variant="caption" color="warning.main">Contrôle complet en retard</Typography>}
@@ -239,7 +239,7 @@ export default function RoomsPage() {
                 <RoomAvailabilityCheckbox room={n} availability={availabilityStates.get(n)!} inspection={record} inspectionPending={!!record && pendingIds.has(record.id)} />
                 {record?.occupied === false && <Typography variant="caption">Dernier contrôle · Ménage {cleaningText(record).toLowerCase()}</Typography>}
                 {open.length > 0 && <Chip label={`${open.length} problème${open.length > 1 ? "s" : ""} technique${open.length > 1 ? "s" : ""}`} color="warning" size="small" variant="outlined" sx={{ maxWidth: "100%", height: "auto", minHeight: 24, "& .MuiChip-label": { whiteSpace: "normal", lineHeight: 1.4, py: 0.25 } }} />}
-                {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">Contrôle en attente d’envoi</Typography>}
+                {queued.some(q => q.room === n) && <Typography variant="caption" color="warning.main">{pending.some(p => p.blocked && p.entry.type === "createRoomInspection" && p.entry.room === n) ? "Contrôle à vérifier dans les envois" : "Contrôle en attente d’envoi"}</Typography>}
                 {visibleDeferred.includes(n) && <Typography variant="caption">Reportée à demain</Typography>}
                 <Box sx={{ flex: 1 }} />
                 <Button variant={target ? "contained" : "outlined"} color={fireRisk ? "error" : "primary"} onClick={() => setRoom(n)} aria-label={`Contrôler la chambre ${n}`} sx={{ minHeight: 48 }}>{done ? "Recontrôler" : "Contrôler"}</Button>

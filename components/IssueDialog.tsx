@@ -366,10 +366,17 @@ function IssueDialogForm({ issue, onClose, onSaved, onOpenExisting, storedDraft,
                 {issue.history.length === 0 && <Typography variant="body2">Aucune intervention enregistrée.</Typography>}
                 {issue.history.toReversed().map((event, index) => {
                   const assignment = event.assignee?.trim();
+                  const inspection = event.inspectionId ? roomHistory.find(record => record.id === event.inspectionId) : undefined;
+                  const visitPhotos = inspection && "photoIds" in inspection ? issuePhotoIds(inspection) : [];
                   return <Box key={`${event.at}-${index}`} sx={{ borderLeft: "3px solid", borderColor: event.status === "resolu" ? "success.main" : "divider", pl: 2 }}>
                     <Typography variant="subtitle2">{event.actor} · {statuses[event.status]}</Typography>
                     <Typography variant="caption" color="text.secondary">{new Date(event.at).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })}</Typography>
                     <Typography sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", my: 0.5 }}>{event.note}</Typography>
+                    {inspection && visitPhotos.length > 0 && <Box component="details">
+                      <Box component="summary" sx={{ cursor: "pointer", py: 1 }}>Photos du contrôle du {displayDate(inspection.date)} ({visitPhotos.length})</Box>
+                      {visitPhotos.map((id, photoIndex) => <IssuePhoto key={id} issueId={inspection.id} collection="roomInspections"
+                        index={photoIndex} photoCount={visitPhotos.length} alt={`Chambre ${inspection.room} · photo ${photoIndex + 1} du contrôle`} />)}
+                    </Box>}
                     {event.findingStates?.map(finding => <Typography key={finding.key} variant="body2">{event.findingDetails?.find(detail => detail.key === finding.key)?.label || issue.roomFindings?.find(detail => detail.key === finding.key)?.label || finding.key} : {statuses[finding.status]}</Typography>)}
                     <Typography variant="caption" color="text.secondary">{priorities[event.priority]}{assignment && assignment !== event.actor?.trim() ? ` · Responsable indiqué à cette date : ${assignment}` : ""}</Typography>
                   </Box>;

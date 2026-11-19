@@ -231,7 +231,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ? { ...current, workEvents: [change.record] }
       : change.collection === "familyEvents"
       ? { ...current, familyEvents: [change.record] }
-      : { ...current, roomInspections: [change.record], issues: change.issue ? [change.issue] : current.issues }));
+      : { ...current, roomInspections: [change.record], issues: [...(change.updatedIssues || []), ...(change.issue ? [change.issue] : [])] }));
   }, []);
 
   // Recovery needs a successful live read, never the last cached snapshot or a

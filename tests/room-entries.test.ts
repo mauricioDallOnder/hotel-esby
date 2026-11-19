@@ -113,14 +113,16 @@ test("local entries persist, retries are idempotent, changed retries conflict an
   await assert.rejects(executeEntry({ ...roomEntry(), date: "2099-01-01" }), { code: 400 });
 });
 
-test("Apps Script setup preserves old sheets; new tabs, photos and idempotent receipts work", () => {
+function googleWorkbook() {
   type Cell = string | number;
   const tables = new Map<string, Cell[][]>();
   const files = new Map<string, Buffer>();
   const properties = new Map([["API_TOKEN", "test-token"], ["PHOTO_FOLDER_ID", "folder"]]);
+  let batchFailure: "reject" | "loseReply" | undefined;
   function sheet(name: string) {
     const rows = tables.get(name)!;
     return {
+      getSheetId: () => [...tables.keys()].indexOf(name),
       getMaxColumns: () => 26, insertColumnsAfter() {}, setFrozenRows() {}, hideColumns() {},
       getLastRow: () => rows.length,
       deleteRow: (n: number) => { rows.splice(n - 1, 1); },
@@ -140,6 +142,24 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   const context = vm.createContext({
     ContentService: { MimeType: { JSON: "json" }, createTextOutput: (s: string) => ({ setMimeType: () => JSON.parse(s) }) },
     SpreadsheetApp: { openById: () => book, flush() {} },
+    Sheets: { Spreadsheets: { batchUpdate: (batch: { requests: unknown[] }) => {
+      type Cells = { rows: { values: { userEnteredValue: { stringValue: string } }[] }[] };
+      type Request = { appendCells?: Cells & { sheetId: number }; updateCells?: Cells & { start: { sheetId: number; rowIndex: number } } };
+      const requests = batch.requests as Request[];
+      const failure = batchFailure;
+      batchFailure = undefined;
+      if (failure === "reject") throw new Error("Batch rejected");
+      for (const request of requests) {
+        const cells = request.appendCells || request.updateCells!;
+        const row = cells.rows[0].values.map(cell => cell.userEnteredValue.stringValue);
+        const index = request.appendCells?.sheetId ?? request.updateCells!.start.sheetId;
+        const table = [...tables.values()][index];
+        if (request.appendCells) table.push(row);
+        else table[request.updateCells!.start.rowIndex] = row;
+      }
+      if (failure === "loseReply") throw new Error("Connection lost after commit");
+      return { replies: requests.map(() => ({})) };
+    } } },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (name: string) => properties.get(name), setProperty: (name: string, value: string) => properties.set(name, value) }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, hasLock: () => true, releaseLock() {} }) },
     Utilities: { getUuid: createId, base64Encode: (v: Buffer) => v.toString("base64"), base64Decode: (v: string) => Buffer.from(v, "base64"), newBlob: (bytes: Buffer, _mime: string, name: string) => ({ bytes, name }) },
@@ -147,6 +167,12 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   });
   vm.runInContext(readFileSync("google-apps-script/Code.gs", "utf8"), context);
   context.setup();
+  const call = (input: object) => context.doPost({ postData: { contents: JSON.stringify({ ...input, token: "test-token" }) } });
+  return { context, tables, files, call, failNextBatch(failure: "reject" | "loseReply") { batchFailure = failure; } };
+}
+
+test("Apps Script setup preserves old sheets; new tabs, photos and idempotent receipts work", () => {
+  const { context, tables, files, call } = googleWorkbook();
   assert.equal(tables.get("Chambres")?.length, 86);
   tables.get("Chambres")!.push(["112", "ancien"], ["313", "ancien"]);
   context.setup(); context.setup();
@@ -164,7 +190,6 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   }
   assert.equal(roomTable[0].at(-1), "Chambre encombrée d’affaires");
   roomTable.pop();
-  const call = (input: object) => context.doPost({ postData: { contents: JSON.stringify({ ...input, token: "test-token" }) } });
   const legacy = { id: createId(), version: 1, title: "Old issue" };
   assert.equal(call({ action: "commit", collection: "issues", expectedVersion: 0, record: legacy }).ok, true);
   const old = JSON.stringify(tables.get("Anomalies"));
@@ -247,6 +272,68 @@ test("Apps Script setup preserves old sheets; new tabs, photos and idempotent re
   assert.equal(call({ action: "commit", collection: "issues", expectedVersion: 1, record: { ...manualIssue, version: 2, status: "resolu" } }).ok, true);
   assert.deepEqual(call(duplicateInput), duplicateReceipt);
   assert.equal(call({ action: "list" }).data.issues.find((i: { id: string }) => i.id === manualIssue.id).status, "resolu");
+});
+
+test("Sheets commits room 323 and its issue updates together, and recovers a lost receipt", async t => {
+  const book = googleWorkbook();
+  const settings = ["STORAGE_DRIVER", "GOOGLE_SCRIPT_URL", "GOOGLE_API_TOKEN"].map(key => [key, process.env[key]] as const);
+  t.after(() => settings.forEach(([key, value]) => { if (value === undefined) delete process.env[key]; else process.env[key] = value; }));
+  process.env.STORAGE_DRIVER = "sheets";
+  process.env.GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/atomic-test/exec";
+  process.env.GOOGLE_API_TOKEN = "test-token";
+  let incompleteReceipt = false;
+  t.mock.method(globalThis, "fetch", async (_url: string | URL | Request, options?: RequestInit) => {
+    const request = JSON.parse(String(options?.body));
+    assert.equal(request.action, "commitRoomInspectionV5");
+    const reply = book.call(request);
+    if (reply.ok && incompleteReceipt) delete reply.data.updatedIssues;
+    return Response.json(reply);
+  });
+  const signal = (title: string) => {
+    const id = createId();
+    const issue = { id, version: 1, date: today(), title, description: title, location: "Chambre 323", status: "ouvert",
+      assignee: "Marie", priority: "normale", photoIds: [] };
+    assert.equal(book.call({ action: "commit", collection: "issues", record: issue, expectedVersion: 0 }).ok, true);
+    return id;
+  };
+  const toilet = signal("Chasse d’eau bloquée"), heater = signal("Chauffage encombré");
+  const entry = roomEntry();
+  entry.room = "323";
+  entry.schemaVersion = 7;
+  entry.photosData = ["data:image/jpeg;base64,YQ=="];
+  entry.checks.find(check => check.key === "radiator_clear")!.result = "probleme";
+  entry.checks.find(check => check.key === "lights")!.result = "probleme";
+  entry.issueLinks = [{ key: "damage", issueId: toilet, outcome: "resolved", expectedVersion: 1 },
+    { key: "radiator_clear", issueId: heater, outcome: "present", expectedVersion: 1 }];
+  const record = { ...entry, version: 1, updatedAt: new Date().toISOString(), submissionHash: "e".repeat(64), photoIds: [], photoId: null };
+  assert.equal(book.call({ action: "commitRoomInspectionV4", collection: "roomInspections", record, expectedVersion: 0 }).code, 400);
+  book.failNextBatch("reject");
+  await assert.rejects(executeEntry(entry), { code: 503 });
+  const before = book.call({ action: "list" }).data;
+  assert.equal(before.roomInspections.length, 0);
+  assert.deepEqual(before.issues.map((i: {version: number}) => i.version), [1, 1]);
+  book.failNextBatch("loseReply");
+  await assert.rejects(executeEntry(entry), { code: 503 });
+  incompleteReceipt = true;
+  await assert.rejects(executeEntry(entry), /suivi des anomalies/);
+  incompleteReceipt = false;
+  const receipt = await executeEntry(entry);
+  assert.equal(receipt.collection, "roomInspections");
+  if (receipt.collection !== "roomInspections") throw new Error("Expected room inspection");
+  assert.equal(receipt.updatedIssues?.length, 2);
+  assert.equal(receipt.record.issueAssociations?.length, 3);
+  assert.deepEqual(receipt.issue?.roomFindings?.map(f => f.key), ["lights"]);
+  assert.equal(book.files.size, 1);
+  assert.deepEqual(await executeEntry(entry), receipt);
+  const after = book.call({ action: "list" }).data;
+  assert.equal(after.roomInspections.length, 1);
+  assert.equal(after.issues.length, 3);
+  assert.equal(after.issues[0].status, "resolu");
+  assert.equal(after.issues[1].status, "ouvert");
+  assert.deepEqual(after.issues.slice(0, 2).map((i: {history: {inspectionId: string}[]}) => i.history.map(event => event.inspectionId)), [[entry.id], [entry.id]]);
+  const stale = { ...entry, id: createId(), issueLinks: entry.issueLinks.slice(1) };
+  await assert.rejects(executeEntry(stale), { code: 409 });
+  assert.deepEqual(book.call({ action: "list" }).data, after);
 });
 
 test("Google entry save uses one request and requires a matching receipt", async () => {
