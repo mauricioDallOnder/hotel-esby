@@ -124,3 +124,7 @@ Les chronomètres de lingerie indiquent un **temps prévu** : ils ne commandent 
 **Vous gérez un hôtel ou une résidence et souhaitez voir Hôtel Contrôle en fonctionnement ?** Une démonstration et un périmètre d'adaptation peuvent être préparés pour votre équipe.
 
 <sub>Hôtel Contrôle — présentation fonctionnelle. Les captures utilisent uniquement des données fictives. Pour les notes de maintenance et de déploiement destinées aux techniciens, voir le [dossier technique](docs/NOTES-TECHNIQUES.md).</sub>
+
+### Demander une modification
+
+Dans Codex, ouvrez le projet Hôtel Contrôle et décrivez le changement souhaité. La [skill de maintenance](.agents/skills/modificar-hotel-esby/SKILL.md) guide la modification et sa vérification. Chaque demande donne lieu à une pull request comprenant la mise à jour de ce README et le résultat des vérifications.
