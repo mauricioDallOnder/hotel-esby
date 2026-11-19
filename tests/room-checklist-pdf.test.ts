@@ -58,6 +58,18 @@ test("printed results retain the selected problem type and precise fitting even 
   assert.doesNotMatch(text, /Aucune observation saisie/);
 });
 
+test("the printed visit keeps the recorded outcome of each linked repair", () => {
+  const record = saved({ room: "323", issueAssociations: [
+    { key: "damage", issueId: createId(), label: "Chasse d'eau", status: "resolu", outcome: "resolved", source: "existing" },
+    { key: "radiator_clear", issueId: createId(), label: "Radiateur encombré", status: "ouvert", outcome: "present", source: "existing" },
+  ] });
+  const doc = buildRoomChecklist({ hotelName: "Test", date, mode: "latest", selectedRooms: ["323"], history: [record] });
+  const text = pageText(doc).join(" ");
+  assert.match(text, /État des anomalies lors de la visite/);
+  assert.match(text, /Chasse d'eau · Résolu/);
+  assert.match(text, /Radiateur encombré · /);
+});
+
 test("latest checklists deduplicate selected rooms and choose by inspection date and time up to the export date", () => {
   const history = [
     saved({ notes: "OLDER_DATE", date: "2026-10-19", inspectedAt: "2026-10-21T18:00:00Z" }),

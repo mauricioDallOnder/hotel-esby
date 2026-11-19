@@ -99,7 +99,11 @@ export function EntriesProvider({ children, onSaved, onDelete, readRecoveryState
                 if (!item.blocked) break send;
                 continue;
               }
-              if (!await isCompleteEntryReceipt(item, result)) throw new Error("Confirmation d’enregistrement incomplète.");
+              if (!await isCompleteEntryReceipt(item, result)) {
+                item.error = "Confirmation du serveur incomplète. L’envoi reste sur cet appareil pour une nouvelle tentative.";
+                await deviceStore("put", "queue:" + item.entry.id, item);
+                break send;
+              }
               // Remove only after an explicit server receipt. A lost receipt is safe to retry.
               await deviceStore("delete", "queue:" + item.entry.id);
               if (mounted.current) onSaved(result);

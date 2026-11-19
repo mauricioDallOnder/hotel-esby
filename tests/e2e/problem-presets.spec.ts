@@ -44,6 +44,7 @@ async function fixture(page: Page, initialIssues: Issue[] = [], initialWork: Wor
     if (entry.type === "createRoomInspection") {
       const receipt = roomReceipt(entry, data.issues, instant);
       data.roomInspections!.push(receipt.record);
+      data.issues = data.issues.map(issue => receipt.updatedIssues?.find(updated => updated.id === issue.id) || issue);
       if (receipt.issue) data.issues.push(receipt.issue);
       return route.fulfill({ json: receipt });
     }

@@ -92,11 +92,12 @@ function doPost(e) {
       }
       return json_({ ok: true, data: { deleted: true, id: input.id } });
     }
-    if (!['commit', 'commitIssueV2', 'commitIssueV3', 'commitIssueV4', 'commitEntry', 'commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitRoomInspectionV4', 'commitWorkEvent', 'commitWorkEventV2', 'commitCafardFollowupV2', 'commitCafardFollowupV3', 'commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action)) throw requestError_('Action invalide.');
+    if (!['commit', 'commitIssueV2', 'commitIssueV3', 'commitIssueV4', 'commitEntry', 'commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitRoomInspectionV4', 'commitRoomInspectionV5', 'commitWorkEvent', 'commitWorkEventV2', 'commitCafardFollowupV2', 'commitCafardFollowupV3', 'commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action)) throw requestError_('Action invalide.');
     lock = LockService.getScriptLock();
     lock.waitLock(20000);
     const isLaundry = ['commitLaundryCycle', 'commitLaundryCycleV2', 'commitLaundryCycleV3'].includes(input.action);
-    const isRoom = ['commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitRoomInspectionV4'].includes(input.action);
+    const atomicRoom = input.action === 'commitRoomInspectionV5';
+    const isRoom = atomicRoom || ['commitRoomInspection', 'commitRoomInspectionV2', 'commitRoomInspectionV3', 'commitRoomInspectionV4'].includes(input.action);
     const isCafard = ['commitCafardFollowupV2', 'commitCafardFollowupV3'].includes(input.action);
     const isWork = ['commitWorkEvent', 'commitWorkEventV2'].includes(input.action);
     const isEntry = input.action === 'commitEntry' || isRoom || isWork || isCafard || isLaundry;
@@ -104,8 +105,11 @@ function doPost(e) {
     if (input.collection === 'issues' && input.record && input.record.problemType !== undefined && !['commitIssueV3', 'commitIssueV4'].includes(input.action)) throw requestError_('Utilisez commitIssueV4.');
     if (input.collection === 'issues' && input.record && (input.operation || input.record.distinctFromIssueIds !== undefined || input.record.roomFindingsActive !== undefined || (input.record.roomFindings || []).some(item => item.status !== undefined)) && input.action !== 'commitIssueV4') throw requestError_('Utilisez commitIssueV4.');
     if (input.operation && (!input.record || !/^[\da-f-]{36}$/i.test(input.operation.id || '') || !/^[a-f0-9]{64}$/.test(input.operation.hash || '') || !Array.isArray(input.record.history) || !input.record.history.some(event => event.commandId === input.operation.id && event.commandHash === input.operation.hash))) throw requestError_('Confirmation de commande invalide.');
-    if (input.collection === 'roomInspections' && input.record && input.record.problemDetails !== undefined && !['commitRoomInspectionV3', 'commitRoomInspectionV4'].includes(input.action)) throw requestError_('Utilisez commitRoomInspectionV3.');
-    if (input.collection === 'roomInspections' && input.record && ((input.record.schemaVersion || 1) >= 6 || (input.record.checks || []).some(check => check.key === 'room_clutter')) && input.action !== 'commitRoomInspectionV4') throw requestError_('Utilisez commitRoomInspectionV4.');
+    if (input.collection === 'roomInspections' && input.record && !atomicRoom) {
+      if (input.record.schemaVersion >= 7 || (input.record.issueLinks || []).some(link => link.outcome)) throw requestError_('Utilisez commitRoomInspectionV5.');
+      if (input.record.problemDetails !== undefined && !['commitRoomInspectionV3', 'commitRoomInspectionV4'].includes(input.action)) throw requestError_('Utilisez commitRoomInspectionV3.');
+      if (((input.record.schemaVersion || 1) >= 6 || (input.record.checks || []).some(check => check.key === 'room_clutter')) && input.action !== 'commitRoomInspectionV4') throw requestError_('Utilisez commitRoomInspectionV4.');
+    }
     if (isCafard && (input.collection !== 'workEvents' || !input.record || input.record.kind !== 'cafardFollowup')) throw requestError_('Suivi des cafards invalide.');
     if (input.collection === 'workEvents' && input.record && input.record.cafardObservationId !== undefined && !isCafard) throw requestError_('Utilisez commitCafardFollowupV2.');
     if (isWork && input.collection !== 'workEvents') throw requestError_('Collection invalide.');
@@ -133,6 +137,12 @@ function doPost(e) {
     }
     if (input.collection === 'familyEvents' && deletedAbsences_().includes(record.id)) return json_({ ok: false, code: 409, error: 'Cette absence a été supprimée.' });
     if (isEntry && current && current.submissionHash === record.submissionHash) {
+      if (atomicRoom) {
+        const issues = records_('issues');
+        return json_({ ok: true, data: { collection: 'roomInspections', record: current,
+          issue: current.createdIssue ? issues.find(issue => issue.id === current.id) : undefined,
+          updatedIssues: issues.filter(issue => (current.issueLinks || []).some(link => link.outcome && link.issueId === issue.id)) } });
+      }
       if (input.collection === 'roomInspections') {
         const migrated = current.issueSyncVersion !== 2;
         // Historical same-ID anomalies must retain their existing identity.
@@ -167,9 +177,12 @@ function doPost(e) {
       const conflict = WorkLogic.validateWorkPredecessor(record, records, true) || WorkLogic.validateWorkEntry(record, records, records_('familyEvents'), deletedAbsences_(), observations);
       if (conflict) return json_({ ok: false, code: 409, error: conflict });
     }
+    let roomPlan;
     if (input.collection === 'roomInspections') {
-      const conflict = RoomIssueMatching.validateRoomIssuePlan(input.issue, record, records_('issues'));
-      if (conflict) return json_({ ok: false, code: 409, error: conflict });
+      try {
+        roomPlan = RoomIssueMatching.prepareRoomInspection(input.issue, record, records_('issues'));
+        input.issue = roomPlan.issue;
+      } catch (error) { return json_({ ok: false, code: 409, error: String(error.message || error) }); }
     }
     // The trusted Next.js server validates the full business schema before commit.
     // The token must only be shared with that server.
@@ -190,8 +203,12 @@ function doPost(e) {
       }
       record.photoId = record.photoIds[0] || null;
     }
-    if (input.collection === 'roomInspections') {
-      input.issue = RoomIssueMatching.prepareRoomIssue(input.issue, record, records_('issues'));
+    if (atomicRoom) {
+      const issue = roomPlan.issue;
+      if (issue) { issue.photoIds = record.photoIds; issue.photoId = record.photoId; }
+      if (issue || roomPlan.updatedIssues.length) writeRoomBatch_(record, issue, roomPlan.updatedIssues);
+      else writeRecord_('roomInspections', record, true, null);
+      return json_({ ok: true, data: { collection: 'roomInspections', record, issue, updatedIssues: roomPlan.updatedIssues } });
     }
     writeRecord_(input.collection, record, isEntry, current);
     const issue = syncRoomIssue_(input, record);
@@ -210,8 +227,7 @@ function syncRoomIssue_(input, record) {
   writeRecord_('issues', issue, false, null);
   return issue;
 }
-function writeRecord_(collection, record, isEntry, current) {
-    const sheet = table_(collection);
+function recordRow_(collection, record, isEntry) {
     const serialized = JSON.stringify(record);
     if (serialized.length > 420000) throw requestError_('Historique trop volumineux.');
     const chunks = Array.from({length: 12}, (_, i) => serialized.slice(i * 35000, (i + 1) * 35000));
@@ -234,9 +250,42 @@ function writeRecord_(collection, record, isEntry, current) {
     if (collection === 'workEvents') {
       row = [record.id, record.version, record.date, record.room || '', record.notes, record.kind, '', record.actor, '', record.updatedAt].map(safe).concat(chunks.map(chunk => 'j' + chunk));
     }
+    return row;
+}
+function writeRecord_(collection, record, isEntry, current) {
+    const sheet = table_(collection), row = recordRow_(collection, record, isEntry);
     const rowNumber = current ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().findIndex(row => row[0] === record.id) + 2 : sheet.getLastRow() + 1;
+    if (rowNumber < 2) throw new Error('La ligne à modifier est introuvable.');
     sheet.getRange(rowNumber, 1, 1, row.length).setNumberFormat('@').setValues([row]);
     SpreadsheetApp.flush();
+}
+// All rows are validated and committed together by Sheets. The script lock
+// covers the version checks and batch write, including ordinary issue edits.
+function writeRoomBatch_(inspection, issue, updates) {
+  const controls = table_('roomInspections'), anomalies = table_('issues');
+  const rows = anomalies.getLastRow() > 1 ? anomalies.getRange(2, 1, anomalies.getLastRow() - 1, 1).getValues() : [];
+  const indices = new Map(rows.map((row, index) => [row[0], index + 1]));
+  const cells = (collection, record) => ({ values: recordRow_(collection, record, collection === 'roomInspections')
+    .map(value => ({ userEnteredValue: { stringValue: String(value) } })) });
+  const append = (sheet, collection, record) => ({ appendCells: {
+    sheetId: sheet.getSheetId(), rows: [cells(collection, record)], fields: 'userEnteredValue' } });
+  const requests = [append(controls, 'roomInspections', inspection)];
+  if (issue) {
+    if (indices.has(issue.id)) throw new Error('Le numéro de la nouvelle anomalie existe déjà.');
+    requests.push(append(anomalies, 'issues', issue));
+  }
+  for (const updated of updates) {
+    if (!indices.has(updated.id)) throw new Error('La ligne de l’anomalie associée est introuvable.');
+    requests.push({ updateCells: { start: { sheetId: anomalies.getSheetId(), rowIndex: indices.get(updated.id), columnIndex: 0 },
+      rows: [cells('issues', updated)], fields: 'userEnteredValue' } });
+  }
+  SpreadsheetApp.flush();
+  if (typeof Sheets === 'undefined') throw new Error('Activez le service Google Sheets API v4 dans Apps Script et redéployez le script pour synchroniser le contrôle et ses anomalies.');
+  let response;
+  try { response = Sheets.Spreadsheets.batchUpdate({ requests }, SPREADSHEET_ID); }
+  catch (error) { throw new Error('Échec de l’écriture du contrôle et de ses anomalies dans Google Sheets. ' + error.message); }
+  if (!response || (response.replies || []).length !== requests.length)
+    throw new Error('Google Sheets n’a pas confirmé l’enregistrement du contrôle et de ses anomalies. Réessayez le même envoi.');
 }
 function photoIds_(record) {
   return record.photoIds && record.photoIds.length ? record.photoIds : record.photoId ? [record.photoId] : [];
@@ -620,6 +669,7 @@ exports.shouldCheckIssueDuplicate = shouldCheckIssueDuplicate;
 exports.planRoomIssue = planRoomIssue;
 exports.validateRoomIssuePlan = validateRoomIssuePlan;
 exports.prepareRoomIssue = prepareRoomIssue;
+exports.prepareRoomInspection = prepareRoomInspection;
 const problemPresets_1 = require("./problemPresets");
 const issueFindings_1 = require("./issueFindings");
 function normalizeIssueText(text) {
@@ -763,7 +813,7 @@ function matchesRoomFinding(issue, finding) {
             : issue.problemType === "room_cluttered";
         // "Rien de cassé : Problème" does not identify an object. It can suggest
         // existing room repairs for a human choice, but clutter is not a repair.
-        return !clutterOnly && !isCafardTechnicalReport(issue);
+        return !clutterOnly && !isCafardTechnicalReport(issue, "historical");
     }
     if ((_c = issue.roomFindings) === null || _c === void 0 ? void 0 : _c.length)
         return issue.roomFindings.some(item => item.key === finding.key &&
@@ -955,8 +1005,10 @@ function exactTypedDescription(issue, finding) {
 }
 /** A preview never throws; write boundaries reject conflicts before any photos or rows are written. */
 function planRoomIssue(candidate, record, issues) {
-    var _a;
+    var _a, _b, _c, _d;
     const conflicts = [], requiresChoice = [];
+    const associations = [];
+    const related = new Set();
     const findings = (candidate === null || candidate === void 0 ? void 0 : candidate.roomFindings) || [];
     const links = record.issueLinks || [];
     for (const link of links) {
@@ -964,13 +1016,42 @@ function planRoomIssue(candidate, record, issues) {
             conflicts.push("Choisissez un seul problème existant par équipement.");
             continue;
         }
-        if (!findings.some(finding => finding.key === link.key)) {
+        const repairing = link.outcome === "resolved";
+        const checked = (_a = record.checks) === null || _a === void 0 ? void 0 : _a.find(check => check.key === link.key);
+        if (link.outcome ? (checked === null || checked === void 0 ? void 0 : checked.result) !== (repairing ? "ok" : "probleme") : !findings.some(finding => finding.key === link.key)) {
             conflicts.push("Le problème associé ne correspond plus à un équipement signalé dans ce contrôle. Vérifiez votre sélection.");
             continue;
         }
         const existing = issues.find(issue => issue.id === link.issueId);
         if (!existing || existing.status === "resolu" || issueRoom(existing) !== record.room)
             conflicts.push("Le problème associé a été résolu, déplacé ou supprimé. Actualisez puis choisissez un problème encore ouvert dans cette chambre.");
+        else if (link.outcome) {
+            const target = targetFinding(existing, link);
+            if (existing.version !== link.expectedVersion) {
+                conflicts.push(`La fiche « ${existing.title} » a changé. Vérifiez sa nouvelle version puis confirmez l’association.`);
+            }
+            else if (isCafardTechnicalReport(existing, "historical") || (target === null || target === void 0 ? void 0 : target.key) === "bugs") {
+                conflicts.push(cafardTechnicalReportMessage());
+            }
+            else if (repairing && existing.roomFindingsActive === false && (((_b = existing.roomFindings) === null || _b === void 0 ? void 0 : _b.length) || 0) > 1) {
+                conflicts.push(`Les équipements de « ${existing.title} » ont été reclassés. Vérifiez leurs détails dans Problèmes techniques avant de résoudre cet élément.`);
+            }
+            else if ((link.findingKey || (existing.roomFindingsActive !== false && ((_c = existing.roomFindings) === null || _c === void 0 ? void 0 : _c.length))) && !target) {
+                conflicts.push(`Choisissez l’élément concerné dans la fiche « ${existing.title} ».`);
+            }
+            else if (target && (0, issueFindings_1.issueFindingStatus)(existing, target) === "resolu") {
+                conflicts.push(`L’élément « ${target.label} » est déjà résolu. Vérifiez l’association.`);
+            }
+            else if (associations.some(item => item.issueId === existing.id && item.findingKey === (target === null || target === void 0 ? void 0 : target.key))) {
+                conflicts.push(`Le même problème de la fiche « ${existing.title} » est associé à deux équipements. Vérifiez vos choix.`);
+            }
+            else {
+                related.add(existing.id);
+                associations.push({ key: link.key, issueId: existing.id, ...(target ? { findingKey: target.key } : {}),
+                    label: (target === null || target === void 0 ? void 0 : target.label) || existing.title, source: "existing", outcome: link.outcome,
+                    status: repairing ? "resolu" : target ? (0, issueFindings_1.issueFindingStatus)(existing, target) : existing.status });
+            }
+        }
         else {
             const finding = findings.find(item => item.key === link.key);
             const resolved = (existing.roomFindings || []).filter(item => (0, issueFindings_1.issueFindingStatus)(existing, item) === "resolu");
@@ -981,9 +1062,18 @@ function planRoomIssue(candidate, record, issues) {
         }
     }
     if (!candidate)
-        return { issue: undefined, relatedIssueIds: [], conflicts, requiresChoice };
+        return { issue: undefined, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
     const open = openRoomIssues(issues, record.room);
-    const related = new Set();
+    function associate(finding, existing) {
+        var _a;
+        related.add(existing.id);
+        if (associations.some(item => item.key === finding.key))
+            return;
+        const targets = (_a = (0, issueFindings_1.issueMatchingSnapshot)(existing).roomFindings) === null || _a === void 0 ? void 0 : _a.filter(item => item.key === finding.key);
+        const target = (targets === null || targets === void 0 ? void 0 : targets.length) === 1 ? targets[0] : undefined;
+        associations.push({ key: finding.key, issueId: existing.id, ...(target ? { findingKey: target.key } : {}),
+            label: (target === null || target === void 0 ? void 0 : target.label) || existing.title, source: "existing", outcome: "present", status: target ? (0, issueFindings_1.issueFindingStatus)(existing, target) : existing.status });
+    }
     const remaining = findings.filter(finding => {
         var _a, _b;
         // Older queued drafts may still carry distinctProblemKeys. They cannot
@@ -992,12 +1082,13 @@ function planRoomIssue(candidate, record, issues) {
         if (explicit) {
             const existing = open.find(issue => explicit.issueId === issue.id);
             if (existing) {
-                related.add(existing.id);
+                associate(finding, existing);
                 return false;
             }
             return true; // A stale link must never silently create a replacement.
         }
-        const matching = open.filter(issue => matchesRoomFinding(issue, finding));
+        const matching = open.filter(issue => !isCafardTechnicalReport(issue, "historical") && matchesRoomFinding(issue, finding) &&
+            !associations.some(item => item.outcome === "resolved" && item.issueId === issue.id && (!item.findingKey || item.findingKey === finding.key)));
         if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && finding.problemType !== "room_cluttered" && !exactTypedDescription(matching[0], finding)) ||
             (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
             requiresChoice.push(finding.key);
@@ -1005,18 +1096,28 @@ function planRoomIssue(candidate, record, issues) {
             return true;
         }
         if (matching.length === 1) {
-            related.add(matching[0].id);
+            associate(finding, matching[0]);
             return false;
         }
         return true;
     });
-    if (conflicts.length || (((_a = candidate.roomFindings) === null || _a === void 0 ? void 0 : _a.length) && !remaining.length))
-        return { issue: undefined, relatedIssueIds: [...related], conflicts, requiresChoice };
+    if (conflicts.length || (((_d = candidate.roomFindings) === null || _d === void 0 ? void 0 : _d.length) && !remaining.length))
+        return { issue: undefined, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
     const issue = { ...candidate, roomFindings: remaining,
         description: remaining.length ? [...remaining.map(finding => finding.label), ...(record.notes && !remaining.some(f => f.label === record.notes) ? [record.notes] : [])].join("\n").slice(0, 4000) : candidate.description };
     if (isCafardTechnicalReport(issue))
         conflicts.push(cafardTechnicalReportMessage());
-    return { issue: conflicts.length ? undefined : issue, relatedIssueIds: [...related], conflicts, requiresChoice };
+    for (const finding of remaining)
+        associations.push({ key: finding.key, issueId: issue.id, findingKey: finding.key,
+            label: finding.label, source: "created", outcome: "present", status: "ouvert" });
+    return { issue: conflicts.length ? undefined : issue, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
+}
+function targetFinding(issue, link) {
+    var _a, _b;
+    if (issue.roomFindingsActive === false)
+        return undefined;
+    return link.findingKey ? (_a = issue.roomFindings) === null || _a === void 0 ? void 0 : _a.find(item => item.key === link.findingKey)
+        : ((_b = issue.roomFindings) === null || _b === void 0 ? void 0 : _b.length) === 1 ? issue.roomFindings[0] : undefined;
 }
 function validateRoomIssuePlan(candidate, record, issues) {
     return planRoomIssue(candidate, record, issues).conflicts[0];
@@ -1043,11 +1144,61 @@ function prepareRoomIssue(candidate, record, issues) {
     const plan = planRoomIssue(candidate, record, issues);
     if (plan.conflicts.length)
         throw new Error(plan.conflicts[0]);
+    if (record.schemaVersion === 7) {
+        const unconfirmed = plan.associations.find(item => {
+            var _a;
+            return item.source === "existing" &&
+                !((_a = record.issueLinks) === null || _a === void 0 ? void 0 : _a.some(link => link.key === item.key && link.issueId === item.issueId && link.outcome));
+        });
+        if (unconfirmed)
+            throw new Error(`Un signalement correspondant est disponible : « ${unconfirmed.label} ». Vérifiez la fiche puis confirmez l’association.`);
+    }
     record.relatedIssueIds = plan.relatedIssueIds;
+    record.issueAssociations = plan.associations;
     record.createdIssue = !!plan.issue;
     record.newIssueFindingKeys = ((_b = (_a = plan.issue) === null || _a === void 0 ? void 0 : _a.roomFindings) === null || _b === void 0 ? void 0 : _b.map(f => f.key)) || [];
     record.issueSyncVersion = 2;
     return plan.issue;
+}
+/** Plan all changes against one locked state before the storage driver writes anything. */
+function prepareRoomInspection(candidate, record, issues) {
+    var _a;
+    const issue = prepareRoomIssue(candidate, record, issues);
+    const updates = new Map();
+    for (const link of record.issueLinks || []) {
+        if (!link.outcome)
+            continue;
+        const group = updates.get(link.issueId) || [];
+        group.push(link);
+        updates.set(link.issueId, group);
+    }
+    const updatedIssues = [];
+    for (const [id, links] of updates) {
+        const current = issues.find(item => item.id === id);
+        const history = current.history || [];
+        // A confirmed replay may read a newer version modified by another inspection.
+        if (history.some(event => event.inspectionId === record.id))
+            continue;
+        if (links.some(link => link.expectedVersion !== current.version))
+            throw new Error(`La fiche « ${current.title} » a changé. Vérifiez sa nouvelle version puis confirmez l’association.`);
+        const resolved = links.filter(link => link.outcome === "resolved");
+        const resolvedKeys = new Set(resolved.map(link => { var _a; return (_a = targetFinding(current, link)) === null || _a === void 0 ? void 0 : _a.key; }));
+        const roomFindings = current.roomFindingsActive === false ? undefined : (_a = current.roomFindings) === null || _a === void 0 ? void 0 : _a.map(finding => ({ ...finding,
+            status: resolvedKeys.has(finding.key) ? "resolu" : (0, issueFindings_1.issueFindingStatus)(current, finding) }));
+        const status = resolved.length ? (0, issueFindings_1.aggregateFindingStatus)(roomFindings || [], "resolu") : current.status;
+        const note = links.map(link => {
+            var _a;
+            const association = (_a = record.issueAssociations) === null || _a === void 0 ? void 0 : _a.find(item => item.key === link.key);
+            return [(association === null || association === void 0 ? void 0 : association.label) || current.title, link.outcome === "resolved" ? "Résolu lors du contrôle" : "Toujours présent", link.note].filter(Boolean).join(" · ");
+        }).join("\n");
+        const event = { at: record.updatedAt, actor: record.actor, inspectionId: record.id,
+            note: [`Contrôle de la chambre ${record.room} du ${record.date.split("-").reverse().join("/")}.`, note, record.notes].filter(Boolean).join("\n"),
+            status, priority: current.priority, assignee: current.assignee,
+            ...((roomFindings === null || roomFindings === void 0 ? void 0 : roomFindings.length) ? { findingStates: (0, issueFindings_1.issueFindingStates)({ roomFindings, status }) } : {}) };
+        updatedIssues.push({ ...current, ...(roomFindings ? { roomFindings } : {}), status,
+            updatedAt: record.updatedAt, version: current.version + 1, history: [...history, event] });
+    }
+    return { issue, updatedIssues };
 }
 
 return exports;

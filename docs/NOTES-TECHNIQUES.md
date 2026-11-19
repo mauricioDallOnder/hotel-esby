@@ -1,5 +1,17 @@
 # Hôtel Contrôle
 
+## Publication de la synchronisation des contrôles de chambre
+
+Les contrôles de version 7 utilisent l’action `commitRoomInspectionV5`. Lorsqu’une anomalie est créée ou mise à jour, les lignes du contrôle et des anomalies sont écrites ensemble par `Sheets.Spreadsheets.batchUpdate`. La vérification des versions et l’écriture ont lieu sous le même verrou Apps Script. Le stockage JSON local utilise le remplacement du fichier dans un seul processus Node et convient au développement.
+
+1. Ouvrir le projet Apps Script lié au classeur et y mettre à jour `Code.gs`. Activer le service **Google Sheets API** version **v4** avec l’identifiant **Sheets**. Le manifeste `google-apps-script/appsscript.json` contient la déclaration à reprendre. Dans l’éditeur, le bouton **+** à côté de **Services** permet également d’ajouter ce service.
+2. Dans un projet Google Cloud créé automatiquement par Apps Script, l’ajout du service active l’API. Pour un projet Cloud standard associé manuellement, sélectionner ce projet dans la console Cloud, ouvrir **API et services → Bibliothèque → Google Sheets API** et cliquer sur **Activer**. [Guide Google des services avancés](https://developers.google.com/apps-script/guides/services/advanced)
+3. Dans **Déployer → Gérer les déploiements**, modifier le déploiement de l’application Web et sélectionner une **Nouvelle version**. Publier ensuite l’application Next.js. Le classeur, le dossier de photos, le jeton et l’URL du déploiement existant restent utilisables.
+
+Un contrôle accepte jusqu’à trois photos JPEG. Drive enregistre chaque fichier sous un nom comprenant l’identifiant du contrôle, l’empreinte SHA-256 de la demande complète et la position de la photo. Un nouvel essai du même envoi réutilise le fichier. Une demande corrigée possède une nouvelle empreinte. Si l’envoi est abandonné après le transfert des photos et avant l’écriture des lignes, des fichiers privés peuvent subsister dans Drive.
+
+Après une coupure, renvoyer la demande depuis la file du même appareil. Le serveur reconnaît l’identifiant et l’empreinte du contrôle puis renvoie sa confirmation avec les interventions associées. Si un collègue a modifié une anomalie avant l’écriture, **Vérifier et résoudre** permet de retrouver les réponses et les photos du contrôle pour revoir l’association.
+
 ## Chambres libres ou en travaux — 16/11/2026
 
 Em **Occupation des chambres**, um único checkbox indica a ocupação:

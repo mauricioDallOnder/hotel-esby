@@ -189,6 +189,7 @@ export type Event = {
   assignee: string;
   commandId?: string;
   commandHash?: string;
+  inspectionId?: string;
   findingStates?: { key: string; status: Status }[];
   findingDetails?: { key: string; label: string; problemType?: string; description?: string }[];
 };

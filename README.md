@@ -20,6 +20,10 @@ Fini les informations dispersées entre carnets, messages et tableaux : Hôtel C
 
 **2. Pendant la visite :** choisissez des réponses simples (**OK**, **Problème**, **Oui**, **Non**), ajoutez une remarque et, si nécessaire, prenez jusqu'à **3 photos par contrôle**. Les problèmes techniques sont suivis sans multiplier les doublons.
 
+Dans le **Résumé**, associez chaque défaut déjà signalé à sa fiche de la chambre. Si la fiche contient plusieurs problèmes, choisissez l’élément contrôlé. **Toujours présent** conserve le suivi ouvert. Avec l’accès **Direction**, **Résolu** consigne la réparation et le résultat OK de cet équipement. Par exemple, si la chasse d’eau fonctionne de nouveau mais que le radiateur reste caché, indiquez les deux résultats dans la même visite. La chambre reste prioritaire pour le radiateur.
+
+Le résumé permet de relire les associations avant l’envoi. L’historique et la fiche imprimée conservent l’état constaté lors de cette visite. En cas de coupure, le contrôle et ses photos restent en attente sur l’appareil. Si une fiche a changé entre-temps, ouvrez l’envoi à vérifier, relisez la fiche et confirmez votre choix pour reprendre la saisie.
+
 **3. Au fil de la journée :** retrouvez les interventions, le suivi des cafards, les machines de la lingerie, les objets conservés et les mouvements des familles dans leurs espaces dédiés.
 
 **4. Pour transmettre :** ouvrez **Rapports**, choisissez une période et téléchargez un **PDF avec les constatations et leurs photos**, prêt à partager ou à imprimer.
@@ -124,6 +128,8 @@ Les chronomètres de lingerie indiquent un **temps prévu** : ils ne commandent 
 **Vous gérez un hôtel ou une résidence et souhaitez voir Hôtel Contrôle en fonctionnement ?** Une démonstration et un périmètre d'adaptation peuvent être préparés pour votre équipe.
 
 <sub>Hôtel Contrôle — présentation fonctionnelle. Les captures utilisent uniquement des données fictives. Pour les notes de maintenance et de déploiement destinées aux techniciens, voir le [dossier technique](docs/NOTES-TECHNIQUES.md).</sub>
+
+**Déploiement des contrôles de chambre.** En mode Google Sheets, publier le script et activer le service Sheets v4 avant de mettre à jour l’application. [Procédure de publication et de reprise](docs/NOTES-TECHNIQUES.md#publication-de-la-synchronisation-des-contrôles-de-chambre)
 
 ### Demander une modification
 

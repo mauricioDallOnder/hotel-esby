@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyCommand, createId, type Issue, type IssueFields } from "../lib/domain";
-import { findDuplicateOpenIssue, matchesRoomFinding, planRoomIssue, validateIssueDistinction } from "../lib/roomIssueMatching";
+import { findDuplicateOpenIssue, matchesRoomFinding, planRoomIssue, prepareRoomInspection, validateIssueDistinction } from "../lib/roomIssueMatching";
 import { issueFindingProgress, issueFindingStates } from "../lib/issueFindings";
 import { freshIssueDraft, issueDraftCommand, issueDraftIsStale } from "../lib/issueDraft";
 import { roomChecks, roomIssue, type RoomInspection } from "../lib/rooms";
@@ -82,6 +82,93 @@ test("progressing a historical duplicate remains possible while reopening an ite
   assert.doesNotThrow(() => applyCommand({ issues: [original, duplicate], inspections: [] }, issueDraftCommand(draft, original), now));
   assert.throws(() => applyCommand({ issues: [partial, duplicate], inspections: [] }, { ...command, version: partial.version,
     findingStates: [{ key: "taps", status: "ouvert" }, { key: "lights", status: "ouvert" }] }, now), { code: 409 });
+});
+
+test("one inspection records independent outcomes on an existing grouped issue", () => {
+  const original = roomIssue(inspection(["taps", "lights", "window"]))!;
+  const record = inspection(["lights", "smoke"]);
+  record.issueLinks = [
+    { key: "taps", findingKey: "taps", issueId: original.id, outcome: "resolved", expectedVersion: 1, note: "Joint remplacé." },
+    { key: "lights", findingKey: "lights", issueId: original.id, outcome: "present", expectedVersion: 1 },
+  ];
+  const before = structuredClone(original);
+  const { issue, updatedIssues } = prepareRoomInspection(roomIssue(record), record, [original]);
+  assert.deepEqual(original, before);
+  assert.equal(updatedIssues.length, 1);
+  const [updated] = updatedIssues;
+  assert.equal(updated.status, "en_cours");
+  assert.equal(updated.version, 2);
+  assert.equal(updated.history.at(-1)?.inspectionId, record.id);
+  assert.match(updated.history.at(-1)!.note, /Joint remplacé/);
+  assert.deepEqual(issueFindingStates(updated), [
+    { key: "taps", status: "resolu" }, { key: "lights", status: "ouvert" }, { key: "window", status: "ouvert" },
+  ]);
+  assert.deepEqual(issue?.roomFindings?.map(item => item.key), ["smoke"]);
+  assert.deepEqual(record.relatedIssueIds, [original.id]);
+  assert.deepEqual(record.issueAssociations?.map(({ key, source, status }) => ({ key, source, status })), [
+    { key: "taps", source: "existing", status: "resolu" }, { key: "lights", source: "existing", status: "ouvert" },
+    { key: "smoke", source: "created", status: "ouvert" },
+  ]);
+});
+
+test("a repaired-only inspection accepts an OK answer and rejects a stale or ambiguous target", () => {
+  const original = roomIssue(inspection(["taps", "lights"]))!;
+  const record = inspection([]);
+  const link = { key: "taps", issueId: original.id, outcome: "resolved" as const, expectedVersion: 1 };
+  for (const [patch, message] of [[{}, /élément concerné/], [{ findingKey: "absent" }, /élément concerné/],
+    [{ findingKey: "taps", expectedVersion: 2 }, /a changé/]] as const) {
+    const invalid = { ...record, issueLinks: [{ ...link, ...patch }] };
+    assert.throws(() => prepareRoomInspection(undefined, invalid, [original]), message);
+    assert.equal(invalid.issueSyncVersion, undefined);
+  }
+  const valid = { ...record, issueLinks: [{ ...link, findingKey: "taps" }] };
+  const { issue, updatedIssues } = prepareRoomInspection(undefined, valid, [original]);
+  assert.equal(issue, undefined);
+  assert.equal(updatedIssues.length, 1);
+  assert.deepEqual(valid.relatedIssueIds, [original.id]);
+  assert.deepEqual(valid.issueAssociations?.map(item => item.outcome), ["resolved"]);
+});
+
+test("a corrected free-text report can be observed without reusing its superseded equipment list", () => {
+  const amended = { ...roomIssue(inspection(["taps", "lights"]))!, title: "Robinets de la douche", roomFindingsActive: false };
+  const record = inspection(["taps"]);
+  record.issueLinks = [{ key: "taps", issueId: amended.id, outcome: "present", expectedVersion: 1 }];
+  const { updatedIssues } = prepareRoomInspection(roomIssue(record), record, [amended]);
+  assert.deepEqual(updatedIssues[0].roomFindings, amended.roomFindings);
+  assert.equal(record.issueAssociations?.[0].label, amended.title);
+  assert.equal(record.issueAssociations?.[0].findingKey, undefined);
+  const repaired = inspection([]);
+  repaired.issueLinks = [{ key: "taps", issueId: amended.id, outcome: "resolved", expectedVersion: 1 }];
+  assert.throws(() => prepareRoomInspection(undefined, repaired, [amended]), /reclassés/);
+});
+
+test("a new report created while the inspection form was open needs confirmation by ID", () => {
+  const record = inspection(["lights"]);
+  record.schemaVersion = 7;
+  const reportedMeanwhile = roomIssue(inspection(["lights"]))!;
+  assert.throws(() => prepareRoomInspection(roomIssue(record), record, [reportedMeanwhile]), /confirmez l’association/);
+  assert.equal(record.issueSyncVersion, undefined);
+  record.issueLinks = [{ key: "lights", issueId: reportedMeanwhile.id, expectedVersion: 1, outcome: "present" }];
+  const result = prepareRoomInspection(roomIssue(record), record, [reportedMeanwhile]);
+  assert.equal(result.issue, undefined);
+  assert.equal(result.updatedIssues[0].id, reportedMeanwhile.id);
+});
+
+test("a minibar never creates an automatic issue and can follow an explicitly linked repair", () => {
+  const record = inspection(["fridge"]);
+  const current = { ...manual("Minibar en panne"), title: "Minibar", problemType: "fridge_fault" };
+  assert.equal(roomIssue(record), undefined);
+  record.issueLinks = [{ key: "fridge", issueId: current.id, expectedVersion: 1, outcome: "present" }];
+  const first = prepareRoomInspection(undefined, record, [current]);
+  assert.equal(first.issue, undefined);
+  assert.equal(first.updatedIssues[0].status, "ouvert");
+  const repaired = inspection([]);
+  repaired.issueLinks = [{ key: "fridge", issueId: current.id, expectedVersion: 2, outcome: "resolved" }];
+  const next = prepareRoomInspection(undefined, repaired, first.updatedIssues);
+  assert.equal(next.issue, undefined);
+  assert.equal(next.updatedIssues[0].status, "resolu");
+  assert.equal(record.issueAssociations?.[0].status, "ouvert");
+  assert.equal(repaired.issueAssociations?.[0].status, "resolu");
 });
 
 test("drafts retain the original version, identifiers, notes, photos and exact uncertain request", () => {

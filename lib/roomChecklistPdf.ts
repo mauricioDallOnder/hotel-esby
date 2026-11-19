@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { displayDate, today } from "./domain";
+import { displayDate, statuses, today } from "./domain";
 import {
   applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels,
   latestRoomRecords, roomCheckResultLabel, roomChecks, rooms,
@@ -173,7 +173,10 @@ export function buildRoomChecklist(options: Options) {
         const label = finding.label === check || finding.label.startsWith(`${check} :`) ? finding.label : `${check} : ${finding.label}`;
         return `${label}${finding.description && !finding.label.includes(finding.description) ? ` - ${finding.description}` : ""}`;
       }).join("\n");
+      const associations = "issueAssociations" in record ? record.issueAssociations : undefined;
+      const followUp = associations?.map(item => `${item.label} · ${statuses[item.status]}`).join("\n");
       const notes = [technicalDetails ? `Problèmes techniques constatés\n${technicalDetails}` : "",
+        followUp ? `État des anomalies lors de la visite\n${followUp}` : "",
         record.carpetNotes.trim() ? `Moquette : ${record.carpetNotes.trim()}` : "", record.notes.trim()].filter(Boolean).join("\n\n") || "Aucune observation saisie.";
       doc.setFont("helvetica", "normal"); doc.setFontSize(10);
       const lines = doc.splitTextToSize(notes, width) as string[];

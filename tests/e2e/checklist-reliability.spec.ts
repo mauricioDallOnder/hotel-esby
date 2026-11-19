@@ -12,6 +12,67 @@ async function state(page: Page): Promise<State> {
   return (await page.request.get("/api/hotel?fresh=1")).json();
 }
 
+test("chambre 323 · a repaired toilet and an obstructed radiator are confirmed in one mobile inspection", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect((await page.request.post("/api/session", { data: { role: "direction", password: "test-direction" } })).ok()).toBeTruthy();
+  const toilet = crypto.randomUUID(), heater = crypto.randomUUID();
+  for (const [id, title] of [[toilet, "Chasse d’eau cassée"], [heater, "Chauffage encombré"]]) {
+    const response = await page.request.post("/api/hotel", { data: { type: "createIssue", id, date: today(), actor: "Réception",
+      fields: { title, location: "Chambre 323", category: "Équipements", priority: "haute", description: title, assignee: "" } } });
+    expect(response.status(), await response.text()).toBe(200);
+  }
+  await page.goto("/checklist");
+  await page.getByRole("button", { name: "Contrôler la chambre 323", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const answer = (label: string, name: string) => dialog.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name, exact: true }).click();
+  await dialog.getByRole("button", { name: /les équipements restants sont OK/ }).click();
+  await answer("Rien de cassé", "OK");
+  await answer("Chauffage / radiateur", "Caché");
+  await dialog.getByRole("button", { name: "Continuer · État et ménage" }).click();
+  await answer("Chambre occupée", "Occupée");
+  await answer("État général de la chambre", "Bon");
+  await answer("Chambre encombrée d’affaires", "Non");
+  await answer("Présence de cafards ou nuisibles", "Aucun");
+  await answer("État de la moquette", "OK");
+  await answer("Micro-ondes présent ?", "Non");
+  await answer("Propreté du minibar", "Propre");
+  await dialog.getByRole("button", { name: "Continuer · Résumé" }).click();
+  await dialog.getByLabel(/^Inspecteur\s*\*?$/).fill("Mauricio test");
+  await dialog.getByRole("combobox", { name: "Associer une réparation effectuée" }).click();
+  await page.getByRole("option", { name: "Rien de cassé", exact: true }).click();
+  await dialog.getByRole("combobox", { name: "Associer au problème existant · Rien de cassé" }).click();
+  await page.getByRole("option", { name: /^Chasse d’eau cassée/ }).click();
+  await dialog.getByLabel("Observation sur la fiche · Rien de cassé").fill("Mécanisme remis en place et testé.");
+  await dialog.locator('input[type="file"][multiple]').setInputFiles({ name: "visite.png", mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64") });
+  await expect(dialog.getByAltText("Photo du contrôle 1")).toBeVisible();
+  await expect(dialog.getByText("1 constat(s) lié(s) encore présent(s) · 1 résolu(s)")).toBeVisible();
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  const sent = page.waitForResponse(r => r.url().endsWith("/api/entries") && r.request().method() === "POST");
+  await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
+  const response = await sent;
+  expect(response.status(), await response.text()).toBe(200);
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Chambre 323", exact: true })).toContainText("1 problème technique");
+  await expect(page.getByRole("alert", { name: "Priorités incendie" })).toBeVisible();
+  const after = await state(page);
+  expect(after.issues).toHaveLength(2);
+  expect(after.roomInspections).toHaveLength(1);
+  expect(after.issues.find(issue => issue.id === toilet)?.status).toBe("resolu");
+  expect(after.issues.find(issue => issue.id === heater)?.status).toBe("ouvert");
+  expect(after.roomInspections![0].issueAssociations).toEqual(expect.arrayContaining([
+    expect.objectContaining({ key: "damage", issueId: toilet, outcome: "resolved" }),
+    expect.objectContaining({ key: "radiator_clear", issueId: heater, outcome: "present" }),
+  ]));
+  await page.goto("/anomalies");
+  const pending = page.getByRole("article").filter({ hasText: "Chauffage encombré" });
+  await pending.getByRole("button", { name: "Ouvrir le suivi" }).click();
+  await dialog.getByRole("button", { name: "Historique (2)" }).click();
+  await dialog.getByText(/Photos du contrôle du/).click();
+  await expect(dialog.getByRole("img", { name: "Chambre 323 · photo 1 du contrôle" })).toBeVisible();
+});
+
 test("bulk OK includes smoke, minibar presence stays consistent and a new detection reuses the existing cafard follow-up", async ({ page }) => {
   test.setTimeout(90000);
   await page.setViewportSize({ width: 390, height: 844 });

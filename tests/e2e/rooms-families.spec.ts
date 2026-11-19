@@ -127,7 +127,7 @@ test("radiator Libre stays in the checklist while Caché creates one technical p
   state = await (await page.request.get("/api/hotel")).json();
   expect(state.issues.filter((issue: { room: string }) => issue.room === "124")).toHaveLength(1);
   const repeated = state.roomInspections.find((record: { actor: string }) => record.actor === "Test radiateur toujours caché");
-  expect(repeated.schemaVersion).toBe(6);
+  expect(repeated.schemaVersion).toBe(7);
   expect(repeated.relatedIssueIds).toEqual([issues[0].id]);
   await page.getByRole("button", { name: "Historique de la chambre 124", exact: true }).click();
   await page.getByRole("button", { name: /Test radiateur toujours caché/ }).click();
