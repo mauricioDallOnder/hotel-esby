@@ -34,6 +34,7 @@ const menuItems = [
     label: "Problèmes techniques",
     path: "/anomalies",
   },
+  { label: "État général de chambre", path: "/etat-general-de-chambre" },
   { label: "Suivi des cafards", path: "/cafards" },
   {
     label: "Rapports",

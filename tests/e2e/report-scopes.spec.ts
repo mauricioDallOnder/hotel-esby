@@ -18,7 +18,7 @@ function issue(room: string, title: string, fields: Partial<Issue> = {}): Issue 
   };
 }
 
-async function loadExamples(page: Page, path: string) {
+async function loadExamples(page: Page, path: string, additionalIssues: Issue[] = []) {
   const technical = issue("201", "Lampe en panne", { category: "Électricité" });
   const clutter = issue("202", "Chambre encombrée de valises", { problemType: "room_cluttered" });
   const pests = issue("203", "Présence de cafards");
@@ -44,7 +44,7 @@ async function loadExamples(page: Page, path: string) {
   const session = await page.request.post("/api/session", { data: { role: "employe", password: "test-employee" } });
   expect(session.ok()).toBeTruthy();
   await page.route("**/api/hotel*", route => route.fulfill({
-    json: { issues: [technical, clutter, pests, repaired], inspections: [], workEvents: [followup, resolvedCase], roomInspections: [], mode: "local" },
+    json: { issues: [technical, clutter, pests, repaired, ...additionalIssues], inspections: [], workEvents: [followup, resolvedCase], roomInspections: [], mode: "local" },
   }));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(path);
@@ -87,11 +87,12 @@ test("daily report downloads include the photos of exactly the requested issues"
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
 });
 
-test("issue type filters switch on mobile, combine with resolution status and reset", async ({ page }) => {
+test("mobile navigation separates technical problems and clutter, including after resetting filters", async ({ page }) => {
   const { technical, clutter, repaired } = await loadExamples(page, "/anomalies");
   const types = page.getByRole("group", { name: "Filtrer par type de problème", exact: true });
   const cards = page.getByRole("article");
-  await expect(cards).toHaveCount(3);
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAccessibleName(`${technical.location} · ${technical.title}`);
   await types.getByRole("button", { name: "Cafards", exact: true }).click();
   await expect(cards).toHaveCount(1);
   await expect(cards).toHaveAccessibleName("Chambre 203");
@@ -100,22 +101,39 @@ test("issue type filters switch on mobile, combine with resolution status and re
   await expect(cards).toHaveCount(1);
   await expect(cards).toHaveAccessibleName("Chambre 205");
 
-  for (const [label, item] of [["Chambres encombrées", clutter], ["Problèmes techniques", technical]] as const) {
-    const button = types.getByRole("button", { name: label, exact: true });
-    await button.click();
-    await expect(button).toHaveAttribute("aria-pressed", "true");
-    await expect(cards).toHaveCount(1);
-    await expect(cards).toHaveAccessibleName(`${item.location} · ${item.title}`);
-  }
+  await types.getByRole("button", { name: "Problèmes techniques", exact: true }).click();
   await page.getByRole("group", { name: "Filtrer par état" }).getByRole("button", { name: "Résolu", exact: true }).click();
   await expect(cards).toHaveCount(1);
   await expect(cards).toHaveAccessibleName(`${repaired.location} · ${repaired.title}`);
-  await types.getByRole("button", { name: "Chambres encombrées" }).click();
+  await page.getByRole("button", { name: "Ouvrir le menu" }).click();
+  await page.getByRole("link", { name: "État général de chambre", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "État général de chambre", exact: true })).toBeVisible();
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAccessibleName(`${clutter.location} · ${clutter.title}`);
+  await page.getByRole("group", { name: "Filtrer par état" }).getByRole("button", { name: "Résolu", exact: true }).click();
   await expect(cards).toHaveCount(0);
   await page.getByRole("button", { name: "Réinitialiser les filtres", exact: true }).click();
-  await expect(cards).toHaveCount(3);
-  await expect(types.getByRole("button", { name: "Tous les types" })).toHaveAttribute("aria-pressed", "true");
+  await expect(cards).toHaveAccessibleName(`${clutter.location} · ${clutter.title}`);
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+});
+
+test("legacy remarks and mixed inspections appear under the relevant room condition and status", async ({ page }) => {
+  const legacy = issue("207", "Chambre encombrée de bagages");
+  const mixed = issue("208", "Contrôle de la chambre 208", { status: "en_cours", roomFindings: [
+    { key: "room_clutter", label: "Chambre encombrée d’affaires", status: "resolu" },
+    { key: "radiator_clear", label: "Radiateur encombré", status: "ouvert" },
+  ] });
+  await loadExamples(page, "/etat-general-de-chambre", [legacy, mixed]);
+  const cards = page.getByRole("article");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.filter({ hasText: legacy.title })).toBeVisible();
+  await page.getByRole("group", { name: "Filtrer par état" }).getByRole("button", { name: "Résolu", exact: true }).click();
+  await expect(cards).toHaveAccessibleName("Chambre 208 · Chambre encombrée d’affaires");
+  await page.goto("/anomalies");
+  const radiator = page.getByRole("article", { name: "Chambre 208 · Radiateur encombré", exact: true });
+  await expect(radiator).toBeVisible();
+  await expect(radiator).not.toContainText("Chambre encombrée d’affaires");
+  await expect(cards.filter({ hasText: legacy.title })).toHaveCount(0);
 });
 
 test("the monthly resolved report follows the resolution month and requires a valid period", async ({ page }) => {
