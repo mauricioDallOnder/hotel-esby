@@ -72,7 +72,7 @@ async function openRoom(page: Page) {
   await page.getByLabel("Rechercher une chambre", { exact: true }).fill("325");
   await page.getByRole("button", { name: "Contrôler la chambre 325", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /Chambre 325/ });
-  await dialog.getByRole("radiogroup", { name: "Rien de cassé", exact: true }).getByRole("radio", { name: "Problème", exact: true }).click();
+  await dialog.getByRole("radiogroup", { name: "État du mobilier et des équipements", exact: true }).getByRole("radio", { name: "Problème", exact: true }).click();
   return dialog;
 }
 
@@ -149,10 +149,10 @@ test("a checklist explicitly reuses any open issue of its room even when the wor
   const elsewhere = issue({ room: "326", location: "Chambre 326", title: "Prise d’un autre étage" });
   const api = await fixture(page, [socket, closed, elsewhere]);
   const dialog = await openRoom(page);
-  await select(page, dialog, "Problème constaté · Rien de cassé", "Autre problème");
-  await dialog.getByLabel(/^Décrivez le problème · Rien de cassé\s*\*?$/).fill("Cache endommagé au même endroit.");
+  await select(page, dialog, "Problème constaté · État du mobilier et des équipements", "Autre problème");
+  await dialog.getByLabel(/^Décrivez le problème · État du mobilier et des équipements\s*\*?$/).fill("Cache endommagé au même endroit.");
   await finishRoomAnswers(dialog);
-  const association = dialog.getByRole("combobox", { name: "Associer au problème existant · Rien de cassé", exact: true });
+  const association = dialog.getByRole("combobox", { name: "Associer au problème existant · État du mobilier et des équipements", exact: true });
   await association.click();
   await expect(page.getByRole("option", { name: /Ancienne prise réparée/ })).toHaveCount(0);
   await expect(page.getByRole("option", { name: /Prise d’un autre étage/ })).toHaveCount(0);
@@ -173,10 +173,10 @@ test("a new broken-item finding asks for identification and accepts a preset wit
   const dialog = await openRoom(page);
   await finishRoomAnswers(dialog);
   await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
-  await expect(dialog.getByRole("combobox", { name: "Problème constaté · Rien de cassé", exact: true })).toHaveAttribute("aria-invalid", "true");
-  await expect(dialog.getByText("Choisissez ou décrivez ce qui est cassé, ou associez le problème déjà ouvert.", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("combobox", { name: "Problème constaté · État du mobilier et des équipements", exact: true })).toHaveAttribute("aria-invalid", "true");
+  await expect(dialog.getByText("Précisez le meuble ou l’équipement endommagé, ou associez le problème déjà signalé.", { exact: true })).toBeVisible();
   expect(api.entries).toHaveLength(0);
-  await select(page, dialog, "Problème constaté · Rien de cassé", socketLabel);
+  await select(page, dialog, "Problème constaté · État du mobilier et des équipements", socketLabel);
   await dialog.getByRole("button", { name: "3. Résumé", exact: true }).click();
   await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -192,28 +192,28 @@ test("a possible duplicate needs an explicit choice and an unspecified broken it
     category: "Équipements", roomFindings: [{ key: "damage", label: "Rien de cassé : Problème" }] });
   const api = await fixture(page, [socket, legacy]);
   const dialog = await openRoom(page);
-  await select(page, dialog, "Problème constaté · Rien de cassé", socketLabel);
+  await select(page, dialog, "Problème constaté · État du mobilier et des équipements", socketLabel);
   await finishRoomAnswers(dialog);
   await expect(dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true })).toBeDisabled();
   await expect(dialog.getByRole("alert").filter({ hasText: "Choisissez le signalement à réutiliser" })).toBeVisible();
   expect(api.entries).toHaveLength(0);
-  await select(page, dialog, "Associer au problème existant · Rien de cassé", /^Prise côté bureau cassée ·/);
+  await select(page, dialog, "Associer au problème existant · État du mobilier et des équipements", /^Prise côté bureau cassée ·/);
   await expect(dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true })).toBeEnabled();
   await dialog.getByRole("button", { name: "1. Équipements", exact: true }).click();
-  await select(page, dialog, "Problème constaté · Rien de cassé", "Préciser le problème");
-  await dialog.getByRole("radiogroup", { name: "Rien de cassé", exact: true }).getByRole("radio", { name: "OK", exact: true }).click();
-  await expect(dialog.getByRole("combobox", { name: "Problème constaté · Rien de cassé", exact: true })).toHaveCount(0);
+  await select(page, dialog, "Problème constaté · État du mobilier et des équipements", "Préciser le problème");
+  await dialog.getByRole("radiogroup", { name: "État du mobilier et des équipements", exact: true }).getByRole("radio", { name: "OK", exact: true }).click();
+  await expect(dialog.getByRole("combobox", { name: "Problème constaté · État du mobilier et des équipements", exact: true })).toHaveCount(0);
   // This item is now a different observation; no stale association may survive.
-  await dialog.getByRole("radiogroup", { name: "Rien de cassé", exact: true }).getByRole("radio", { name: "Problème", exact: true }).click();
-  await select(page, dialog, "Problème constaté · Rien de cassé", "Autre problème");
+  await dialog.getByRole("radiogroup", { name: "État du mobilier et des équipements", exact: true }).getByRole("radio", { name: "Problème", exact: true }).click();
+  await select(page, dialog, "Problème constaté · État du mobilier et des équipements", "Autre problème");
   await dialog.getByRole("button", { name: "3. Résumé", exact: true }).click();
   await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
-  await expect(dialog.getByLabel(/^Décrivez le problème · Rien de cassé\s*\*?$/)).toHaveAttribute("aria-invalid", "true");
+  await expect(dialog.getByLabel(/^Décrivez le problème · État du mobilier et des équipements\s*\*?$/)).toHaveAttribute("aria-invalid", "true");
   await expect(dialog.getByText("Décrivez cet autre problème.", { exact: true })).toBeVisible();
   expect(api.entries).toHaveLength(0);
-  await dialog.getByLabel(/^Décrivez le problème · Rien de cassé\s*\*?$/).fill("Un autre élément à préciser pendant cette vérification.");
+  await dialog.getByLabel(/^Décrivez le problème · État du mobilier et des équipements\s*\*?$/).fill("Un autre élément à préciser pendant cette vérification.");
   await dialog.getByRole("button", { name: "3. Résumé", exact: true }).click();
-  await select(page, dialog, "Associer au problème existant · Rien de cassé", /^Prise côté bureau cassée ·/);
+  await select(page, dialog, "Associer au problème existant · État du mobilier et des équipements", /^Prise côté bureau cassée ·/);
   await dialog.getByRole("button", { name: "Enregistrer le contrôle", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => api.entries.length).toBe(1);

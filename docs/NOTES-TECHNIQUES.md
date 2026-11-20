@@ -215,13 +215,13 @@ lit” ajudam a distinguir objetos diferentes no mesmo quarto.
 
 No resumo do checklist, **Associer à un problème existant** permite selecionar
 qualquer problema ainda aberto daquele quarto. Assim, uma tomada já sinalizada
-pode ser associada a **Rien de cassé**, mesmo quando o registro anterior tem outro
+pode ser associada a **État du mobilier et des équipements**, mesmo quando o registro anterior tem outro
 título. A nova inspeção, suas observações e fotos permanecem no histórico, com o
 vínculo ao problema escolhido. O vínculo não resolve nem altera automaticamente
 o problema existente.
 
 As correspondências automáticas consideram o tipo de defeito e os detalhes. Uma
-chave genérica como **Rien de cassé** não basta para juntar dois defeitos diferentes.
+chave genérica como **État du mobilier et des équipements** não basta para juntar dois defeitos diferentes.
 Se houver várias possibilidades ou faltar precisão, o formulário pede a escolha.
 A gravação confere novamente se o problema escolhido continua aberto e pertence
 ao quarto; uma alteração concorrente exige revisão, sem criar uma nova anomalia
@@ -728,7 +728,7 @@ recibos em reenvios. Não há coleta nem exibição de temperatura na interface.
 O **Contrôle des chambres** cria uma anomalia automática somente quando se marca
 **Problème** em **Robinets fonctionnels**, **Interrupteurs fonctionnels**,
 **Aucune fuite d’eau**, **Éclairage fonctionnel**, **Détecteur de fumée fonctionnel**,
-**Rien de cassé** ou **Fenêtre fonctionnelle**, ou **Caché** em
+**État du mobilier et des équipements** ou **Fenêtre fonctionnelle**, ou **Caché** em
 **Chauffage / radiateur**. **Détectés** em cafards/nuisibles
 alimenta o menu **Suivi des cafards**, sem gerar uma anomalia.
 **Absent** não dispara uma anomalia automática. Lit, matelas, minibar, ferme-porte,
@@ -858,6 +858,8 @@ navegador não pôde ser validada neste ambiente porque o Chromium não está in
 e o download disponível falhou. A integração com o Google real depende da implantação.
 
 ## Contrôle rapide et rotation des chambres (version 4)
+
+Le champ **État du mobilier et des équipements** utilise toujours la clé `damage`. Dans le classeur existant, la colonne correspondante conserve son en-tête historique **Rien de cassé**. Les anciennes visites, les brouillons et les problèmes associés restent rattachés au même point de contrôle.
 
 - **Inspeção por toque:** três etapas (équipements, état/ménage, résumé), botões
   grandes OK / Problème / Absent e seleção do defeito quando necessário. O atalho de validação só marca

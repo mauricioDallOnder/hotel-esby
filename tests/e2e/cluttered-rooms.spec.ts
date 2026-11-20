@@ -25,7 +25,7 @@ async function prepareRoom(page: Page, room: string, actor: string, clutter?: "O
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK", exact: true }).click();
   // A known technical problem leaves this broad question for an individual check.
-  await choose(dialog, "Rien de cassé", "OK");
+  await choose(dialog, "État du mobilier et des équipements", "OK");
   await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   const question = dialog.getByRole("radiogroup", { name: clutterLabel, exact: true });
   await expect(question.getByRole("radio")).toHaveCount(2);
