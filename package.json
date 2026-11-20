@@ -20,6 +20,8 @@
     "@mui/icons-material": "^9.0.0",
     "@mui/material": "^9.0.0",
     "@mui/material-nextjs": "^9.0.0",
+    "@xmldom/xmldom": "^0.9.12",
+    "fflate": "^0.8.3",
     "jspdf": "^4.2.0",
     "jspdf-autotable": "^5.0.0",
     "next": "^16.2.4",

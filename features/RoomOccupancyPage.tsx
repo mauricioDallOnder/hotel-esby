@@ -3,32 +3,35 @@ import { useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
 import { ConnectionBar, PageTitle } from "@/components/HotelUI";
 import { RoomAvailabilityCheckbox } from "@/components/RoomAvailabilityCheckbox";
+import { OccupancyImportDialog } from "@/components/OccupancyImportDialog";
 import { roomGroups, rooms } from "@/lib/rooms";
 import { useRoomObservations } from "@/lib/useRoomObservations";
 import { useWorkEvents } from "@/lib/useWorkEvents";
-import { roomAvailabilityView } from "@/lib/roomAvailabilityView";
+import { roomAvailabilityCounts, roomAvailabilityView } from "@/lib/roomAvailabilityView";
 
 const filters = { all: "Toutes", occupied: "Occupées", free: "Libres", works: "En travaux", unknown: "Non renseignées" };
 const filterColors = { all: "primary", occupied: "info", free: "success", works: "warning", unknown: "inherit" } as const;
+const searchText = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase("fr").trim();
 
 export default function RoomOccupancyPage() {
   const { latest, pendingIds } = useRoomObservations();
   const { events } = useWorkEvents();
   const [search, setSearch] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [notice, setNotice] = useState("");
   const [group, setGroup] = useState("all");
   const [filter, setFilter] = useState<keyof typeof filters>("all");
   const availabilityStates = useMemo(() => roomAvailabilityView(events, latest), [events, latest]);
   const availability = useMemo(() => new Map([...availabilityStates].map(([room, state]) => [room, state.free])), [availabilityStates]);
+  const terms = searchText(search).split(/\s+/);
   const scopedGroups = roomGroups.filter(g => group === "all" || group === g.label)
-    .map(g => ({ ...g, rooms: g.rooms.filter(room => room.includes(search.trim())) }));
+    .map(g => ({ ...g, rooms: g.rooms.filter(room => {
+      const state = availabilityStates.get(room);
+      const text = searchText(room + " " + (state?.free === false ? state.source?.guestName || "" : ""));
+      return terms.every(term => text.includes(term));
+    }) }));
   const scopedRooms = scopedGroups.flatMap(g => g.rooms);
-  const counts = {
-    all: scopedRooms.length,
-    occupied: scopedRooms.filter(room => availability.get(room) === false).length,
-    free: scopedRooms.filter(room => availability.get(room) === true && availabilityStates.get(room)?.vacancyReason !== "works").length,
-    works: scopedRooms.filter(room => availabilityStates.get(room)?.vacancyReason === "works").length,
-    unknown: scopedRooms.filter(room => availability.get(room) === undefined).length,
-  };
+  const counts = roomAvailabilityCounts(availabilityStates, scopedRooms);
   const visibleGroups = scopedGroups.map(g => ({ ...g, rooms: g.rooms.filter(room => {
     const value = availability.get(room);
     const works = availabilityStates.get(room)?.vacancyReason === "works";
@@ -38,12 +41,15 @@ export default function RoomOccupancyPage() {
   const hasFilters = !!search || group !== "all" || filter !== "all";
   return <>
     <ConnectionBar />
-    <PageTitle title="Occupation des chambres" description="Consultez et mettez à jour les chambres occupées, libres ou en travaux." />
+    <PageTitle title="Occupation des chambres" description="Consultez et mettez à jour les chambres occupées, libres ou en travaux."
+      action={<Button variant="contained" onClick={() => { setNotice(""); setImportOpen(true); }}>Importer la fiche de séjours</Button>} />
     <Stack spacing={3}>
+      {notice && <Alert severity="success" onClose={() => setNotice("")}>{notice}</Alert>}
       <Stack spacing={1.5}>
         <Typography variant="body2" color="text.secondary">Cochez pour indiquer « Occupée ». Décochez pour choisir « Libre » ou « En travaux » et ajouter une observation si nécessaire.</Typography>
         <Typography variant="caption" color="text.secondary">Un trait indique une occupation inconnue : cochez pour « Occupée » ou choisissez « Marquer libre ».</Typography>
-        <TextField label="Rechercher une chambre" type="search" value={search} onChange={event => setSearch(event.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
+        <TextField label="Rechercher une chambre" placeholder="Numéro de chambre ou nom de l’occupant" type="search"
+          slotProps={{ inputLabel: { shrink: true } }} value={search} onChange={event => setSearch(event.target.value)} />
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }} role="group" aria-label="Filtrer par étage">
           {["all", ...roomGroups.map(g => g.label)].map(value => <Chip key={value} label={value === "all" ? "Tous les étages" : value} onClick={() => setGroup(value)} aria-pressed={group === value} color={group === value ? "primary" : "default"} variant={group === value ? "filled" : "outlined"} />)}
         </Stack>
@@ -75,5 +81,6 @@ export default function RoomOccupancyPage() {
         </Box>
       </Box>)}
     </Stack>
+    {importOpen && <OccupancyImportDialog onClose={() => setImportOpen(false)} onImported={message => { setImportOpen(false); setNotice(message); }} />}
   </>;
 }

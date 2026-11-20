@@ -125,6 +125,11 @@ export function latestCafardObservationId(inspections: readonly (RoomEntry | Roo
 }
 
 export function validateWorkEntry(entry: WorkEntry, events: Work[], families: (FamilyEntry | FamilyEvent)[], deletedFamilies: string[] = [], inspections: readonly (RoomEntry | RoomInspection)[] = []) {
+  if ((entry.guestName !== undefined || entry.stayUntil !== undefined) &&
+    (entry.kind !== "roomAvailability" || entry.free !== false ||
+      (entry.guestName !== undefined && (typeof entry.guestName !== "string" || !entry.guestName.trim() || entry.guestName.length > 200)) ||
+      (entry.stayUntil !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(entry.stayUntil))))
+    return "Vérifiez le nom et la date du séjour : ces champs sont réservés aux chambres occupées.";
   if (entry.vacancyReason !== undefined && (entry.kind !== "roomAvailability" || entry.free !== true ||
     !["available", "works"].includes(entry.vacancyReason)))
     return "Précisez « Libre » ou « En travaux » uniquement pour une chambre non occupée.";
@@ -155,6 +160,43 @@ export function roomAvailability(room: string, events: Work[], latestInspection?
   const vacancyReason: RoomVacancyReason | undefined = free === true ? manual?.vacancyReason || "available" : undefined;
   return { free, vacancyReason,
     source: manual, revision: manual ? manual.expectedRevision + 1 : 0 };
+}
+
+/** Daily imports stay on the server; send the current room states and all manual receipts to devices. */
+export function visibleWorkEvents(events: WorkEvent[]) {
+  if (!events.some(event => event.occupancyImportId)) return events;
+  const latest = latestWork(events, "roomAvailability");
+  const visible = events.filter(event => !event.occupancyImportId || latest.get(event.room)?.id === event.id);
+  return visible.length === events.length ? events : visible;
+}
+
+/** Apply one checked roster to the same revision history as manual occupancy changes. */
+export function planOccupancyImport(incoming: WorkEvent[], history: WorkEvent[]):
+  { records: WorkEvent[]; replay: boolean } | { error: string } {
+  const first = incoming[0];
+  if (!first?.occupancyImportId || !first.submissionHash || new Set(incoming.map(row => row.room)).size !== incoming.length ||
+      incoming.some(row => row.kind !== "roomAvailability" || row.targetId !== row.room ||
+        (row.free === false ? (!row.guestName || !row.stayUntil || row.stayUntil < row.date || row.vacancyReason !== undefined)
+          : (row.free !== true || !row.vacancyReason || !["available", "works"].includes(row.vacancyReason) || row.guestName !== undefined || row.stayUntil !== undefined)) ||
+        row.occupancyImportId !== first.occupancyImportId || row.submissionHash !== first.submissionHash))
+    return { error: "La liste des chambres à importer est invalide." };
+  const previous = history.filter(event => event.occupancyImportId === first.occupancyImportId);
+  if (previous.length) {
+    if (previous.length !== incoming.length || previous.some(event => event.submissionHash !== first.submissionHash))
+      return { error: "Cette demande d’import existe avec un contenu différent." };
+    return { records: previous, replay: true };
+  }
+  const latest = latestWork(history, "roomAvailability");
+  const records: WorkEvent[] = [];
+  for (const row of incoming) {
+    const current = latest.get(row.room);
+    if ((current?.id || null) !== row.expectedPreviousEventId)
+      return { error: `Chambre ${row.room} : une modification a été enregistrée depuis l’aperçu. Actualisez puis vérifiez la fiche.` };
+    if (current && current.date > row.date)
+      return { error: `Chambre ${row.room} : une occupation plus récente est déjà enregistrée (${current.date}).` };
+    records.push({ ...row, expectedRevision: current ? current.expectedRevision + 1 : 0 });
+  }
+  return { records, replay: false };
 }
 
 export function dailyTasks(events: Work[], date: string) {

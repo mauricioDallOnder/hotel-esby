@@ -1,9 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChange } from "./rooms";
+import { absenceDeleteSchema, parseEntry, roomIssue, type Entry, type EntryChange, type WorkEvent } from "./rooms";
+import { occupancyImportSchema } from "./occupancyImport";
 import { today } from "./domain";
-import { validateWorkEntry, validateWorkPredecessor } from "./work";
+import { planOccupancyImport, validateWorkEntry, validateWorkPredecessor } from "./work";
 import { commandOperation, hasCommandReceipt, isCommandReplay, stampCommandReceipt } from "./commandReceipt";
 import { prepareRoomInspection } from "./roomIssueMatching";
 import { hasInspectionUpdates } from "./roomInspectionReceipt";
@@ -115,6 +116,8 @@ export async function google<T>(payload: Record<string, unknown>, timeoutMs = 55
       );
     }
     
+    if (!result.ok && payload.action === "importOccupancy" && result.error === "Action invalide.")
+      throw new DomainError("Redéployez le fichier Google Apps Script pour activer l’import des séjours.", 503);
     if (!result.ok && ["commitIssueV2", "commitIssueV3", "commitIssueV4", "commitRoomInspection", "commitRoomInspectionV2", "commitRoomInspectionV3", "commitRoomInspectionV4", "commitRoomInspectionV5", "commitWorkEvent", "commitWorkEventV2", "commitCafardFollowupV2", "commitCafardFollowupV3", "commitLaundryCycle", "commitLaundryCycleV2", "commitLaundryCycleV3"].includes(String(payload.action)) && result.error === "Action invalide.")
       throw new DomainError(["commitIssueV2", "commitIssueV3", "commitIssueV4"].includes(String(payload.action))
         ? "Mettez à jour et redéployez le fichier Google Apps Script avant d’enregistrer ce problème. Votre demande est conservée sur cet appareil."
@@ -378,6 +381,42 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   renameSync(temp, path.join(directory(), "hotel.json"));
   
   return change;
+}
+
+export async function importOccupancy(input: unknown): Promise<{ records: WorkEvent[] }> {
+  const command = occupancyImportSchema.parse(input);
+  const submissionHash = createHash("sha256").update(JSON.stringify(command)).digest("hex");
+  const now = new Date().toISOString();
+  const records: WorkEvent[] = command.rows.map(row => ({
+    type: "createWorkEvent", kind: "roomAvailability", id: crypto.randomUUID(), targetId: row.room, room: row.room,
+    date: command.date, occurredAt: now, actor: command.actor, notes: "", free: row.status !== "occupied",
+    ...(row.status === "occupied" ? { guestName: row.guestName, stayUntil: row.stayUntil } : { vacancyReason: row.status }),
+    expectedPreviousEventId: row.expectedPreviousEventId, expectedRevision: 0,
+    version: 1, updatedAt: now, occupancyImportId: command.id, submissionHash,
+  }));
+  if (storageMode() === "sheets") {
+    try {
+      const receipt = await google<{ records: WorkEvent[] }>({ action: "importOccupancy", records });
+      if (!Array.isArray(receipt?.records) || receipt.records.length !== records.length ||
+          records.some(expected => !receipt.records.some(actual => actual.room === expected.room &&
+            actual.occupancyImportId === command.id && actual.submissionHash === submissionHash &&
+            actual.free === expected.free && actual.vacancyReason === expected.vacancyReason &&
+            actual.guestName === expected.guestName && actual.stayUntil === expected.stayUntil)))
+        throw new DomainError("La confirmation de l’import est incomplète. Réessayez le même import.", 503);
+      return receipt;
+    } finally { stateCache.clear(); }
+  }
+  const state = localState();
+  const plan = planOccupancyImport(records, state.workEvents || []);
+  if ("error" in plan) throw new DomainError(plan.error, 409);
+  if (!plan.replay) {
+    state.workEvents = [...(state.workEvents || []), ...plan.records];
+    mkdirSync(directory(), { recursive: true });
+    const temp = path.join(directory(), "hotel." + crypto.randomUUID() + ".tmp");
+    writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
+    renameSync(temp, path.join(directory(), "hotel.json"));
+  }
+  return { records: plan.records };
 }
 
 export async function deleteAbsence(input: unknown): Promise<{ deleted: true; id: string }> {

@@ -212,6 +212,7 @@ export const workEntrySchema = z.object({
   free: z.boolean().optional(), done: z.boolean().optional(), deleted: z.boolean().optional(),
   // Keep absent on historical requests so their idempotency receipt is unchanged.
   vacancyReason: z.enum(["available", "works"]).optional(),
+  guestName: required.optional(), stayUntil: z.iso.date().optional(),
   familyEventId: z.string().uuid().optional(),
   cafardStatus: z.enum(["a_verifier", "signale", "traite", "resolu"]).optional(),
   detectedOn: z.iso.date().nullable().optional(), treatedOn: z.iso.date().nullable().optional(),
@@ -307,6 +308,8 @@ export const workEntrySchema = z.object({
   if (v.kind !== "roomAvailability" && v.free !== undefined) invalid("free", "Disponibilité inattendue.");
   if (v.vacancyReason !== undefined && (v.kind !== "roomAvailability" || v.free !== true))
     invalid("vacancyReason", "Précisez « Libre » ou « En travaux » uniquement pour une chambre non occupée.");
+  if ((v.guestName !== undefined || v.stayUntil !== undefined) && (v.kind !== "roomAvailability" || v.free !== false))
+    invalid("guestName", "Le séjour doit correspondre à une chambre occupée.");
   if (v.kind !== "cafardFollowup" && [v.cafardStatus, v.detectedOn, v.treatedOn, v.resolvedOn, v.product, v.cafardObservationId].some(value => value !== undefined))
     invalid("kind", "Données de suivi des cafards inattendues.");
   if (v.kind !== "collectedItem" && [v.itemName, v.collectedOn, v.collectedBy, v.returnedOn, v.returnedBy, v.roomUnidentified].some(value => value !== undefined))
@@ -316,7 +319,7 @@ export const workEntrySchema = z.object({
   if (v.kind === "dailyTask" && v.room) invalid("room", "Une tâche n’est pas un contrôle de chambre.");
 });
 export type WorkEntry = z.infer<typeof workEntrySchema>;
-export type WorkEvent = WorkEntry & { version: number; updatedAt: string; submissionHash: string };
+export type WorkEvent = WorkEntry & { version: number; updatedAt: string; submissionHash: string; occupancyImportId?: string };
 
 export const entrySchema = z.union([familyEntrySchema, roomEntrySchema, workEntrySchema]);
 export type FamilyEntry = z.infer<typeof familyEntrySchema>;
