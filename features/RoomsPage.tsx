@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Box, Button, Chip, LinearProgress, Paper, Stack, TextField, Typography } from "@mui/material";
 import { useAppContext } from "@/context/AppContext";
@@ -204,7 +203,6 @@ export default function RoomsPage() {
       {exportError && <Alert severity="error">{exportError}</Alert>}
       <Stack spacing={1.5} id="room-checklist-filters" sx={{ scrollMarginTop: 88 }}>
         <Typography variant="body2" color="text.secondary">La tournée inclut les chambres occupées et celles dont l’occupation reste à renseigner.</Typography>
-        <Button component={Link} href="/occupation" variant="text" sx={{ alignSelf: "flex-start", minHeight: 44 }}>Occupation des chambres</Button>
         <Typography variant="caption" color="text.secondary">Décochez « Occupée », choisissez « Libre » ou « En travaux », puis enregistrez. Une observation peut être ajoutée. Un trait indique une occupation inconnue.</Typography>
         <TextField label="Rechercher une chambre" value={search} onChange={e => setSearch(e.target.value)} slotProps={{ htmlInput: { inputMode: "numeric" } }} />
         <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1 }} role="group" aria-label="Filtrer par étage">{["all", ...roomGroups.map(g => g.label)].map(g => <Chip key={g} label={g === "all" ? "Tous les étages" : g} onClick={() => setGroup(g)} aria-pressed={group === g} color={group === g ? "primary" : "default"} variant={group === g ? "filled" : "outlined"} />)}</Stack>

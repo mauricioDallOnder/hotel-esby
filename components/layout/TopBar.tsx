@@ -10,7 +10,7 @@ import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 
 import MenuIcon from "@mui/icons-material/Menu";
-import ChecklistRounded from "@mui/icons-material/ChecklistRounded";
+import HotelRounded from "@mui/icons-material/HotelRounded";
 import { ThemeModeToggle } from "@/components/ThemeModeToggle";
 
 type TopbarProps = {
@@ -128,7 +128,7 @@ export function Topbar({
           color="inherit"
           size="small"
           startIcon={
-            <ChecklistRounded />
+            <HotelRounded />
           }
           sx={{
             borderColor: "currentColor",
@@ -148,7 +148,7 @@ export function Topbar({
             },
           }}
         >
-          Checklist des chambres
+          Chambres
         </Button>
         </Box>
       </Toolbar>
