@@ -20,7 +20,9 @@ Fini les informations dispersées entre carnets, messages et tableaux : Hôtel C
 
 **2. Pendant la visite :** choisissez des réponses simples (**OK**, **Problème**, **Oui**, **Non**), ajoutez une remarque et, si nécessaire, prenez jusqu'à **3 photos par contrôle**. Les problèmes techniques sont suivis sans multiplier les doublons.
 
-Dans le **Résumé**, associez chaque défaut déjà signalé à sa fiche de la chambre. Si la fiche contient plusieurs problèmes, choisissez l’élément contrôlé. **Toujours présent** conserve le suivi ouvert. Avec l’accès **Direction**, **Résolu** consigne la réparation et le résultat OK de cet équipement. Par exemple, si la chasse d’eau fonctionne de nouveau mais que le radiateur reste caché, indiquez les deux résultats dans la même visite. La chambre reste prioritaire pour le radiateur.
+Si la chambre est encombrée et que le radiateur est caché, indiquez les deux constats. Dans le **Résumé**, chacun retrouve automatiquement sa fiche lorsqu’une seule correspondance précise existe. Vous pouvez alors **Enregistrer le contrôle**, même si une fiche de robinetterie reste ouverte dans cette chambre. Si plusieurs fiches conviennent au même constat, choisissez celle de l’équipement concerné.
+
+**Toujours présent** conserve le suivi ouvert. Avec l’accès **Direction**, **Résolu** consigne la réparation et le résultat OK de cet équipement. Par exemple, si la chasse d’eau fonctionne de nouveau mais que le radiateur reste caché, indiquez les deux résultats dans la même visite. La chambre reste prioritaire pour le radiateur.
 
 Le résumé permet de relire les associations avant l’envoi. L’historique et la fiche imprimée conservent l’état constaté lors de cette visite. En cas de coupure, le contrôle et ses photos restent en attente sur l’appareil. Si une fiche a changé entre-temps, ouvrez l’envoi à vérifier, relisez la fiche et confirmez votre choix pour reprendre la saisie.
 

@@ -677,7 +677,11 @@ exports.normalizeIssueText = normalizeIssueText;
 exports.issueRoom = issueRoom;
 exports.openRoomIssues = openRoomIssues;
 exports.hasRoomClutter = hasRoomClutter;
+exports.isRoomCondition = isRoomCondition;
+exports.matchingRoomIssueFindings = matchingRoomIssueFindings;
 exports.matchesRoomFinding = matchesRoomFinding;
+exports.canLinkRoomIssue = canLinkRoomIssue;
+exports.linkableRoomIssueFindings = linkableRoomIssueFindings;
 exports.findDuplicateOpenIssue = findDuplicateOpenIssue;
 exports.validateIssueDistinction = validateIssueDistinction;
 exports.duplicateRoomIssueMessage = duplicateRoomIssueMessage;
@@ -811,31 +815,19 @@ function typedFindingMatches(issue, finding) {
     // there is no precise description identifying the same fitting.
     return true;
 }
-function matchesRoomFinding(issue, finding) {
-    var _a, _b, _c, _d;
-    issue = (0, issueFindings_1.issueMatchingSnapshot)(issue);
-    if (finding.problemType) {
-        if ((_a = issue.roomFindings) === null || _a === void 0 ? void 0 : _a.length)
-            return issue.roomFindings.some(item => {
-                if (!item.problemType)
-                    return typedFindingMatches({ ...issue, roomFindings: undefined }, finding);
-                return typedFindingMatches({ ...issue, problemType: item.problemType, title: "", description: findingText(item), roomFindings: undefined }, finding);
-            });
+function matchesUnstructuredFinding(issue, finding) {
+    var _a;
+    if (finding.problemType)
         return typedFindingMatches(issue, finding);
-    }
     if (finding.key === "damage") {
         if (meaningful(finding.description || ""))
             return sameManualProblem({ location: issue.location, title: "", description: finding.description }, issue);
-        const clutterOnly = ((_b = issue.roomFindings) === null || _b === void 0 ? void 0 : _b.length)
-            ? issue.roomFindings.every(item => item.key === "room_clutter" || item.problemType === "room_cluttered")
-            : issue.problemType === "room_cluttered";
         // "Rien de cassé : Problème" does not identify an object. It can suggest
         // existing room repairs for a human choice, but clutter is not a repair.
-        return !clutterOnly && !isCafardTechnicalReport(issue, "historical");
+        return issue.problemType !== "room_cluttered" && !isCafardTechnicalReport(issue, "historical");
     }
-    if ((_c = issue.roomFindings) === null || _c === void 0 ? void 0 : _c.length)
-        return issue.roomFindings.some(item => item.key === finding.key &&
-            (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
+    if (isRoomCondition(finding) && issue.problemType && issue.problemType !== "other")
+        return issue.problemType === (finding.key === "room_clutter" ? "room_cluttered" : "radiator_obstructed");
     const text = normalizeIssueText(`${issue.title || ""} ${issue.description || ""}`);
     if (finding.key === "room_clutter")
         return issue.problemType === "room_cluttered" || hasRoomClutter(text);
@@ -853,7 +845,34 @@ function matchesRoomFinding(issue, finding) {
         return false;
     if (finding.key === "observation")
         return normalizeIssueText(issue.description || "") === normalizeIssueText(finding.label);
-    return ((_d = keywords[finding.key]) === null || _d === void 0 ? void 0 : _d.test(text)) || false;
+    return ((_a = keywords[finding.key]) === null || _a === void 0 ? void 0 : _a.test(text)) || false;
+}
+function isRoomCondition(finding) {
+    return finding.key === "room_clutter" || finding.key === "radiator_clear";
+}
+/** A structured card may contain several independent faults. Its combined title/notes cannot identify an item. */
+function matchingRoomIssueFindings(issue, finding) {
+    return ((0, issueFindings_1.issueMatchingSnapshot)(issue).roomFindings || []).filter(item => {
+        if (!finding.problemType && item.key === finding.key && finding.key !== "damage")
+            return finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label);
+        if (!finding.problemType && finding.key !== "damage" && !isRoomCondition(finding))
+            return false;
+        const type = item.problemType || (item.key === "room_clutter" ? "room_cluttered" : item.key === "radiator_clear" ? "radiator_obstructed" : undefined);
+        return matchesUnstructuredFinding({ ...issue, roomFindings: undefined, title: item.label, description: item.description || "", problemType: type }, finding);
+    });
+}
+function matchesRoomFinding(issue, finding) {
+    var _a;
+    if (issue.roomFindingsActive !== false && ((_a = issue.roomFindings) === null || _a === void 0 ? void 0 : _a.length))
+        return matchingRoomIssueFindings(issue, finding).length > 0;
+    return matchesUnstructuredFinding((0, issueFindings_1.issueMatchingSnapshot)(issue), finding);
+}
+/** Keep manual equipment associations available for older, freely worded repair descriptions. */
+function canLinkRoomIssue(issue, finding) {
+    return !isRoomCondition(finding) || matchesRoomFinding(issue, finding);
+}
+function linkableRoomIssueFindings(issue, finding) {
+    return isRoomCondition(finding) ? matchingRoomIssueFindings(issue, finding) : (0, issueFindings_1.issueMatchingSnapshot)(issue).roomFindings || [];
 }
 const genericText = /^(?:chambre\s+\d{3}\s*)?(?:probleme(?: constate| technique)?|anomalie|a verifier|a reparer|voir (?:la )?photo|voir sur place|test)$/;
 const failureKinds = [
@@ -1023,7 +1042,7 @@ function exactTypedDescription(issue, finding) {
 }
 /** A preview never throws; write boundaries reject conflicts before any photos or rows are written. */
 function planRoomIssue(candidate, record, issues) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     const conflicts = [], requiresChoice = [];
     const associations = [];
     const related = new Set();
@@ -1041,26 +1060,36 @@ function planRoomIssue(candidate, record, issues) {
             continue;
         }
         const existing = issues.find(issue => issue.id === link.issueId);
+        const finding = findings.find(item => item.key === link.key) || { key: link.key, label: link.key };
         if (!existing || existing.status === "resolu" || issueRoom(existing) !== record.room)
             conflicts.push("Le problème associé a été résolu, déplacé ou supprimé. Actualisez puis choisissez un problème encore ouvert dans cette chambre.");
+        else if (!canLinkRoomIssue(existing, finding))
+            conflicts.push(`La fiche « ${existing.title} » ne correspond pas à ce constat. Retirez l’association ou choisissez la fiche du même constat.`);
         else if (link.outcome) {
             const target = targetFinding(existing, link);
+            const previousTarget = associations.find(item => item.issueId === existing.id && item.findingKey === (target === null || target === void 0 ? void 0 : target.key));
+            // An older free-text report can describe both conditions without separate item IDs.
+            const sameLegacyReport = previousTarget && !target && !((_b = existing.roomFindings) === null || _b === void 0 ? void 0 : _b.length) && isRoomCondition(finding) &&
+                isRoomCondition(previousTarget) && !repairing && previousTarget.outcome === "present";
             if (existing.version !== link.expectedVersion) {
                 conflicts.push(`La fiche « ${existing.title} » a changé. Vérifiez sa nouvelle version puis confirmez l’association.`);
             }
             else if (isCafardTechnicalReport(existing, "historical") || (target === null || target === void 0 ? void 0 : target.key) === "bugs") {
                 conflicts.push(cafardTechnicalReportMessage());
             }
-            else if (repairing && existing.roomFindingsActive === false && (((_b = existing.roomFindings) === null || _b === void 0 ? void 0 : _b.length) || 0) > 1) {
+            else if (repairing && existing.roomFindingsActive === false && (((_c = existing.roomFindings) === null || _c === void 0 ? void 0 : _c.length) || 0) > 1) {
                 conflicts.push(`Les équipements de « ${existing.title} » ont été reclassés. Vérifiez leurs détails dans Problèmes techniques avant de résoudre cet élément.`);
             }
-            else if ((link.findingKey || (existing.roomFindingsActive !== false && ((_c = existing.roomFindings) === null || _c === void 0 ? void 0 : _c.length))) && !target) {
+            else if ((link.findingKey || (existing.roomFindingsActive !== false && ((_d = existing.roomFindings) === null || _d === void 0 ? void 0 : _d.length))) && !target) {
                 conflicts.push(`Choisissez l’élément concerné dans la fiche « ${existing.title} ».`);
             }
             else if (target && (0, issueFindings_1.issueFindingStatus)(existing, target) === "resolu") {
                 conflicts.push(`L’élément « ${target.label} » est déjà résolu. Vérifiez l’association.`);
             }
-            else if (associations.some(item => item.issueId === existing.id && item.findingKey === (target === null || target === void 0 ? void 0 : target.key))) {
+            else if (target && isRoomCondition(finding) && !matchingRoomIssueFindings(existing, finding).some(item => item.key === target.key)) {
+                conflicts.push(`L’élément « ${target.label} » ne correspond pas à ce constat. Choisissez l’élément correspondant dans la fiche.`);
+            }
+            else if (previousTarget && !sameLegacyReport) {
                 conflicts.push(`Le même problème de la fiche « ${existing.title} » est associé à deux équipements. Vérifiez vos choix.`);
             }
             else {
@@ -1083,12 +1112,11 @@ function planRoomIssue(candidate, record, issues) {
         return { issue: undefined, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
     const open = openRoomIssues(issues, record.room);
     function associate(finding, existing) {
-        var _a;
         related.add(existing.id);
         if (associations.some(item => item.key === finding.key))
             return;
-        const targets = (_a = (0, issueFindings_1.issueMatchingSnapshot)(existing).roomFindings) === null || _a === void 0 ? void 0 : _a.filter(item => item.key === finding.key);
-        const target = (targets === null || targets === void 0 ? void 0 : targets.length) === 1 ? targets[0] : undefined;
+        const targets = matchingRoomIssueFindings(existing, finding);
+        const target = targets.length === 1 ? targets[0] : undefined;
         associations.push({ key: finding.key, issueId: existing.id, ...(target ? { findingKey: target.key } : {}),
             label: (target === null || target === void 0 ? void 0 : target.label) || existing.title, source: "existing", outcome: "present", status: target ? (0, issueFindings_1.issueFindingStatus)(existing, target) : existing.status });
     }
@@ -1107,7 +1135,7 @@ function planRoomIssue(candidate, record, issues) {
         }
         const matching = open.filter(issue => !isCafardTechnicalReport(issue, "historical") && matchesRoomFinding(issue, finding) &&
             !associations.some(item => item.outcome === "resolved" && item.issueId === issue.id && (!item.findingKey || item.findingKey === finding.key)));
-        if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && finding.problemType !== "room_cluttered" && !exactTypedDescription(matching[0], finding)) ||
+        if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && !["room_cluttered", "radiator_obstructed"].includes(finding.problemType) && !exactTypedDescription(matching[0], finding)) ||
             (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
             requiresChoice.push(finding.key);
             conflicts.push(`Un problème similaire est déjà ouvert pour « ${((_b = (0, problemPresets_1.getProblemPreset)(finding.problemType)) === null || _b === void 0 ? void 0 : _b.label) || finding.label} ». Choisissez le signalement à réutiliser ou précisez un problème différent.`);
@@ -1119,7 +1147,7 @@ function planRoomIssue(candidate, record, issues) {
         }
         return true;
     });
-    if (conflicts.length || (((_d = candidate.roomFindings) === null || _d === void 0 ? void 0 : _d.length) && !remaining.length))
+    if (conflicts.length || (((_e = candidate.roomFindings) === null || _e === void 0 ? void 0 : _e.length) && !remaining.length))
         return { issue: undefined, relatedIssueIds: [...related], associations, conflicts, requiresChoice };
     const issue = { ...candidate, roomFindings: remaining,
         description: remaining.length ? [...remaining.map(finding => finding.label), ...(record.notes && !remaining.some(f => f.label === record.notes) ? [record.notes] : [])].join("\n").slice(0, 4000) : candidate.description };

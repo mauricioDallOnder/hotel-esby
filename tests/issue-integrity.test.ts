@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyCommand, createId, type Issue, type IssueFields } from "../lib/domain";
-import { findDuplicateOpenIssue, matchesRoomFinding, planRoomIssue, prepareRoomInspection, validateIssueDistinction } from "../lib/roomIssueMatching";
+import { findDuplicateOpenIssue, linkableRoomIssueFindings, matchesRoomFinding, planRoomIssue, prepareRoomInspection, validateIssueDistinction } from "../lib/roomIssueMatching";
 import { issueFindingProgress, issueFindingStates } from "../lib/issueFindings";
 import { freshIssueDraft, issueDraftCommand, issueDraftIsStale } from "../lib/issueDraft";
 import { roomChecks, roomIssue, type RoomInspection } from "../lib/rooms";
@@ -152,6 +152,48 @@ test("a new report created while the inspection form was open needs confirmation
   const result = prepareRoomInspection(roomIssue(record), record, [reportedMeanwhile]);
   assert.equal(result.issue, undefined);
   assert.equal(result.updatedIssues[0].id, reportedMeanwhile.id);
+});
+
+test("117 reuses the clutter and hidden radiator reports while leaving the open tap issue untouched", () => {
+  const visit = { ...inspection(["room_clutter", "radiator_clear"]), room: "117", schemaVersion: 7 as const };
+  visit.problemDetails = [{ key: "radiator_clear", problemType: "radiator_obstructed" }];
+  const candidate = roomIssue(visit)!;
+  const [heater, clutter] = candidate.roomFindings!;
+  const card = (items: NonNullable<Issue["roomFindings"]>, description: string): Issue =>
+    ({ ...candidate, id: createId(), roomFindings: items, title: "Chambre 117", description });
+  const tap = card([{ key: "taps", label: "Robinets fonctionnels : Problème" }, { key: "damage", label: "Rien de cassé : Problème" }], "Robinet desserré");
+  const radiator = card([heater], heater.label), belongings = card([clutter], clutter.label);
+  const issues = [tap, radiator, belongings];
+  const preview = planRoomIssue(candidate, visit, issues);
+  assert.deepEqual(preview.conflicts, []);
+  assert.deepEqual(preview.relatedIssueIds, [radiator.id, belongings.id]);
+  const issueLinks = [heater, clutter].map((item, i) => ({ key: item.key, findingKey: item.key, issueId: issues[i + 1].id, expectedVersion: 1, outcome: "present" as const }));
+  const incorrect = { ...visit, issueLinks: [{ ...issueLinks[0], issueId: tap.id, findingKey: "taps" }, issueLinks[1]] };
+  assert.throws(() => prepareRoomInspection(candidate, incorrect, issues), /ne correspond pas/);
+  const result = prepareRoomInspection(candidate, { ...visit, issueLinks }, issues);
+  assert.equal(result.issue, undefined);
+  assert.deepEqual(result.updatedIssues.map(issue => issue.id), [radiator.id, belongings.id]);
+
+  // An older combined card can identify a heater with a different checklist key.
+  const legacyHeater = { ...heater, key: "damage" };
+  const mixed = card([tap.roomFindings![0], legacyHeater], "Chauffage caché et robinet desserré");
+  assert.deepEqual(linkableRoomIssueFindings(mixed, heater), [legacyHeater]);
+  assert.equal(planRoomIssue(candidate, visit, [mixed, belongings]).associations[0].findingKey, "damage");
+  const wrongItem = { ...visit, issueLinks: [{ ...issueLinks[0], issueId: mixed.id, findingKey: "taps" }, issueLinks[1]] };
+  assert.throws(() => prepareRoomInspection(candidate, wrongItem, [mixed, belongings]), /ne correspond pas/);
+});
+
+test("two present conditions in one free-text report are recorded with a single issue history event", () => {
+  const record = inspection(["room_clutter", "radiator_clear"]);
+  const candidate = roomIssue(record)!;
+  const combined = { ...candidate, id: createId(), roomFindings: undefined, description: "Chambre encombrée et chauffage caché." };
+  record.issueLinks = candidate.roomFindings!.map(finding => ({ key: finding.key, issueId: combined.id, outcome: "present", expectedVersion: combined.version }));
+  const result = prepareRoomInspection(candidate, record, [combined]);
+  assert.equal(result.issue, undefined);
+  assert.equal(result.updatedIssues.length, 1);
+  assert.equal(result.updatedIssues[0].history.filter(event => event.inspectionId === record.id).length, 1);
+  assert.deepEqual(record.relatedIssueIds, [combined.id]);
+  assert.equal(record.issueAssociations?.length, 2);
 });
 
 test("a minibar never creates an automatic issue and can follow an explicitly linked repair", () => {

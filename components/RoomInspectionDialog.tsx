@@ -7,8 +7,7 @@ import { createId, displayDate, issueResponsible, statuses, today, type Issue } 
 import { cafardCases, cafardStatusLabels, cafardTreatmentReminder } from "@/lib/cafards";
 import { cafardSeedsFromIssues } from "@/lib/cafardsLegacy";
 import { normalizeRoomDraft, roomCheckResultLabel, roomChecks, roomEntrySchema, roomFindings, roomIssue, roomProblems, type RoomCheckKey, type RoomEntry } from "@/lib/rooms";
-import { isCafardTechnicalReport, matchesRoomFinding, openRoomIssues, planRoomIssue } from "@/lib/roomIssueMatching";
-import { issueFindingStatus } from "@/lib/issueFindings";
+import { canLinkRoomIssue, isCafardTechnicalReport, linkableRoomIssueFindings, matchesRoomFinding, openRoomIssues, planRoomIssue } from "@/lib/roomIssueMatching";
 import { problemPresetsForCheck } from "@/lib/problemPresets";
 import { preparePhotos } from "@/lib/photos";
 import { useDeviceDraft } from "@/lib/useDeviceDraft";
@@ -25,10 +24,11 @@ type Draft = Omit<RoomEntry, "condition" | "carpet"> & {
 const sections = ["Équipements", "État et ménage", "Résumé"];
 const equipmentChecks = roomChecks.filter(check => check.key !== "room_clutter");
 type IssueLink = NonNullable<RoomEntry["issueLinks"]>[number];
-function linkToIssue(key: string, issue: Issue, outcome: "present" | "resolved"): IssueLink {
-  const open = issue.roomFindingsActive === false ? [] : issue.roomFindings?.filter(finding => issueFindingStatus(issue, finding) !== "resolu") || [];
-  const target = open.length === 1 ? open[0] : open.find(finding => finding.key === key);
-  return { key, issueId: issue.id, outcome, expectedVersion: issue.version, ...(target ? { findingKey: target.key } : {}) };
+type Finding = NonNullable<Issue["roomFindings"]>[number];
+function linkToIssue(finding: Finding, issue: Issue, outcome: "present" | "resolved", suggestedKey?: string): IssueLink {
+  const eligible = linkableRoomIssueFindings(issue, finding);
+  const target = eligible.length === 1 ? eligible[0] : eligible.find(item => item.key === (suggestedKey || finding.key));
+  return { key: finding.key, issueId: issue.id, outcome, expectedVersion: issue.version, ...(target ? { findingKey: target.key } : {}) };
 }
 function rememberedActor() { try { return localStorage.getItem("room-inspector") || ""; } catch { return ""; } }
 const yesNo = [{ value: "oui", label: "Oui" }, { value: "non", label: "Non" }] as const;
@@ -64,11 +64,6 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const [showIssues, setShowIssues] = useState(false);
   const [repairKey, setRepairKey] = useState("");
   const [showMetadata, setShowMetadata] = useState(false);
-  // After the first attempt, errors describe the current draft, including conditional fields.
-  const validation = validationAttempted && value
-    ? roomEntrySchema.safeParse({ ...value, inspectedAt: value.inspectedAt || undefined }) : undefined;
-  const validationProblems = validation && !validation.success ? validation.error.issues : [];
-  const invalid = validationProblems.map(issue => issue.path.join("."));
   const known = useMemo(() => openRoomIssues(issues, room).filter(issue => !isCafardTechnicalReport(issue, "historical")), [issues, room]);
   const cafardCase = useMemo(() => cafardCases(history.filter(record => record.room === room), events.filter(event => event.room === room), cafardSeedsFromIssues(issues).filter(seed => seed.room === room))[0], [history, events, issues, room]);
   const cafardReminder = cafardCase ? cafardTreatmentReminder(cafardCase, day) : null;
@@ -83,14 +78,16 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const initialPlan = value && planRoomIssue(candidate, value, issues);
   const links = (value?.issueLinks || []).map(link => {
     const issue = !link.outcome && known.find(item => item.id === link.issueId);
-    return issue ? linkToIssue(link.key, issue, "present") : link;
+    const finding = findings.find(item => item.key === link.key);
+    return issue && finding && canLinkRoomIssue(issue, finding) ? linkToIssue(finding, issue, "present") : link;
   });
   // Freeze each suggested target and the version displayed at confirmation.
   // The server must detect a later edit even when the text still matches.
   for (const association of initialPlan?.associations || []) {
     if (association.source !== "existing" || links.some(link => link.key === association.key)) continue;
     const issue = known.find(item => item.id === association.issueId);
-    if (issue) links.push(linkToIssue(association.key, issue, "present"));
+    const finding = findings.find(item => item.key === association.key);
+    if (issue && finding) links.push(linkToIssue(finding, issue, "present", association.findingKey));
   }
   const plan = value && planRoomIssue(candidate, { ...value, issueLinks: links }, issues);
   const resolved = links.filter(link => link.outcome === "resolved");
@@ -104,6 +101,10 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const needsIssueChoice = !!plan?.requiresChoice.length;
   const issuePlanError = plan?.conflicts[0] || (role !== "direction" && resolved.length
     ? "Seule la direction peut confirmer une résolution. Retirez la résolution pour transmettre ce contrôle avec vos observations." : undefined);
+  const validation = validationAttempted && value
+    ? roomEntrySchema.safeParse({ ...value, schemaVersion: 7, issueLinks: links, inspectedAt: value.inspectedAt || undefined }) : undefined;
+  const validationProblems = validation && !validation.success ? validation.error.issues : [];
+  const invalid = validationProblems.map(issue => issue.path.join("."));
   const invalidField = (field: string) => invalid.some(item => item === field || item.startsWith(field + "."));
   const fieldMessage = (field: string) => validationProblems.find(problem => problem.path.join(".") === field)?.message;
   function goStep(next: number) { setStep(next); content.current?.scrollTo({ top: 0 }); }
@@ -223,7 +224,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       {!value ? <Typography>Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy || compressing} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>
         <Stack spacing={2}>
           {known.length > 0 && <Box>
-            <Button color="warning" onClick={() => setShowIssues(!showIssues)} aria-expanded={showIssues}>{known.length} problème(s) technique(s) déjà signalé(s)</Button>
+            <Button color="warning" onClick={() => setShowIssues(!showIssues)} aria-expanded={showIssues}>{known.length} {known.length === 1 ? "signalement ouvert" : "signalements ouverts"} dans cette chambre</Button>
             {showIssues && <Stack spacing={1}>{known.map(issue => <Alert key={issue.id} severity="warning" icon={false}><strong>{issue.title}</strong><Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>{issue.description}</Typography><Typography variant="caption">{statuses[issue.status]} · {issueResponsible(issue) || "Non attribuée"}</Typography></Alert>)}</Stack>}
           </Box>}
           {cafardCase && <Alert severity={cafardCase.status === "resolu" ? "success" : cafardReminder?.due ? "warning" : "info"}>
@@ -323,31 +324,33 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
               const repair = resolutionRows.includes(finding.key);
               const optional = optionalRows.some(row => row.key === finding.key);
               const needsChoice = !!plan?.requiresChoice.includes(finding.key);
-              const linked = known.find(issue => issue.id === link?.issueId);
-              const unavailable = !!explicit && !known.some(issue => issue.id === explicit);
-              const options = [...matching, ...known.filter(issue => !matching.some(candidate => candidate.id === issue.id))];
+              const options = [...matching, ...known.filter(issue => !matching.includes(issue) && canLinkRoomIssue(issue, finding))];
+              const linked = options.find(issue => issue.id === link?.issueId);
+              const unavailable = !!explicit && !linked;
               const checkLabel = roomChecks.find(item => item.key === finding.key)?.label || finding.label;
-              const openFindings = linked?.roomFindings?.filter(item => issueFindingStatus(linked, item) !== "resolu") || [];
+              const openFindings = linked ? linkableRoomIssueFindings(linked, finding) : [];
+              const selectedFinding = openFindings.find(item => item.key === link?.findingKey);
               return <Stack key={finding.key} spacing={1.5} sx={{ p: 1.5, bgcolor: "action.hover", borderRadius: 2 }}>
                 <Typography sx={{ fontWeight: 700 }}>{finding.label}</Typography>
                 <Typography variant="caption" color={linked ? "warning.main" : needsChoice || unavailable ? "error.main" : "text.secondary"}>
-                  {linked ? `Déjà signalé : ${linked.title} · aucun doublon` : needsChoice ? "Choix du suivi nécessaire" : unavailable ? "Le suivi choisi n’est plus disponible." : repair ? "Choisissez la fiche à résoudre." : optional ? "Constat conservé dans le contrôle. Association facultative." : "Nouveau signalement"}
+                  {linked ? `Déjà signalé : ${linked.title} · aucun doublon` : needsChoice ? "Choix du suivi nécessaire" : unavailable ? "Vérifiez la fiche associée à ce constat." : repair ? "Choisissez la fiche à résoudre." : optional ? "Constat conservé dans le contrôle. Association facultative." : "Nouveau signalement"}
                 </Typography>
-                {(known.length > 0 || unavailable) && <TextField select fullWidth label={`Associer au problème existant · ${checkLabel}`} value={explicit || ""} disabled={busy || compressing}
-                  error={needsChoice || unavailable} helperText={linked ? linked.description !== finding.label && linked.description !== linked.title && linked.description : "Tous les problèmes techniques ouverts de cette chambre sont proposés."}
+                {(options.length > 0 || unavailable) && <TextField select fullWidth label={`Associer au problème existant · ${checkLabel}`} value={link?.issueId || ""} disabled={busy || compressing}
+                  error={needsChoice || unavailable} helperText={selectedFinding ? `Élément suivi · ${selectedFinding.label}`
+                    : linked && linked.description !== finding.label && linked.description !== linked.title ? linked.description : undefined}
                   onChange={event => {
-                    const issue = known.find(item => item.id === event.target.value);
-                    changeLink(finding.key, issue ? linkToIssue(finding.key, issue, repair ? "resolved" : "present") : undefined);
+                    const issue = options.find(item => item.id === event.target.value);
+                    changeLink(finding.key, issue ? linkToIssue(finding, issue, repair ? "resolved" : "present") : undefined);
                   }}
                   sx={{ "& .MuiSelect-select": { whiteSpace: "normal", overflowWrap: "anywhere" } }}>
-                  <MenuItem value="" sx={{ whiteSpace: "normal" }}>{repair ? "Aucune résolution" : optional ? "Conserver uniquement dans le contrôle" : needsChoice ? "Choisir le problème déjà signalé" : linked && !explicit ? `Correspondance automatique : ${linked.title}` : "Nouveau problème, aucune fiche sélectionnée"}</MenuItem>
-                  {unavailable && <MenuItem value={explicit} disabled>Ancien suivi indisponible · choisissez une fiche</MenuItem>}
+                  {(!linked || explicit) && <MenuItem value="" sx={{ whiteSpace: "normal" }}>{repair ? "Aucune résolution" : optional ? "Conserver uniquement dans le contrôle" : needsChoice ? "Choisir le problème déjà signalé" : matching.length ? "Reprendre la suggestion du contrôle" : "Nouveau problème, aucune fiche sélectionnée"}</MenuItem>}
+                  {unavailable && <MenuItem value={explicit} disabled>Association précédente à corriger</MenuItem>}
                   {options.map(issue => <MenuItem key={issue.id} value={issue.id} sx={{ whiteSpace: "normal", overflowWrap: "anywhere", maxWidth: "calc(100vw - 32px)" }}>
                     {issue.title} · {statuses[issue.status]}{matching.some(candidate => candidate.id === issue.id) ? " · Correspondance possible" : ""}
                   </MenuItem>)}
                 </TextField>}
                 {linked && link && <>
-                  {linked.roomFindingsActive !== false && (linked.roomFindings?.length || 0) > 1 && <TextField select label={`Élément de la fiche · ${checkLabel}`}
+                  {(openFindings.length > 1 || (openFindings.length === 1 && !selectedFinding)) && <TextField select label={`Élément de la fiche · ${checkLabel}`}
                     value={openFindings.some(item => item.key === link.findingKey) ? link.findingKey : ""} required
                     onChange={event => changeLink(finding.key, { ...link, expectedVersion: linked.version, findingKey: event.target.value })}>
                     {openFindings.map(item => <MenuItem key={item.key} value={item.key} sx={{ whiteSpace: "normal" }}>{item.label}</MenuItem>)}
@@ -355,13 +358,13 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
                   {role === "direction"
                     ? <QuickChoice label={`État après contrôle · ${checkLabel}`} value={link.outcome || "present"}
                       options={[{ value: "present", label: "Toujours présent", color: "warning" }, { value: "resolved", label: "Résolu", color: "success" }]}
-                      onChange={outcome => changeLink(finding.key, { ...linkToIssue(finding.key, linked, outcome), ...link, outcome, expectedVersion: linked.version })} />
+                      onChange={outcome => changeLink(finding.key, { ...link, outcome, expectedVersion: linked.version })} />
                     : <Typography variant="body2">{repair ? "Résolution à confirmer par la direction." : "Toujours présent · la fiche reste ouverte."}</Typography>}
                   {link.expectedVersion !== undefined && link.expectedVersion !== linked.version &&
                     <Button variant="outlined" onClick={() => changeLink(finding.key, { ...link, expectedVersion: linked.version })}>Confirmer la version actuelle de cette fiche</Button>}
                   <TextField label={`Observation sur la fiche · ${checkLabel}`} value={link.note || ""} multiline
                     slotProps={{ htmlInput: { maxLength: 1000 } }}
-                    onChange={event => changeLink(finding.key, { ...linkToIssue(finding.key, linked, repair ? "resolved" : "present"), ...link, note: event.target.value })} />
+                    onChange={event => changeLink(finding.key, { ...link, note: event.target.value })} />
                 </>}
               </Stack>;
             })}
