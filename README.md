@@ -36,7 +36,11 @@ Le résumé permet de relire les associations avant l’envoi. L’historique et
 
 [![Écran du checklist : chambres proposées, contrôles en retard et filtres](docs/images/demo-checklist.png)](docs/images/demo-checklist.png)
 
-**Ce que vous voyez :** les chambres à vérifier, celles en retard, la recherche par numéro et les raccourcis pour continuer la tournée. Les contrôles déjà effectués sont conservés dans l'historique.
+Pour chaque étage, la checklist indique combien de chambres de la tournée ont reçu un contrôle complet dans l’intervalle choisi. Sélectionnez un étage pour retrouver celles qui restent à couvrir. La tournée commence par les chambres sans contrôle complet, puis suit les échéances les plus anciennes. Une visite partielle reste à terminer et laisse passer les autres chambres à visiter ce jour-là.
+
+Dans **Imprimer le checklist (PDF)**, la **Feuille de tournée du jour** reprend les chambres restantes dans l’ordre proposé, avec une ligne pour noter chaque passage. Les chambres libres ou en travaux sont accessibles pour une visite ponctuelle. Une nouvelle fiche **Séjours** ou une correction manuelle de l’occupation met à jour la liste des chambres de la tournée.
+
+Dans le formulaire **Équipements**, **État du mobilier et des équipements** permet de consigner un défaut et de préciser quel élément demande une réparation.
 
 ### 2. Une occupation compréhensible au premier regard
 
@@ -72,12 +76,6 @@ Saisissez tout ou partie d’un nom dans la recherche pour retrouver la chambre 
 
 Dans **Rapports**, choisissez un jour ou un mois, puis le contenu du PDF. Vous pouvez isoler les **problèmes techniques**, les **chambres encombrées** ou les **problèmes résolus**. Le **rapport complet** réunit les problèmes encore à traiter à la fin de la période et ceux résolus pendant celle-ci. Les photos des visites liées à un même signalement sont regroupées.
 
-### 7. Les situations de sécurité sont signalées clairement
-
-[![Checklist d'une chambre : radiateur libre ou caché](docs/images/demo-securite.png)](docs/images/demo-securite.png)
-
-**Ce que vous voyez :** le contrôle du radiateur, avec les réponses **Libre** ou **Caché**. Un radiateur obstrué constitue une situation à sécuriser sans attendre : l'application le signale comme une **priorité urgente**, distincte du suivi habituel à quatre jours pour un mauvais état général.
-
 ---
 
 ## Tout le suivi d'un hôtel au même endroit
@@ -101,7 +99,7 @@ Dans **Rapports**, choisissez un jour ou un mois, puis le contenu du PDF. Vous p
 - **Une information partagée :** les collègues peuvent consulter le même suivi et voir les dernières mises à jour enregistrées.
 - **Moins de doublons :** un défaut déjà signalé peut être réutilisé dans un nouveau contrôle au lieu de créer une autre fiche.
 - **Un historique utile :** dates, personnes ayant enregistré les actions, observations et photos permettent de comprendre ce qui s'est passé.
-- **Priorités de sécurité :** les radiateurs encombrés restent signalés jusqu'à une nouvelle vérification indiquant qu'ils sont dégagés. Les chambres en mauvais état général reviennent dans la rotation après quatre jours.
+- **Suivi des chambres en mauvais état.** Une nouvelle visite est proposée après quatre jours. Un radiateur signalé comme caché reste consultable dans les problèmes techniques.
 - **Un mode sombre :** pour une lecture plus confortable selon les conditions de travail.
 - **En cas de coupure réseau :** une saisie peut rester en attente sur l'appareil et être envoyée au retour de la connexion. L'interface distingue clairement une saisie **en attente** d'un enregistrement **confirmé**.
 

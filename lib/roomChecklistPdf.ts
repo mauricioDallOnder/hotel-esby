@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import type { RoomRotationDetail } from "./roomRotation";
 import { displayDate, statuses, today } from "./domain";
 import {
   applianceCleaningLabels, carpetLabels, cleaningText, conditionLabels,
@@ -11,6 +12,7 @@ import {
 type Record = RoomEntry | RoomInspection;
 type Options = { hotelName: string; date?: string } & (
   | { mode: "blank" }
+  | { mode: "tour"; tour: RoomRotationDetail[] }
   | { mode: "latest"; selectedRooms: string[]; history: Record[]; blockedIds?: string[] }
 );
 
@@ -51,6 +53,31 @@ function conditionAnswers(record: Record) {
 /** A printable form or the latest available inspection for each selected room. */
 export function buildRoomChecklist(options: Options) {
   const date = options.date || today();
+  if (options.mode === "tour") {
+    if (!options.tour.length) throw new Error("Aucune chambre restante dans la tournée du jour.");
+    const doc = new jsPDF({ orientation: "portrait", format: "a4", compress: true });
+    doc.setProperties({ title: "Tournée des chambres", author: options.hotelName });
+    autoTable(doc, {
+      margin: { top: 31, bottom: 18, left: margin, right: margin },
+      head: [["Ordre", "Chambre", "Dernier contrôle complet", "Échéance", "Passage / observations"]],
+      body: options.tour.map((item, i) => [
+        i + 1, item.room, item.lastComplete ? displayDate(item.lastComplete) : "Premier contrôle",
+        item.dueOn ? displayDate(item.dueOn) : "À effectuer", "",
+      ]),
+      theme: "grid",
+      styles: { fontSize: 10, cellPadding: 2, minCellHeight: 10, valign: "middle" },
+      headStyles: { fillColor: [21, 63, 55] },
+      columnStyles: { 4: { cellWidth: 58 } },
+      willDrawPage: () => {
+        doc.setFont("helvetica", "bold").setFontSize(16).text("Tournée des chambres", margin, 15);
+        doc.setFont("helvetica", "normal").setFontSize(10).text(`${options.hotelName} · ${displayDate(date)}`, margin, 23);
+      },
+      didDrawPage: ({ pageNumber }) => {
+        doc.setFontSize(9).text(String(pageNumber), 196, 287, { align: "right" });
+      },
+    });
+    return doc;
+  }
   const selected = options.mode === "blank" ? [""] : rooms.filter(room => options.selectedRooms.includes(room));
   if (!selected.length) throw new Error("Aucune chambre sélectionnée. Modifiez les filtres ou choisissez une fiche vierge.");
   const latest = latestRoomRecords(options.mode === "latest" ? options.history.filter(record => record.date <= date) : []);
@@ -210,5 +237,7 @@ export function buildRoomChecklist(options: Options) {
 
 export function downloadRoomChecklist(options: Options) {
   const doc = buildRoomChecklist(options);
-  doc.save(options.mode === "blank" ? "checklist-vierge.pdf" : `checklist-chambres-${options.date || today()}.pdf`);
+  const date = options.date || today();
+  const filenames = { blank: "checklist-vierge.pdf", latest: `checklist-chambres-${date}.pdf`, tour: `tournee-chambres-${date}.pdf` };
+  doc.save(filenames[options.mode]);
 }

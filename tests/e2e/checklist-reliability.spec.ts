@@ -27,7 +27,7 @@ test("chambre 323 · a repaired toilet and an obstructed radiator are confirmed 
   const dialog = page.getByRole("dialog");
   const answer = (label: string, name: string) => dialog.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name, exact: true }).click();
   await dialog.getByRole("button", { name: /les équipements restants sont OK/ }).click();
-  await answer("Rien de cassé", "OK");
+  await answer("État du mobilier et des équipements", "OK");
   await answer("Chauffage / radiateur", "Caché");
   await dialog.getByRole("button", { name: "Continuer · État et ménage" }).click();
   await answer("Chambre occupée", "Occupée");
@@ -40,10 +40,10 @@ test("chambre 323 · a repaired toilet and an obstructed radiator are confirmed 
   await dialog.getByRole("button", { name: "Continuer · Résumé" }).click();
   await dialog.getByLabel(/^Inspecteur\s*\*?$/).fill("Mauricio test");
   await dialog.getByRole("combobox", { name: "Associer une réparation effectuée" }).click();
-  await page.getByRole("option", { name: "Rien de cassé", exact: true }).click();
-  await dialog.getByRole("combobox", { name: "Associer au problème existant · Rien de cassé" }).click();
+  await page.getByRole("option", { name: "État du mobilier et des équipements", exact: true }).click();
+  await dialog.getByRole("combobox", { name: "Associer au problème existant · État du mobilier et des équipements" }).click();
   await page.getByRole("option", { name: /^Chasse d’eau cassée/ }).click();
-  await dialog.getByLabel("Observation sur la fiche · Rien de cassé").fill("Mécanisme remis en place et testé.");
+  await dialog.getByLabel("Observation sur la fiche · État du mobilier et des équipements").fill("Mécanisme remis en place et testé.");
   await dialog.locator('input[type="file"][multiple]').setInputFiles({ name: "visite.png", mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64") });
   await expect(dialog.getByAltText("Photo du contrôle 1")).toBeVisible();
@@ -55,7 +55,7 @@ test("chambre 323 · a repaired toilet and an obstructed radiator are confirmed 
   expect(response.status(), await response.text()).toBe(200);
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("article", { name: "Chambre 323", exact: true })).toContainText("1 problème technique");
-  await expect(page.getByRole("alert", { name: "Priorités incendie" })).toBeVisible();
+  await expect(page.getByRole("alert", { name: "Priorités incendie" })).toHaveCount(0);
   const after = await state(page);
   expect(after.issues).toHaveLength(2);
   expect(after.roomInspections).toHaveLength(1);

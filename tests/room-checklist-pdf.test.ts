@@ -29,6 +29,20 @@ function pageText(doc: ReturnType<typeof buildRoomChecklist>) {
   });
 }
 
+test("the route sheet keeps the proposed visit order and fits a normal day on one page", () => {
+  const tour = ["331", "217", "102", "231", "218", "302", "120", "121", "232", "304", "116", "105", "101", "210", "211"]
+    .map((room, i) => ({room, reason: i ? "overdue" as const : "never" as const, lastComplete: i ? "2026-10-12" : undefined, dueOn: i ? "2026-10-19" : undefined}));
+  const doc = buildRoomChecklist({ hotelName: "Hôtel test", date, mode: "tour", tour });
+  const pages = pageText(doc);
+  assert.equal(pages.length, 1);
+  assert.ok(pages[0].includes("20/10/2026"));
+  assert.ok(pages[0].includes("Premier contrôle"));
+  assert.ok(pages[0].includes("19/10/2026"));
+  const printedRooms = pages[0].match(/\b\d{3}\b/g);
+  assert.deepEqual(printedRooms, tour.map(item => item.room));
+  assert.throws(() => buildRoomChecklist({hotelName: "Hôtel test", mode: "tour", tour: []}), /Aucune chambre/);
+});
+
 test("a blank checklist fits one portrait A4 page and includes every room inspection point", () => {
   const doc = buildRoomChecklist({ hotelName: "Hôtel test", date, mode: "blank" });
   assert.match(doc.output(), /^%PDF/);

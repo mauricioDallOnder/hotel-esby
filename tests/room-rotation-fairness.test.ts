@@ -94,7 +94,37 @@ test("an incomplete poor first visit remains visible for normal coverage while i
   assert.deepEqual(rotation.neverRooms, ["101", "102"]);
   assert.deepEqual(rotation.priorityRooms, []);
   assert.equal(rotation.byRoom.get("101")?.followUpOn, "2026-11-15");
-  assert.deepEqual(rotation.plan, ["101", "102"]);
+  assert.deepEqual(rotation.partialToday, ["101"]);
+  assert.deepEqual(rotation.plan, ["102", "101"]);
+});
+
+test("a partial visit lets other due rooms go first and stays available to finish after their first pass", () => {
+  const day = "2026-11-11", scope = ["101", "102", "103"];
+  const history = [inspection("101", day, "bon", true), inspection("102", "2026-10-01")];
+  const rotation = roomRotation(history, day, 3, 7, [], scope);
+  assert.deepEqual(rotation.plan, ["103", "102", "101"]);
+  assert.deepEqual(rotation.done, []);
+  const finished = roomRotation([...history, inspection("103", day), inspection("102", day)], day, 3, 7, [], scope);
+  assert.deepEqual(finished.plan, ["101"]);
+  assert.deepEqual(finished.partialToday, ["101"]);
+  const allDone = roomRotation([...history, ...scope.map(room => inspection(room, day))], day, 3, 7, [], scope);
+  assert.deepEqual(allDone.partialToday, []);
+  assert.deepEqual(allDone.done, scope);
+  assert.deepEqual(allDone.plan, []);
+});
+
+test("an obstructed radiator is recorded normally without overriding the tour, quota or eligibility", () => {
+  const day = "2026-11-11", room = "114", record = inspection(room, day);
+  record.checks = record.checks.map(check => check.key === "radiator_clear" ? { ...check, result: "probleme" } : check);
+  const history = [record];
+  const today = roomRotation(history, day, 1, 7, [], ["101", room]);
+  assert.deepEqual(today.done, [room]);
+  assert.deepEqual(today.plan, []);
+  assert.deepEqual(today.priorityRooms, []);
+  const dueDay = addDays(day, 7);
+  assert.deepEqual(roomRotation(history, dueDay, 1, 7, [], ["101", room]).plan, ["101"]);
+  assert.deepEqual(roomRotation(history, dueDay, 1, 7, [room], [room]).plan, []);
+  assert.equal(roomRotation(history, dueDay, 1, 7, [], ["101"]).byRoom.has(room), false);
 });
 
 test("daily goal and postponement never remove the remaining due queue", () => {

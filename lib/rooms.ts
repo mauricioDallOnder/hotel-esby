@@ -16,7 +16,7 @@ export const roomChecks = [
   { key: "leaks", label: "Aucune fuite d’eau" },
   { key: "lights", label: "Éclairage fonctionnel" },
   { key: "smoke", label: "Détecteur de fumée fonctionnel" },
-  { key: "damage", label: "Rien de cassé" },
+  { key: "damage", label: "État du mobilier et des équipements" },
   { key: "window", label: "Fenêtre fonctionnelle" },
   { key: "bed", label: "Lit en bon état" },
   { key: "mattress", label: "Matelas en bon état" },
@@ -190,7 +190,7 @@ function quickChoiceRoomSchema<V extends 4 | 5 | 6>(version: V, requiredChecks: 
   // retain their original validation and payload, including empty notes.
   if (v.problemDetails !== undefined && v.checks.some(check => check.key === "damage" && check.result === "probleme") &&
     !detailKeys.has("damage") && !v.issueLinks?.some(link => link.key === "damage") && !v.notes.trim())
-    ctx.addIssue({ code: "custom", path: ["problemDetails"], message: "Choisissez ou décrivez ce qui est cassé, ou associez le problème déjà ouvert." });
+    ctx.addIssue({ code: "custom", path: ["problemDetails"], message: "Précisez le meuble ou l’équipement endommagé, ou associez le problème déjà signalé." });
 }).transform(v => ({ ...v,
   // Old servers must reject a command whose issue decisions they cannot apply.
   schemaVersion: version === 6 && v.issueLinks?.some(link => link.outcome) ? 7 as const : v.schemaVersion,

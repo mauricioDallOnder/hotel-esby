@@ -75,8 +75,8 @@ test("radiator Libre stays in the checklist while Caché creates one technical p
     await choose("Détecteur de fumée fonctionnel", "OK");
     if (repeated) {
       // An existing technical fault also leaves the general damage check for an individual answer.
-      await expect(page.getByRole("radiogroup", { name: "Rien de cassé", exact: true }).getByRole("radio", { checked: true })).toHaveCount(0);
-      await choose("Rien de cassé", "OK");
+      await expect(page.getByRole("radiogroup", { name: "État du mobilier et des équipements", exact: true }).getByRole("radio", { checked: true })).toHaveCount(0);
+      await choose("État du mobilier et des équipements", "OK");
     }
     if (answer === "Caché" && !repeated) {
       await radiator.scrollIntoViewIfNeeded();
@@ -211,8 +211,8 @@ test("quick controls include the smoke detector, preserve known faults and reuse
   await expect(page.getByRole("dialog").getByRole("combobox")).toHaveCount(0);
   await expect(page.getByRole("radiogroup", { name: "Ferme-porte (fermeture automatique)", exact: true }).getByRole("radio", { name: "OK", exact: true })).toHaveAttribute("aria-checked", "true");
   await choose(roomChecks.find(c => c.key === "taps")!.label, "Problème");
-  await expect(page.getByRole("radiogroup", { name: "Rien de cassé", exact: true }).getByRole("radio", { checked: true })).toHaveCount(0);
-  await choose("Rien de cassé", "OK");
+  await expect(page.getByRole("radiogroup", { name: "État du mobilier et des équipements", exact: true }).getByRole("radio", { checked: true })).toHaveCount(0);
+  await choose("État du mobilier et des équipements", "OK");
   await page.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   await choose("Chambre occupée", "Occupée"); await choose("État général de la chambre", "À revoir");
   await choose("Chambre encombrée d’affaires", "Non");

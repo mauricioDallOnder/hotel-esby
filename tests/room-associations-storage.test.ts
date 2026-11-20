@@ -68,7 +68,9 @@ test("323 commits the repaired toilet, obstructed heater and a new fault with on
   assert.deepEqual(after.issues.find(i => i.id === entry.id)?.roomFindings?.map(f => f.key), ["lights"]);
   assert.equal(after.issues.find(i => i.id === toilet)?.status, "resolu");
   assert.equal(after.issues.find(i => i.id === heater)?.status, "ouvert");
-  assert.equal(roomRotation([control], today()).plan[0], "323");
+  const rotation = roomRotation([control], today());
+  assert.ok(rotation.done.includes("323"));
+  assert.ok(!rotation.plan.includes("323"));
   assert.deepEqual(reportRows(after, "daily", today(), "resolved").map(row => row.issue.id), [toilet]);
   assert.deepEqual(new Set(reportRows(after, "daily", today(), "technical").map(row => row.issue.id)), new Set([heater, entry.id]));
   const heaterIssue = after.issues.find(i => i.id === heater)!;
