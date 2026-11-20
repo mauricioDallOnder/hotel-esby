@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, test, type Page } from "./fixtures";
-import type { Issue, State } from "../../lib/domain";
+import { today, type Issue, type State } from "../../lib/domain";
 import type { PendingEntry } from "../../lib/entryQueue";
 import { parseEntry, roomChecks, roomIssue, workEntrySchema, type Entry, type RoomEntry, type RoomInspection, type WorkEntry, type WorkEvent } from "../../lib/rooms";
 import { prepareRoomIssue, validateRoomIssuePlan } from "../../lib/roomIssueMatching";
@@ -71,6 +71,30 @@ async function fixture(page: Page, state: State, pending: PendingEntry[]) {
   await page.reload();
   return { writes, state };
 }
+
+test("the room card resumes today's blocked inspection with the answers already entered", async ({ page }) => {
+  const original: RoomEntry = {
+    type: "createRoomInspection", id: crypto.randomUUID(), schemaVersion: 7, room: "314", date: today(),
+    actor: "Réception", notes: "Encombrement de nouveau constaté", inspectedAt: new Date().toISOString(),
+    condition: "mauvais", occupied: true, cleaning: null, carpet: "ok", carpetNotes: "",
+    microwave: "non", microwaveCleaning: null, fridgeCleaning: "propre", bugs: "non",
+    checks: roomChecks.map(check => ({ key: check.key, result: check.key === "room_clutter" ? "probleme" : "ok" })),
+    photosData: [],
+  };
+  const control = await fixture(page, { issues: [], inspections: [], roomInspections: [] },
+    [{ entry: original, protocol: 2, attempted: true, blocked: true, error: "La fiche associée a changé." }]);
+  await page.goto("/checklist");
+  const room = page.getByRole("article", { name: "Chambre 314", exact: true });
+  await room.getByRole("button", { name: "Reprendre le contrôle de la chambre 314", exact: true }).click();
+  await page.getByRole("button", { name: "Corriger le contrôle", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /^Chambre 314/ });
+  await dialog.getByRole("button", { name: "2. État et ménage", exact: true }).click();
+  await expect(dialog.getByRole("radiogroup", { name: "Chambre encombrée d’affaires", exact: true })
+    .getByRole("radio", { name: "Oui", exact: true })).toHaveAttribute("aria-checked", "true");
+  await dialog.getByRole("button", { name: "3. Résumé", exact: true }).click();
+  await expect(dialog.getByLabel("Observations et problèmes constatés", { exact: true })).toHaveValue(original.notes);
+  expect(control.writes).toHaveLength(0);
+});
 
 test("a refused checklist reopens its full local contents and is atomically replaced after correction", async ({ page }) => {
   const resolved: Issue = { id: crypto.randomUUID(), version: 2, date: "2026-10-19", createdAt: "2026-10-19T10:00:00.000Z", updatedAt: "2026-10-21T10:00:00.000Z",

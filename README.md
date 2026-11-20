@@ -22,6 +22,8 @@ Fini les informations dispersées entre carnets, messages et tableaux : Hôtel C
 
 Si la chambre est encombrée et que le radiateur est caché, indiquez les deux constats. Dans le **Résumé**, chacun retrouve automatiquement sa fiche lorsqu’une seule correspondance précise existe. Vous pouvez alors **Enregistrer le contrôle**, même si une fiche de robinetterie reste ouverte dans cette chambre. Si plusieurs fiches conviennent au même constat, choisissez celle de l’équipement concerné.
 
+Si vous reprenez un brouillon d’un autre jour, choisissez la date de la visite. Pour un nouveau passage dans une chambre toujours encombrée, choisissez aujourd’hui et confirmez **Toujours présent** sur la fiche existante. Un contrôle complet sort alors de la tournée du jour et la fiche d’encombrement reste ouverte. Pour transmettre une ancienne visite, gardez sa date d’origine. Un contrôle effectué hors ligne garde lui aussi sa date lors de l’envoi.
+
 **Toujours présent** conserve le suivi ouvert. Avec l’accès **Direction**, **Résolu** consigne la réparation et le résultat OK de cet équipement. Par exemple, si la chasse d’eau fonctionne de nouveau mais que le radiateur reste caché, indiquez les deux résultats dans la même visite. La chambre reste prioritaire pour le radiateur.
 
 Le résumé permet de relire les associations avant l’envoi. L’historique et la fiche imprimée conservent l’état constaté lors de cette visite. En cas de coupure, le contrôle et ses photos restent en attente sur l’appareil. Si une fiche a changé entre-temps, ouvrez l’envoi à vérifier, relisez la fiche et confirmez votre choix pour reprendre la saisie.

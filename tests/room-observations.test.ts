@@ -41,10 +41,11 @@ test("room overviews ignore blocked and future controls while keeping the last a
 test("accepted offline controls appear once and a blocked replay cannot hide a saved control", () => {
   const record = saved(entry());
   const offline = entry({ room: "102", occupied: false });
-  const current = roomObservations([record], [{ entry: entry({ id: record.id }) }, { entry: offline }], day);
+  const current = roomObservations([record], [{ entry: entry({ id: record.id, date: "2026-10-28", occupied: false }) }, { entry: offline }], day);
   assert.equal(current.history.length, 2);
   assert.equal(current.latest.get("102")?.id, offline.id);
-  assert.deepEqual([...current.pendingIds].sort(), [record.id, offline.id].sort());
+  assert.equal(current.latest.get("101"), record);
+  assert.deepEqual([...current.pendingIds], [offline.id]);
   assert.equal(roomAvailability("102", [], current.latest.get("102")).free, true);
   const blockedReplay = roomObservations([record], [{ entry: entry({ id: record.id }), blocked: true }], day);
   assert.equal(blockedReplay.latest.get("101"), record);
