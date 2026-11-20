@@ -112,27 +112,17 @@ function typedFindingMatches(issue: Issue, finding: Finding) {
   return true;
 }
 
-export function matchesRoomFinding(issue: Issue, finding: Finding) {
-  issue = issueMatchingSnapshot(issue);
-  if (finding.problemType) {
-    if (issue.roomFindings?.length) return issue.roomFindings.some(item => {
-      if (!item.problemType) return typedFindingMatches({ ...issue, roomFindings: undefined }, finding);
-      return typedFindingMatches({ ...issue, problemType: item.problemType, title: "", description: findingText(item), roomFindings: undefined }, finding);
-    });
-    return typedFindingMatches(issue, finding);
-  }
+function matchesUnstructuredFinding(issue: Issue, finding: Finding) {
+  if (finding.problemType) return typedFindingMatches(issue, finding);
   if (finding.key === "damage") {
     if (meaningful(finding.description || ""))
       return sameManualProblem({ location: issue.location, title: "", description: finding.description! }, issue);
-    const clutterOnly = issue.roomFindings?.length
-      ? issue.roomFindings.every(item => item.key === "room_clutter" || item.problemType === "room_cluttered")
-      : issue.problemType === "room_cluttered";
     // "Rien de cassé : Problème" does not identify an object. It can suggest
     // existing room repairs for a human choice, but clutter is not a repair.
-    return !clutterOnly && !isCafardTechnicalReport(issue, "historical");
+    return issue.problemType !== "room_cluttered" && !isCafardTechnicalReport(issue, "historical");
   }
-  if (issue.roomFindings?.length) return issue.roomFindings.some(item => item.key === finding.key &&
-    (finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label)));
+  if (isRoomCondition(finding) && issue.problemType && issue.problemType !== "other")
+    return issue.problemType === (finding.key === "room_clutter" ? "room_cluttered" : "radiator_obstructed");
   const text = normalizeIssueText(`${issue.title || ""} ${issue.description || ""}`);
   if (finding.key === "room_clutter") return issue.problemType === "room_cluttered" || hasRoomClutter(text);
   // A heater fault is different from a heater hidden or obstructed by objects.
@@ -145,6 +135,36 @@ export function matchesRoomFinding(issue: Issue, finding: Finding) {
   if (finding.key === "fridge" && dirty && !/\b(panne|hs|fonction\w*|casse\w*|refroid\w*)\b/.test(text)) return false;
   if (finding.key === "observation") return normalizeIssueText(issue.description || "") === normalizeIssueText(finding.label);
   return keywords[finding.key]?.test(text) || false;
+}
+
+export function isRoomCondition(finding: Pick<Finding, "key">) {
+  return finding.key === "room_clutter" || finding.key === "radiator_clear";
+}
+
+/** A structured card may contain several independent faults. Its combined title/notes cannot identify an item. */
+export function matchingRoomIssueFindings(issue: Issue, finding: Finding): Finding[] {
+  return (issueMatchingSnapshot(issue).roomFindings || []).filter(item => {
+    if (!finding.problemType && item.key === finding.key && finding.key !== "damage")
+      return finding.key !== "observation" || normalizeIssueText(item.label) === normalizeIssueText(finding.label);
+    if (!finding.problemType && finding.key !== "damage" && !isRoomCondition(finding)) return false;
+    const type = item.problemType || (item.key === "room_clutter" ? "room_cluttered" : item.key === "radiator_clear" ? "radiator_obstructed" : undefined);
+    return matchesUnstructuredFinding({ ...issue, roomFindings: undefined, title: item.label, description: item.description || "", problemType: type }, finding);
+  });
+}
+
+export function matchesRoomFinding(issue: Issue, finding: Finding) {
+  if (issue.roomFindingsActive !== false && issue.roomFindings?.length)
+    return matchingRoomIssueFindings(issue, finding).length > 0;
+  return matchesUnstructuredFinding(issueMatchingSnapshot(issue), finding);
+}
+
+/** Keep manual equipment associations available for older, freely worded repair descriptions. */
+export function canLinkRoomIssue(issue: Issue, finding: Finding) {
+  return !isRoomCondition(finding) || matchesRoomFinding(issue, finding);
+}
+
+export function linkableRoomIssueFindings(issue: Issue, finding: Finding): Finding[] {
+  return isRoomCondition(finding) ? matchingRoomIssueFindings(issue, finding) : issueMatchingSnapshot(issue).roomFindings || [];
 }
 
 export type IssueCandidate = Pick<Issue, "location" | "title" | "description"> & Partial<Pick<Issue, "id" | "room" | "roomFindings" | "problemType" | "roomFindingsActive" | "distinctFromIssueIds" | "distinctReason" | "status">>;
@@ -321,10 +341,17 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
       continue;
     }
     const existing = issues.find(issue => issue.id === link.issueId);
+    const finding = findings.find(item => item.key === link.key) || { key: link.key, label: link.key };
     if (!existing || existing.status === "resolu" || issueRoom(existing) !== record.room)
       conflicts.push("Le problème associé a été résolu, déplacé ou supprimé. Actualisez puis choisissez un problème encore ouvert dans cette chambre.");
+    else if (!canLinkRoomIssue(existing, finding))
+      conflicts.push(`La fiche « ${existing.title} » ne correspond pas à ce constat. Retirez l’association ou choisissez la fiche du même constat.`);
     else if (link.outcome) {
       const target = targetFinding(existing, link);
+      const previousTarget = associations.find(item => item.issueId === existing.id && item.findingKey === target?.key);
+      // An older free-text report can describe both conditions without separate item IDs.
+      const sameLegacyReport = previousTarget && !target && !existing.roomFindings?.length && isRoomCondition(finding) &&
+        isRoomCondition(previousTarget) && !repairing && previousTarget.outcome === "present";
       if (existing.version !== link.expectedVersion) {
         conflicts.push(`La fiche « ${existing.title} » a changé. Vérifiez sa nouvelle version puis confirmez l’association.`);
       } else if (isCafardTechnicalReport(existing, "historical") || target?.key === "bugs") {
@@ -335,7 +362,9 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
         conflicts.push(`Choisissez l’élément concerné dans la fiche « ${existing.title} ».`);
       } else if (target && issueFindingStatus(existing, target) === "resolu") {
         conflicts.push(`L’élément « ${target.label} » est déjà résolu. Vérifiez l’association.`);
-      } else if (associations.some(item => item.issueId === existing.id && item.findingKey === target?.key)) {
+      } else if (target && isRoomCondition(finding) && !matchingRoomIssueFindings(existing, finding).some(item => item.key === target.key)) {
+        conflicts.push(`L’élément « ${target.label} » ne correspond pas à ce constat. Choisissez l’élément correspondant dans la fiche.`);
+      } else if (previousTarget && !sameLegacyReport) {
         conflicts.push(`Le même problème de la fiche « ${existing.title} » est associé à deux équipements. Vérifiez vos choix.`);
       } else {
         related.add(existing.id);
@@ -357,8 +386,8 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
   function associate(finding: Finding, existing: Issue) {
     related.add(existing.id);
     if (associations.some(item => item.key === finding.key)) return;
-    const targets = issueMatchingSnapshot(existing).roomFindings?.filter(item => item.key === finding.key);
-    const target = targets?.length === 1 ? targets[0] : undefined;
+    const targets = matchingRoomIssueFindings(existing, finding);
+    const target = targets.length === 1 ? targets[0] : undefined;
     associations.push({ key: finding.key, issueId: existing.id, ...(target ? { findingKey: target.key } : {}),
       label: target?.label || existing.title, source: "existing", outcome: "present", status: target ? issueFindingStatus(existing, target) : existing.status });
   }
@@ -373,7 +402,7 @@ export function planRoomIssue(candidate: Issue | undefined, record: RoomIssueRec
     }
     const matching = open.filter(issue => !isCafardTechnicalReport(issue, "historical") && matchesRoomFinding(issue, finding) &&
       !associations.some(item => item.outcome === "resolved" && item.issueId === issue.id && (!item.findingKey || item.findingKey === finding.key)));
-    if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && finding.problemType !== "room_cluttered" && !exactTypedDescription(matching[0], finding)) ||
+    if (matching.length > 1 || (matching.length === 1 && (matching[0].roomFindingsActive === false || (finding.problemType && !["room_cluttered", "radiator_obstructed"].includes(finding.problemType) && !exactTypedDescription(matching[0], finding)) ||
       (finding.key === "damage" && !finding.problemType && !meaningful(finding.description || ""))))) {
       requiresChoice.push(finding.key);
       conflicts.push(`Un problème similaire est déjà ouvert pour « ${getProblemPreset(finding.problemType)?.label || finding.label} ». Choisissez le signalement à réutiliser ou précisez un problème différent.`);

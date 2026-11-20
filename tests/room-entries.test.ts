@@ -282,8 +282,11 @@ test("Sheets commits room 323 and its issue updates together, and recovers a los
   process.env.GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/atomic-test/exec";
   process.env.GOOGLE_API_TOKEN = "test-token";
   let incompleteReceipt = false;
+  const actions: string[] = [];
   t.mock.method(globalThis, "fetch", async (_url: string | URL | Request, options?: RequestInit) => {
     const request = JSON.parse(String(options?.body));
+    actions.push(request.action);
+    if (request.action === "list") return Response.json(book.call(request));
     assert.equal(request.action, "commitRoomInspectionV5");
     const reply = book.call(request);
     if (reply.ok && incompleteReceipt) delete reply.data.updatedIssues;
@@ -305,6 +308,9 @@ test("Sheets commits room 323 and its issue updates together, and recovers a los
   entry.checks.find(check => check.key === "lights")!.result = "probleme";
   entry.issueLinks = [{ key: "damage", issueId: toilet, outcome: "resolved", expectedVersion: 1 },
     { key: "radiator_clear", issueId: heater, outcome: "present", expectedVersion: 1 }];
+  const wrong = { ...entry, issueLinks: [{ ...entry.issueLinks[1], issueId: toilet, findingKey: "taps" }] };
+  await assert.rejects(executeEntry(wrong), { code: 409, message: /ne correspond pas/ });
+  assert.deepEqual(actions, ["list"], "the app must catch an unrelated target before sending it to an older Apps Script");
   const record = { ...entry, version: 1, updatedAt: new Date().toISOString(), submissionHash: "e".repeat(64), photoIds: [], photoId: null };
   assert.equal(book.call({ action: "commitRoomInspectionV4", collection: "roomInspections", record, expectedVersion: 0 }).code, 400);
   book.failNextBatch("reject");

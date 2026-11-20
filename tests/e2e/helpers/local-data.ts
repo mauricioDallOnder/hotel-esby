@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Issue } from "../../../lib/domain";
 
 export type E2ELocalData = { directory: string; token: string };
 export const e2eDataMarker = ".hotel-e2e-owner.json";
@@ -44,7 +45,7 @@ export function prepareE2ELocalData(environment: Record<string, string | undefin
   return data;
 }
 
-export function resetE2ELocalData(data: E2ELocalData) {
+export function resetE2ELocalData(data: E2ELocalData, issues: Issue[] = []) {
   assertOwned(data);
   // Check every target before changing anything. Never follow a replacement symlink.
   for (const name of ["hotel.json", "laundry-notifications.json", "photos"]) {
@@ -61,7 +62,7 @@ export function resetE2ELocalData(data: E2ELocalData) {
   }
   const temporary = path.join(data.directory, `hotel.e2e-reset-${randomUUID()}.tmp`);
   try {
-    writeFileSync(temporary, JSON.stringify({ issues: [], inspections: [], roomInspections: [], workEvents: [], familyEvents: [], deletedFamilyEventIds: [] }), { flag: "wx", mode: 0o600 });
+    writeFileSync(temporary, JSON.stringify({ issues, inspections: [], roomInspections: [], workEvents: [], familyEvents: [], deletedFamilyEventIds: [] }), { flag: "wx", mode: 0o600 });
     renameSync(temporary, path.join(data.directory, "hotel.json"));
     rmSync(path.join(data.directory, "photos"), { recursive: true, force: true });
     rmSync(path.join(data.directory, "laundry-notifications.json"), { force: true });

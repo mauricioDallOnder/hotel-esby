@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "./fixtures";
-import type { State } from "../../lib/domain";
+import { today, type Issue, type State } from "../../lib/domain";
+import { prepareE2ELocalData, resetE2ELocalData } from "./helpers/local-data";
 
 const clutterLabel = "Chambre encombrée d’affaires";
 const photo = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
@@ -20,12 +21,13 @@ async function choose(dialog: Locator, label: string, answer: string) {
   await dialog.getByRole("radiogroup", { name: label, exact: true }).getByRole("radio", { name: answer, exact: true }).click();
 }
 
-async function prepareRoom(page: Page, room: string, actor: string, clutter?: "Oui" | "Non") {
+async function prepareRoom(page: Page, room: string, actor: string, clutter?: "Oui" | "Non", checkEquipment?: (dialog: Locator) => Promise<void>) {
   await page.getByRole("button", { name: `Contrôler la chambre ${room}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "J’ai vérifié : les équipements restants sont OK", exact: true }).click();
   // A known technical problem leaves this broad question for an individual check.
   await choose(dialog, "État du mobilier et des équipements", "OK");
+  if (checkEquipment) await checkEquipment(dialog);
   await dialog.getByRole("button", { name: "Continuer · État et ménage", exact: true }).click();
   const question = dialog.getByRole("radiogroup", { name: clutterLabel, exact: true });
   await expect(question.getByRole("radio")).toHaveCount(2);
@@ -128,4 +130,61 @@ test("mobile clutter controls reuse the open problem and Rapports exports all or
     ...[0, 1].map(index => `/api/photos/${repeated.id}?index=${index}&collection=roomInspections&v=2`),
   ];
   expect(photoRequests.map(url => new URL(url).pathname + new URL(url).search).sort()).toEqual(expectedRequests.sort());
+});
+
+test("room 117 saves the obstructed radiator and clutter with their own issues and leaves the old tap report untouched", async ({ page }) => {
+  const date = today();
+  function existingIssue(title: string, roomFindings: NonNullable<Issue["roomFindings"]>): Issue {
+    return {
+      id: crypto.randomUUID(), room: "117", location: "Chambre 117", title, description: title, roomFindings,
+      category: "Équipements", status: "ouvert", priority: "normale", version: 1, history: [],
+      date, createdAt: date + "T08:00:00.000Z", updatedAt: date + "T08:00:00.000Z", assignee: "Équipe de test",
+      reportedBy: "Équipe de test", photoId: null, photoIds: [],
+    };
+  }
+  const tap = existingIssue("Robinet de la salle de bains", [
+    { key: "taps", label: "Robinets fonctionnels : Problème", status: "ouvert" },
+    { key: "damage", label: "Rien de cassé : Problème", status: "ouvert" },
+  ]);
+  const heater = existingIssue("Radiateur caché ou encombré", [
+    { key: "radiator_clear", label: "Radiateur caché ou encombré", problemType: "radiator_obstructed" },
+  ]);
+  const clutter = existingIssue(clutterLabel, [
+    { key: "room_clutter", label: clutterLabel, problemType: "room_cluttered" },
+  ]);
+  resetE2ELocalData(prepareE2ELocalData(), [tap, heater, clutter]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.goto("/checklist");
+  const actor = "Visite de vérification 117";
+  const dialog = await prepareRoom(page, "117", actor, "Oui", async equipment => {
+    await choose(equipment, "Robinets fonctionnels", "OK");
+    await choose(equipment, "Chauffage / radiateur", "Caché");
+  });
+  for (const [label, issue] of [["Chauffage / radiateur", heater], [clutterLabel, clutter]] as const) {
+    const association = dialog.getByRole("combobox", { name: `Associer au problème existant · ${label}`, exact: true });
+    await expect(association).toContainText(issue.title);
+    await association.click();
+    await expect(page.getByRole("option", { name: new RegExp(tap.title) })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+  }
+  await saveRoom(page, dialog);
+  await page.reload();
+  const saved = await state(page);
+  expect(saved.issues).toHaveLength(3);
+  expect(saved.issues.find(issue => issue.id === tap.id)).toEqual(tap);
+  expect(saved.roomInspections).toHaveLength(1);
+  const inspection = saved.roomInspections![0];
+  expect(inspection.issueAssociations).toHaveLength(2);
+  for (const [key, issue] of [["radiator_clear", heater], ["room_clutter", clutter]] as const) {
+    expect(inspection.issueAssociations).toContainEqual(expect.objectContaining({ key, issueId: issue.id, findingKey: key, outcome: "present" }));
+    expect(saved.issues.find(record => record.id === issue.id)?.history.filter(event => event.inspectionId === inspection.id)).toHaveLength(1);
+  }
+  await page.getByRole("button", { name: "Historique de la chambre 117", exact: true }).click();
+  const history = page.getByRole("dialog");
+  await history.getByRole("button", { name: new RegExp(actor) }).click();
+  await history.getByRole("button", { name: "Afficher tous les points de contrôle", exact: true }).click();
+  await expect(history.locator('[data-result="bad"]').filter({ hasText: "Chauffage / radiateur : Caché" })).toBeVisible();
+  await expect(history.locator('[data-result="bad"]').filter({ hasText: clutterLabel + " : Oui" })).toBeVisible();
+  await expect(history.locator('[data-result="ok"]').filter({ hasText: "Robinets fonctionnels" })).toBeVisible();
 });

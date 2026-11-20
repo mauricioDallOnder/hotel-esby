@@ -6,7 +6,7 @@ import { occupancyImportSchema } from "./occupancyImport";
 import { today } from "./domain";
 import { planOccupancyImport, validateWorkEntry, validateWorkPredecessor } from "./work";
 import { commandOperation, hasCommandReceipt, isCommandReplay, stampCommandReceipt } from "./commandReceipt";
-import { prepareRoomInspection } from "./roomIssueMatching";
+import { isRoomCondition, prepareRoomInspection, validateRoomIssuePlan } from "./roomIssueMatching";
 import { hasInspectionUpdates } from "./roomInspectionReceipt";
 import { ReadCache } from "./readCache";
 import {
@@ -299,6 +299,16 @@ export async function executeEntry(input: Entry, legacy = false): Promise<EntryC
   
   if (storageMode() === "sheets") {
     try {
+      // Deployed V5 already checks explicit item IDs and versions under lock. Check
+      // legacy or cross-key condition links here too while older deployments are in use.
+      if (change.collection === "roomInspections" && change.record.issueLinks?.some(link =>
+        isRoomCondition(link) && (!link.outcome || link.findingKey !== link.key))) {
+        const state = await readState({ fresh: true });
+        if (!state.roomInspections?.some(stored => stored.id === entry.id)) {
+          const conflict = validateRoomIssuePlan(change.issue, change.record, state.issues);
+          if (conflict) throw new DomainError(conflict, 409);
+        }
+      }
       const protectedPredecessor = change.collection === "workEvents" && change.record.expectedPreviousEventId !== undefined;
       const action = change.collection === "roomInspections" ? change.record.schemaVersion === 7 ? "commitRoomInspectionV5"
         : (change.record.schemaVersion || 1) >= 6 ? "commitRoomInspectionV4" : "commitRoomInspectionV3"
