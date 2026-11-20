@@ -132,6 +132,4 @@ Les chronomètres de lingerie indiquent un **temps prévu** : ils ne commandent 
 
 **Déploiement des contrôles de chambre.** En mode Google Sheets, publier le script et activer le service Sheets v4 avant de mettre à jour l’application. [Procédure de publication et de reprise](docs/NOTES-TECHNIQUES.md#publication-de-la-synchronisation-des-contrôles-de-chambre)
 
-### Demander une modification
 
-Dans Codex, ouvrez le projet Hôtel Contrôle et décrivez le changement souhaité. La [skill de maintenance](.agents/skills/modificar-hotel-esby/SKILL.md) guide la modification et sa vérification. Chaque demande donne lieu à une pull request comprenant la mise à jour de ce README et le résultat des vérifications.
