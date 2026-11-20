@@ -25,7 +25,8 @@ import { mergeHotel } from "@/lib/mergeHotel";
 import { deviceStore } from "@/lib/deviceStore";
 import { EntriesProvider } from "./EntriesContext";
 import { LaundryNotificationsProvider } from "./LaundryNotificationsContext";
-import type { EntryChange } from "@/lib/rooms";
+import type { EntryChange, WorkEvent } from "@/lib/rooms";
+import type { OccupancyImport } from "@/lib/occupancyImport";
 import { roles, type Role } from "@/lib/roles";
 import { ThemeModeToggle } from "@/components/ThemeModeToggle";
 
@@ -41,6 +42,7 @@ type Context = Data & {
   cachedAt: string;
   refresh: (fresh?: boolean) => Promise<void>;
   readRecoveryState: () => Promise<State>;
+  importOccupancy: (batch: OccupancyImport) => Promise<void>;
   mutate: (command: Command) => Promise<Data>;
   logout: () => Promise<void>;
 };
@@ -234,6 +236,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       : { ...current, roomInspections: [change.record], issues: [...(change.updatedIssues || []), ...(change.issue ? [change.issue] : [])] }));
   }, []);
 
+  const importOccupancy = useCallback(async (batch: OccupancyImport) => {
+    const result = await request("/api/occupancy/import", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(batch),
+    });
+    const records: WorkEvent[] = result.records;
+    const expected = new Set(batch.rows.map(row => row.room));
+    if (!Array.isArray(records) || records.length !== expected.size ||
+        records.some(event => event.kind !== "roomAvailability" || event.occupancyImportId !== batch.id || !event.room || !expected.delete(event.room)))
+      throw new Error("Confirmation de l’import incomplète. Réessayez pour vérifier la même opération.");
+    setData(current => mergeHotel(current, { ...current, workEvents: records }));
+  }, [request]);
+
   // Recovery needs a successful live read, never the last cached snapshot or a
   // refresh that swallowed its error. Merge it for the machine cards as well.
   const readRecoveryState = useCallback(async (): Promise<State> => {
@@ -367,6 +381,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         cachedAt,
         refresh,
         readRecoveryState,
+        importOccupancy,
         mutate,
         logout,
       }}

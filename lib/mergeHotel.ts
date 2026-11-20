@@ -1,4 +1,5 @@
 import type { State } from "./domain";
+import { visibleWorkEvents } from "./work";
 
 function mergeRecords<R extends { id: string; version?: number }>(old: R[] = [], fresh: R[] = []): R[] {
   if (old === fresh) return old;
@@ -32,7 +33,7 @@ export function mergeHotel<T extends State & { mode: string }>(current: T, incom
     inspections: mergeRecords(current.inspections, incoming.inspections),
     deletedFamilyEventIds,
     familyEvents,
-    workEvents: mergeRecords(current.workEvents, incoming.workEvents),
+    workEvents: visibleWorkEvents(mergeRecords(current.workEvents, incoming.workEvents)),
     roomInspections: mergeRecords(current.roomInspections, incoming.roomInspections),
   };
   return Object.keys(merged).every(key => merged[key as keyof T] === current[key as keyof T]) ? current : merged;

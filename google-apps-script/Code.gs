@@ -71,6 +71,24 @@ function doPost(e) {
       const file = DriveApp.getFileById(photoIds[index]);
       return json_({ ok: true, data: { base64: Utilities.base64Encode(file.getBlob().getBytes()) } });
     }
+    if (input.action === 'importOccupancy') {
+      const rooms = ROOM_GROUPS.flatMap(group => group.rooms);
+      if (!Array.isArray(input.records) || !input.records.length || input.records.length > rooms.length ||
+          input.records.some(record => !record || !rooms.includes(record.room)))
+        throw requestError_('Liste de chambres invalide.');
+      lock = LockService.getScriptLock(); lock.waitLock(20000);
+      const plan = WorkLogic.planOccupancyImport(input.records, records_('workEvents'));
+      if (plan.error) return json_({ ok: false, code: 409, error: plan.error });
+      if (!plan.replay) {
+        const sheet = table_('workEvents');
+        const rows = plan.records.map(record => ({ values: recordRow_('workEvents', record, true)
+          .map(value => ({ userEnteredValue: { stringValue: String(value) } })) }));
+        Sheets.Spreadsheets.batchUpdate({ requests: [{ appendCells: {
+          sheetId: sheet.getSheetId(), rows, fields: 'userEnteredValue'
+        } }] }, SPREADSHEET_ID);
+      }
+      return json_({ ok: true, data: { records: plan.records } });
+    }
     if (input.action === 'deleteEntry') {
       if (input.collection !== 'familyEvents' || !/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(input.id || '')) throw requestError_('Suppression invalide.');
       lock = LockService.getScriptLock(); lock.waitLock(20000);
@@ -1218,6 +1236,8 @@ exports.validateWorkPredecessor = validateWorkPredecessor;
 exports.latestCafardObservationId = latestCafardObservationId;
 exports.validateWorkEntry = validateWorkEntry;
 exports.roomAvailability = roomAvailability;
+exports.visibleWorkEvents = visibleWorkEvents;
+exports.planOccupancyImport = planOccupancyImport;
 exports.dailyTasks = dailyTasks;
 exports.familyComments = familyComments;
 exports.roomVacancyLabels = { available: "Libre", works: "En travaux" };
@@ -1342,6 +1362,11 @@ function latestCafardObservationId(inspections, room) {
     return (latest === null || latest === void 0 ? void 0 : latest.id) || null;
 }
 function validateWorkEntry(entry, events, families, deletedFamilies = [], inspections = []) {
+    if ((entry.guestName !== undefined || entry.stayUntil !== undefined) &&
+        (entry.kind !== "roomAvailability" || entry.free !== false ||
+            (entry.guestName !== undefined && (typeof entry.guestName !== "string" || !entry.guestName.trim() || entry.guestName.length > 200)) ||
+            (entry.stayUntil !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(entry.stayUntil))))
+        return "Vérifiez le nom et la date du séjour : ces champs sont réservés aux chambres occupées.";
     if (entry.vacancyReason !== undefined && (entry.kind !== "roomAvailability" || entry.free !== true ||
         !["available", "works"].includes(entry.vacancyReason)))
         return "Précisez « Libre » ou « En travaux » uniquement pour une chambre non occupée.";
@@ -1377,6 +1402,41 @@ function roomAvailability(room, events, latestInspection) {
     const vacancyReason = free === true ? (manual === null || manual === void 0 ? void 0 : manual.vacancyReason) || "available" : undefined;
     return { free, vacancyReason,
         source: manual, revision: manual ? manual.expectedRevision + 1 : 0 };
+}
+/** Daily imports stay on the server; send the current room states and all manual receipts to devices. */
+function visibleWorkEvents(events) {
+    if (!events.some(event => event.occupancyImportId))
+        return events;
+    const latest = latestWork(events, "roomAvailability");
+    const visible = events.filter(event => { var _a; return !event.occupancyImportId || ((_a = latest.get(event.room)) === null || _a === void 0 ? void 0 : _a.id) === event.id; });
+    return visible.length === events.length ? events : visible;
+}
+/** Apply one checked roster to the same revision history as manual occupancy changes. */
+function planOccupancyImport(incoming, history) {
+    const first = incoming[0];
+    if (!(first === null || first === void 0 ? void 0 : first.occupancyImportId) || !first.submissionHash || new Set(incoming.map(row => row.room)).size !== incoming.length ||
+        incoming.some(row => row.kind !== "roomAvailability" || row.targetId !== row.room ||
+            (row.free === false ? (!row.guestName || !row.stayUntil || row.stayUntil < row.date || row.vacancyReason !== undefined)
+                : (row.free !== true || !row.vacancyReason || !["available", "works"].includes(row.vacancyReason) || row.guestName !== undefined || row.stayUntil !== undefined)) ||
+            row.occupancyImportId !== first.occupancyImportId || row.submissionHash !== first.submissionHash))
+        return { error: "La liste des chambres à importer est invalide." };
+    const previous = history.filter(event => event.occupancyImportId === first.occupancyImportId);
+    if (previous.length) {
+        if (previous.length !== incoming.length || previous.some(event => event.submissionHash !== first.submissionHash))
+            return { error: "Cette demande d’import existe avec un contenu différent." };
+        return { records: previous, replay: true };
+    }
+    const latest = latestWork(history, "roomAvailability");
+    const records = [];
+    for (const row of incoming) {
+        const current = latest.get(row.room);
+        if (((current === null || current === void 0 ? void 0 : current.id) || null) !== row.expectedPreviousEventId)
+            return { error: `Chambre ${row.room} : une modification a été enregistrée depuis l’aperçu. Actualisez puis vérifiez la fiche.` };
+        if (current && current.date > row.date)
+            return { error: `Chambre ${row.room} : une occupation plus récente est déjà enregistrée (${current.date}).` };
+        records.push({ ...row, expectedRevision: current ? current.expectedRevision + 1 : 0 });
+    }
+    return { records, replay: false };
 }
 function dailyTasks(events, date) {
     return [...latestWork(events, "dailyTask").values()].filter(t => !t.deleted && t.date === date)

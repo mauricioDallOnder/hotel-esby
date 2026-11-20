@@ -19,14 +19,16 @@ import { IssueDialog } from "@/components/IssueDialog";
 // import { dailyTasks } from "@/lib/work";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 import { useRoomObservations } from "@/lib/useRoomObservations";
-import { useState } from "react";
+import { roomAvailabilityCounts, roomAvailabilityView } from "@/lib/roomAvailabilityView";
+import { useMemo, useState } from "react";
 export default function DashboardPage() {
   const { issues, hotelName } = useAppContext();
   const [active, setActive] = useState<Issue | "new" | null>(null);
-  const { history, day: date } = useRoomObservations();
+  const { history, latest, day: date } = useRoomObservations();
   const pending = issues.filter((i) => i.status !== "resolu");
   const critical = pending.filter((i) => i.priority === "critique");
   const { events } = useWorkEvents();
+  const occupancy = useMemo(() => roomAvailabilityCounts(roomAvailabilityView(events, latest)), [events, latest]);
   const cafardChecks = cafardCases(history, events, cafardSeedsFromIssues(issues))
     .filter(record => cafardTreatmentReminder(record, date)?.due);
   // const daily = dailyTasks(events, date);
@@ -127,6 +129,18 @@ export default function DashboardPage() {
         <Button component={Link} href="/checklist" variant="outlined">Contrôler une chambre</Button>
         <Button component={Link} href="/familles" variant="outlined">Absences et départs des familles</Button>
       </Stack>
+      <Box component="section" aria-label="Occupation de l’hôtel">
+        <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", gap: 2, mb: 1 }}>
+          <Typography variant="h5" component="h2">Occupation de l’hôtel</Typography>
+          <Button component={Link} href="/occupation">Voir les chambres</Button>
+        </Stack>
+        <StatCards items={[
+          { label: "Chambres libres", value: occupancy.free },
+          { label: "Chambres occupées", value: occupancy.occupied },
+          { label: "Chambres en travaux", value: occupancy.works },
+          ...(occupancy.unknown ? [{ label: "Occupation non renseignée", value: occupancy.unknown }] : []),
+        ]} />
+      </Box>
       <StatCards
         items={[
           {

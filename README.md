@@ -44,6 +44,10 @@ Le résumé permet de relire les associations avant l’envoi. L’historique et
 
 **Ce que vous voyez :** une case cochée signifie **Occupée**. Si la chambre est vide, l'équipe choisit **Libre** (disponible) ou **En travaux** (indisponible) et peut ajouter une observation. Les filtres évitent de confondre une chambre vide avec une chambre prête à accueillir quelqu'un.
 
+Dans **Occupation des chambres**, sélectionnez la fiche Excel **Séjours** et vérifiez la date et les chambres dans l’aperçu avant de confirmer. Pour la journée du planning, une case vide indique une chambre libre. Le rouge uni et le rouge pointillé indiquent des travaux. Pour chaque chambre occupée, la fiche indique le nom de l’occupant et le dernier jour couvert par sa barre de séjour. Le tableau de bord reprend les totaux des chambres libres, occupées et en travaux.
+
+Saisissez tout ou partie d’un nom dans la recherche pour retrouver la chambre d’un occupant. La recherche accepte aussi le numéro de chambre. Après l’import, **Modifier le séjour** permet de corriger le nom ou la date. La case **Occupée** et le choix **Libre / En travaux** restent utilisables pour corriger la situation du jour.
+
 ### 3. La lingerie suivie machine par machine
 
 [![Écran Lingerie : lave-linge, sèche-linge et temps restants](docs/images/demo-lingerie.png)](docs/images/demo-lingerie.png)
@@ -130,6 +134,6 @@ Les chronomètres de lingerie indiquent un **temps prévu** : ils ne commandent 
 
 <sub>Hôtel Contrôle — présentation fonctionnelle. Les captures utilisent uniquement des données fictives. Pour les notes de maintenance et de déploiement destinées aux techniciens, voir le [dossier technique](docs/NOTES-TECHNIQUES.md).</sub>
 
-**Déploiement des contrôles de chambre.** En mode Google Sheets, publier le script et activer le service Sheets v4 avant de mettre à jour l’application. [Procédure de publication et de reprise](docs/NOTES-TECHNIQUES.md#publication-de-la-synchronisation-des-contrôles-de-chambre)
+**Déploiement des contrôles de chambre et de l’import des séjours.** En mode Google Sheets, publier la nouvelle version de `google-apps-script/Code.gs` avec le service Sheets v4 activé avant de mettre à jour l’application. L’import enregistre les occupations dans l’onglet existant **Suivi quotidien**. [Procédure de publication et de reprise](docs/NOTES-TECHNIQUES.md#publication-de-la-synchronisation-des-contrôles-de-chambre)
 
 
