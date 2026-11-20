@@ -16,7 +16,7 @@ Fini les informations dispersées entre carnets, messages et tableaux : Hôtel C
 
 ## En pratique : une journée, sans papier perdu
 
-**1. Le matin :** ouvrez **Checklist des chambres**. L'application propose une tournée en tenant compte des chambres jamais contrôlées, des contrôles en retard et des visites prioritaires. Les chambres libres et en travaux ne figurent pas dans la tournée normale.
+**1. Le matin**, ouvrez **Chambres**. La vue **Checklist** propose la tournée du jour en tenant compte des chambres jamais contrôlées, des contrôles en retard et des visites prioritaires. Les chambres libres et en travaux sont exclues de la tournée normale. En haut de l’écran, passez à **Occupation** pour retrouver un occupant ou actualiser la situation d’une chambre.
 
 **2. Pendant la visite :** choisissez des réponses simples (**OK**, **Problème**, **Oui**, **Non**), ajoutez une remarque et, si nécessaire, prenez jusqu'à **3 photos par contrôle**. Les problèmes techniques sont suivis sans multiplier les doublons.
 
@@ -48,7 +48,7 @@ Dans le formulaire **Équipements**, **État du mobilier et des équipements** p
 
 **Ce que vous voyez :** une case cochée signifie **Occupée**. Si la chambre est vide, l'équipe choisit **Libre** (disponible) ou **En travaux** (indisponible) et peut ajouter une observation. Les filtres évitent de confondre une chambre vide avec une chambre prête à accueillir quelqu'un.
 
-Dans **Occupation des chambres**, sélectionnez la fiche Excel **Séjours** et vérifiez la date et les chambres dans l’aperçu avant de confirmer. Pour la journée du planning, une case vide indique une chambre libre. Le rouge uni et le rouge pointillé indiquent des travaux. Pour chaque chambre occupée, la fiche indique le nom de l’occupant et le dernier jour couvert par sa barre de séjour. Le tableau de bord reprend les totaux des chambres libres, occupées et en travaux.
+Dans **Chambres → Occupation**, sélectionnez la fiche Excel **Séjours** et vérifiez la date et les chambres dans l’aperçu avant de confirmer. Pour la journée du planning, une case vide indique une chambre libre. Le rouge uni et le rouge pointillé indiquent des travaux. Pour chaque chambre occupée, la fiche indique le nom de l’occupant et le dernier jour couvert par sa barre de séjour. Le tableau de bord reprend les totaux des chambres libres, occupées et en travaux.
 
 Saisissez tout ou partie d’un nom dans la recherche pour retrouver la chambre d’un occupant. La recherche accepte aussi le numéro de chambre. Après l’import, **Modifier le séjour** permet de corriger le nom ou la date. La case **Occupée** et le choix **Libre / En travaux** restent utilisables pour corriger la situation du jour.
 
@@ -83,8 +83,7 @@ Dans **Rapports**, choisissez un jour ou un mois, puis le contenu du PDF. Vous p
 | Espace | À quoi sert-il ? |
 | --- | --- |
 | **Vue d'ensemble** | Repérer rapidement les informations utiles pour la journée. |
-| **Checklist des chambres** | Organiser les visites, consigner l'état du mobilier et des équipements, ajouter des photos et retrouver les contrôles. |
-| **Occupation des chambres** | Distinguer **Occupée**, **Libre** et **En travaux**, avec une observation facultative. |
+| **Chambres** | **Checklist** pour organiser les visites et retrouver les contrôles. **Occupation** pour importer les séjours, rechercher un occupant et mettre à jour les chambres occupées, libres ou en travaux. |
 | **Problèmes techniques** | Consulter les pannes et les réparations. Le filtre Cafards ouvre le suivi existant de chaque chambre. |
 | **État général de chambre** | Retrouver les remarques sur les chambres encombrées, y compris celles déjà enregistrées, avec leurs photos et leur historique. Pour ajouter un constat, cochez **Oui** à **Chambre encombrée d’affaires** dans la checklist. Le filtre **Résolu** permet de retrouver les constats clôturés. |
 | **Suivi des cafards** | Conserver les détections, les traitements et les vérifications dans le même dossier par chambre. |

@@ -17,10 +17,10 @@ const menuItems = [
     path: "/",
   },
   {
-    label: "Checklist des chambres",
+    label: "Chambres",
     path: "/checklist",
+    relatedPaths: ["/occupation"],
   },
-  { label: "Occupation des chambres", path: "/occupation" },
   { label: "Lingerie", path: "/lingerie" },
   { label: "Objets récupérés", path: "/objets-recuperes" },
   { label: "Absences et départs", path: "/familles" },
@@ -115,12 +115,8 @@ export function Sidebar({
           {menuItems.map((item) => {
             const selected =
               pathname === item.path ||
-              (
-                item.path !== "/" &&
-                pathname.startsWith(
-                  item.path
-                )
-              );
+              item.relatedPaths?.includes(pathname) ||
+              (item.path !== "/" && pathname.startsWith(item.path + "/"));
 
             return (
               <ListItemButton
@@ -128,6 +124,7 @@ export function Sidebar({
                 component={Link}
                 href={item.path}
                 selected={selected}
+                aria-current={selected ? (pathname === item.path ? "page" : "location") : undefined}
                 onClick={onMobileClose}
                 sx={{
                   borderRadius: 999,
