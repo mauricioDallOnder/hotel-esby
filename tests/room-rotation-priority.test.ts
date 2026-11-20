@@ -15,6 +15,23 @@ const entry = (patch: Partial<RoomEntry> = {}): RoomEntry => ({
 const partial = (patch: Partial<RoomEntry> = {}) => entry({ ...patch, checks: roomChecks.map((check, index) => ({ key: check.key, result: index ? "ok" : "non_verifie" })) });
 const recentHistory = () => rooms.map(room => entry({ room }));
 
+test("a confirmed repeat clutter observation completes the tour on its visit date", () => {
+  const room = "314", firstDay = "2026-11-13", visitDay = "2026-11-20", issueId = createId();
+  const visit = (date: string) => entry({ room, date, schemaVersion: 7,
+    checks: roomChecks.map(check => ({ key: check.key, result: check.key === "room_clutter" ? "probleme" : "ok" })),
+    issueLinks: [{ key: "room_clutter", issueId, findingKey: "room_clutter", expectedVersion: 1, outcome: "present" }],
+  });
+  const previous = visit(firstDay);
+  const historical = { ...visit(firstDay), inspectedAt: visitDay + "T10:00:00Z" };
+  const history = [previous, historical];
+  assert.deepEqual(roomRotation(history, visitDay, 1, 7, [], [room]).due, [room]);
+  const after = roomRotation([...history, visit(visitDay)], visitDay, 1, 7, [], [room]);
+  assert.deepEqual(after.done, [room]);
+  assert.deepEqual(after.due, []);
+  assert.deepEqual(after.plan, []);
+  assert.equal(after.byRoom.get(room)?.regularDueOn, "2026-11-27");
+});
+
 test("rotation respects each inspection version without marking old complete controls unfinished", () => {
   for (const version of [undefined, 2, 3, 4, 5, 6] as const) {
     const checks = entry().checks.filter(check => check.key !== "room_clutter" || version === 6)

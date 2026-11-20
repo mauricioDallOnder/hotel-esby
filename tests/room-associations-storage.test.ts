@@ -116,6 +116,30 @@ test("a concurrent change rejects the entire write and the same inspection can b
   assert.equal((await readState()).roomInspections?.length, 2);
 });
 
+test("a late sync and its retry retain their visit day while a new visit completes today's round with the same open clutter", async () => {
+  reset();
+  const day = today();
+  const lastWeek = new Date(Date.parse(day + "T12:00:00Z") - 7 * 86_400_000).toISOString().slice(0, 10);
+  const previous = { ...inspection(["room_clutter"]), room: "314", date: lastWeek, inspectedAt: lastWeek + "T12:00:00.000Z" };
+  const lateReceipt = await executeEntry(previous);
+  assert.equal(lateReceipt.collection, "roomInspections");
+  assert.ok(lateReceipt.issue);
+  assert.equal(lateReceipt.record.date, lastWeek);
+  assert.ok(roomRotation([lateReceipt.record], day).due.includes("314"));
+
+  const current: RoomEntry = { ...inspection(["room_clutter"]), room: "314", date: day, issueLinks: [{
+    key: "room_clutter", findingKey: "room_clutter", issueId: lateReceipt.issue.id, outcome: "present", expectedVersion: lateReceipt.issue.version,
+  }] };
+  await executeEntry(current);
+  const retry = await executeEntry(previous);
+  assert.deepEqual(retry.record, lateReceipt.record);
+  const state = await readState();
+  assert.deepEqual(state.roomInspections?.map(record => record.date), [lastWeek, day]);
+  assert.deepEqual(state.issues.map(issue => issue.status), ["ouvert"]);
+  assert.equal(state.issues[0].history.filter(event => event.inspectionId === current.id).length, 1);
+  assert.deepEqual(roomRotation(state.roomInspections!, day, 1, 7, [], ["314"]).done, ["314"]);
+});
+
 test("a later checklist updates two findings on one issue independently and reports only the outstanding repair", async () => {
   reset();
   const original = await executeEntry(inspection(["taps", "lights"]));

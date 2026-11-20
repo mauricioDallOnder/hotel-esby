@@ -20,6 +20,8 @@ type Draft = Omit<RoomEntry, "condition" | "carpet"> & {
   condition: RoomEntry["condition"] | ""; carpet: RoomEntry["carpet"] | "";
   // Draft-only answer: presence alone must not certify an untested fridge as functional.
   fridgePresent?: boolean;
+  // A historical date is a deliberate choice for this Paris calendar day only.
+  dateReviewedOn?: string;
 };
 const sections = ["Équipements", "État et ménage", "Résumé"];
 const equipmentChecks = roomChecks.filter(check => check.key !== "room_clutter");
@@ -31,15 +33,22 @@ function linkToIssue(finding: Finding, issue: Issue, outcome: "present" | "resol
   return { key: finding.key, issueId: issue.id, outcome, expectedVersion: issue.version, ...(target ? { findingKey: target.key } : {}) };
 }
 function rememberedActor() { try { return localStorage.getItem("room-inspector") || ""; } catch { return ""; } }
+function newRoomDraft(room: string): Draft {
+  return {
+    type: "createRoomInspection", schemaVersion: 6, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
+    cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [],
+    checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [], problemDetails: [],
+  };
+}
 const yesNo = [{ value: "oui", label: "Oui" }, { value: "non", label: "Non" }] as const;
 const cleanliness = [{ value: "propre", label: "Propre", color: "success" }, { value: "sale", label: "Sale", color: "warning" }] as const;
 
 export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer, recovery }: {
-  room: string; nextRoom?: string; onClose: () => void; onSaved: (next: boolean) => void; onDefer?: () => void;
+  room: string; nextRoom?: string; onClose: () => void; onSaved: (next: boolean, visitDate: string) => void; onDefer?: () => void;
   recovery?: { originalId: string; entry: RoomEntry; onSubmit: (entry: RoomEntry) => Promise<void> };
 }) {
   const { issues, role } = useAppContext();
-  const { enqueue } = useEntries();
+  const { enqueue, pending } = useEntries();
   const { history, day } = useRoomObservations();
   const { events } = useWorkEvents();
   const theme = useTheme();
@@ -47,12 +56,13 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const content = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
   const preparingPhotos = useRef(false);
-  const draft = useDeviceDraft<Draft>(recovery ? `draft:room-recovery:${recovery.originalId}` : `draft:room:${room}`, () => recovery ? normalizeRoomDraft(recovery.entry) as Draft : ({
-    type: "createRoomInspection", schemaVersion: 6, id: createId(), room, date: today(), actor: rememberedActor(), notes: "", condition: "", occupied: null,
-    cleaning: null, carpet: "", carpetNotes: "", microwave: "non_verifie", microwaveCleaning: "non_verifie", fridgeCleaning: "non_verifie", bugs: "non_verifie", photosData: [],
-    checks: roomChecks.map(c => ({ key: c.key, result: "non_verifie" })), issueLinks: [], problemDetails: [],
-  }), value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
+  const draft = useDeviceDraft<Draft>(recovery ? `draft:room-recovery:${recovery.originalId}` : `draft:room:${room}`,
+    () => recovery ? normalizeRoomDraft(recovery.entry) as Draft : newRoomDraft(room),
+    value => normalizeRoomDraft({ ...value, cleaning: value.cleaning || null }));
   const value = draft.value;
+  const submitted = !recovery && !!value && (history.some(entry => entry.id === value.id) || pending.some(item => item.entry.id === value.id));
+  const currentDay = today();
+  const needsDateReview = !recovery && !!value?.date && value.date < currentDay && value.dateReviewedOn !== currentDay;
   const fridgeResult = value?.checks.find(check => check.key === "fridge")?.result;
   const fridgePresence = fridgeResult === "absent" ? "non" : fridgeResult === "ok" || fridgeResult === "probleme" || value?.fridgePresent ? "oui" : "";
   const [step, setStep] = useState(0);
@@ -109,6 +119,13 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   const fieldMessage = (field: string) => validationProblems.find(problem => problem.path.join(".") === field)?.message;
   function goStep(next: number) { setStep(next); content.current?.scrollTo({ top: 0 }); }
   function update(patch: Partial<Draft>) { if (value) draft.update({ ...value, ...patch }); }
+  function chooseVisitDate(date: string) {
+    if (!value) return;
+    // A previous submission attempt may still have a receipt on another device.
+    const changedAttempt = !recovery && value.inspectedAt && value.date !== date;
+    update({ date, dateReviewedOn: today(), ...(changedAttempt ? { id: createId(), inspectedAt: undefined } : {}) });
+    setError("");
+  }
   function changeLink(key: string, link: IssueLink | undefined) {
     if (!value) return;
     const wasResolved = value.issueLinks?.some(previous => previous.key === key && previous.outcome === "resolved");
@@ -161,7 +178,14 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     });
   }
   async function submit(next = false) {
-    if (!value || submitting.current) return;
+    if (!value || submitting.current || submitted) return;
+    // Recheck at the instant of the click: midnight may fall between two renders.
+    const saveDay = today();
+    if (!recovery && value.date && value.date < saveDay && value.dateReviewedOn !== saveDay) {
+      setError("Confirmez la date de cette visite avant de l’enregistrer.");
+      content.current?.scrollTo({ top: 0 });
+      return;
+    }
     setError("");
     const parsed = roomEntrySchema.safeParse({ ...value, schemaVersion: 7, issueLinks: links, inspectedAt: value.inspectedAt || new Date().toISOString() });
     if (!parsed.success) {
@@ -191,9 +215,8 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
       if (recovery) await recovery.onSubmit(parsed.data);
       else await enqueue(parsed.data);
       try { localStorage.setItem("room-inspector", parsed.data.actor); } catch { /* Optional convenience. */ }
-      if (recovery) { try { await draft.clear(); } catch { /* The replacement is already durable in the queue. */ } }
-      else await draft.clear();
-      onSaved(next);
+      try { await draft.clear(); } catch { /* The entry is already durable. Reopening a leftover draft checks its submitted ID. */ }
+      onSaved(next, parsed.data.date);
     } catch (e) { setError((e as Error).message); }
     finally { submitting.current = false; setBusy(false); }
   }
@@ -210,18 +233,29 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
   return <Dialog open fullWidth fullScreen={mobile} maxWidth="sm" onClose={busy || compressing ? undefined : onClose} aria-labelledby="inspection-title">
     <DialogTitle id="inspection-title" sx={{ pb: 1 }}>
       <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
-        <Box><Typography component="span" variant="h5" sx={{ fontWeight: 800 }}>Chambre {room}</Typography><Typography variant="body2" color="text.secondary">Contrôle rapide · {checked}/{roomChecks.length} points vérifiés</Typography></Box>
+        <Box><Typography component="span" variant="h5" sx={{ fontWeight: 800 }}>Chambre {room}</Typography><Typography variant="body2" color="text.secondary">{value && `Visite du ${displayDate(value.date)} · `}{checked}/{roomChecks.length} points vérifiés</Typography></Box>
         <Button disabled={busy || compressing} onClick={onClose}>Fermer</Button>
       </Stack>
       <LinearProgress variant="determinate" value={checked / roomChecks.length * 100} sx={{ my: 1.5, height: 5, borderRadius: 4 }} />
       <Stack direction="row" spacing={0.5} role="navigation" aria-label="Étapes du contrôle">{sections.map((section, index) => <Button key={section} disabled={busy || compressing} onClick={() => goStep(index)} variant={step === index ? "contained" : "text"} aria-current={step === index ? "step" : undefined} sx={{ flex: 1, px: 0.5 }}>{index + 1}. {section}</Button>)}</Stack>
     </DialogTitle>
     <DialogContent ref={content} dividers sx={{ px: { xs: 2, sm: 3 } }}>
+      {value && submitted && !busy && <Alert severity="info" sx={{ mb: 2 }}>
+        Ce contrôle du {displayDate(value.date)} figure déjà dans les enregistrements ou les envois de cet appareil.
+        <Button onClick={() => { draft.update(newRoomDraft(room)); setError(""); setValidationAttempted(false); goStep(0); }}>Commencer un nouveau contrôle</Button>
+      </Alert>}
+      {value && needsDateReview && !submitted && !busy && <Alert severity="warning" sx={{ mb: 2 }}>
+        Ce brouillon est daté du {displayDate(value.date)}. Quel jour avez-vous effectué la visite ? Vos réponses et vos photos seront conservées.
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 1 }}>
+          <Button variant="contained" disabled={compressing} onClick={() => chooseVisitDate(today())}>Visite d’aujourd’hui · {displayDate(currentDay)}</Button>
+          <Button variant="outlined" disabled={compressing} onClick={() => chooseVisitDate(value.date)}>Garder le {displayDate(value.date)}</Button>
+        </Stack>
+      </Alert>}
       {invalid.length > 0 && <Alert severity="error" sx={{ mb: 2 }}>Il reste des points à vérifier. Aucun contrôle n’a été enregistré.</Alert>}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {draft.error && <Alert severity="error">{draft.error}</Alert>}
       {recovery && <Alert severity="info" sx={{ mb: 2 }}>Correction d’un envoi refusé. Les réponses, photos et date du contrôle sont conservées. La demande précédente restera disponible jusqu’à l’enregistrement de cette correction.</Alert>}
-      {!value ? <Typography>Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy || compressing} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>
+      {!value ? <Typography>Chargement du brouillon…</Typography> : <Box component="fieldset" disabled={busy || compressing || submitted} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>
         <Stack spacing={2}>
           {known.length > 0 && <Box>
             <Button color="warning" onClick={() => setShowIssues(!showIssues)} aria-expanded={showIssues}>{known.length} {known.length === 1 ? "signalement ouvert" : "signalements ouverts"} dans cette chambre</Button>
@@ -300,7 +334,8 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
           {step === 2 && <>
             <TextField required label="Inspecteur" value={value.actor} error={invalidField("actor")} onChange={e => update({ actor: e.target.value })} slotProps={{ htmlInput: { maxLength: 200 } }} helperText="Mémorisé sur cet appareil pour le prochain contrôle." />
             <Button onClick={() => setShowMetadata(!showMetadata)} aria-expanded={showMetadata}>Date : {value.date.split("-").reverse().join("/")} · Modifier</Button>
-            {showMetadata && <TextField required label="Date du contrôle" type="date" value={value.date} error={invalidField("date")} onChange={e => update({ date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today() } }} />}
+            {showMetadata && <TextField required label="Date du contrôle" type="date" value={value.date} error={invalidField("date")} onChange={e => chooseVisitDate(e.target.value)} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: currentDay } }} />}
+            {value.date && value.date !== currentDay && <Alert severity="info">Ce contrôle comptera pour la tournée du {displayDate(value.date)}.</Alert>}
             <Typography variant="h6">Constats du contrôle · {findings.length + resolved.length + optionalRows.filter(row => links.some(link => link.key === row.key)).length}</Typography>
             {value.bugs === "oui" && <Alert severity="info">{cafardCase ? "Cafards détectés : constat ajouté au suivi existant de cette chambre. Aucun doublon." : "Cafards détectés : le suivi sera ajouté dans « Suivi des cafards »."}</Alert>}
             {!findings.length && !resolved.length && <Alert severity="info">Aucune anomalie automatique à signaler. Les autres constats restent dans l’historique du contrôle.</Alert>}
@@ -390,8 +425,8 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
     </DialogContent>
     <DialogActions sx={{ p: 2, flexDirection: "column", gap: 1, alignItems: "stretch", "& > :not(style) ~ :not(style)": { ml: 0 } }}>
       {step < 2 ? <Button variant="contained" size="large" disabled={!value || busy || compressing} onClick={() => goStep(step + 1)}>Continuer · {sections[step + 1]}</Button> : <>
-        <Button variant="contained" size="large" disabled={!value || busy || compressing || needsIssueChoice || !!issuePlanError} onClick={() => void submit(false)}>{busy ? "Enregistrement…" : "Enregistrer le contrôle"}</Button>
-        {nextRoom && <Button variant="outlined" disabled={!value || busy || compressing || needsIssueChoice || !!issuePlanError} onClick={() => void submit(true)}>Enregistrer et passer à {nextRoom}</Button>}
+        <Button variant="contained" size="large" disabled={!value || busy || compressing || submitted || needsIssueChoice || !!issuePlanError} onClick={() => void submit(false)}>{busy ? "Enregistrement…" : "Enregistrer le contrôle"}</Button>
+        {nextRoom && <Button variant="outlined" disabled={!value || busy || compressing || submitted || needsIssueChoice || !!issuePlanError} onClick={() => void submit(true)}>Enregistrer et passer à {nextRoom}</Button>}
       </>}
       <Stack direction="row" sx={{ justifyContent: "space-between" }}>
         {step > 0 && <Button disabled={busy || compressing} onClick={() => goStep(step - 1)}>Retour</Button>}
