@@ -23,13 +23,22 @@ function address(ref: string | null): Address {
   return { col, row: Number(match[2]) };
 }
 
-function reportDate(name: string) {
-  const m = /^Sejours_(\d{4})(\d{2})(\d{2})_(\d{8})(?:\s*\(\d+\))?\.xlsx$/i.exec(name);
-  if (!m || m[1]+m[2]+m[3] !== m[4]) throw Error("Sélectionnez la fiche journalière Sejours_AAAAMMJJ_AAAAMMJJ.xlsx.");
-  const iso = `${m[1]}-${m[2]}-${m[3]}`;
+function filenameDate(digits: string) {
+  const iso = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
   const date = new Date(iso);
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0,10) !== iso) throw invalid();
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== iso) {
+    throw Error("Le nom de la fiche Séjours contient une date invalide.");
+  }
   return iso;
+}
+
+function reportDate(name: string) {
+  const match = /^Sejours_(\d{8})_(\d{8})(?:\s*\(\d+\))?\.xlsx$/i.exec(name);
+  if (!match) throw Error("Sélectionnez une fiche nommée Sejours_AAAAMMJJ_AAAAMMJJ.xlsx.");
+  const start = filenameDate(match[1]);
+  const end = filenameDate(match[2]);
+  if (end < start) throw Error("La date de fin de la fiche Séjours précède la date de début.");
+  return start;
 }
 
 function headerDate(label: string, day: string) {
