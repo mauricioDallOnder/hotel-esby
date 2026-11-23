@@ -65,6 +65,7 @@ export function OccupancyImportDialog({ onClose, onImported }: { onClose: () => 
       <Button variant="outlined" disabled={!!step} onClick={() => input.current?.click()} sx={{ alignSelf: "flex-start" }}>
         {file ? "Choisir une autre fiche" : "Choisir une fiche Excel (.xlsx)"}
       </Button>
+      <Typography variant="body2" color="text.secondary">Si la fiche couvre plusieurs jours, l’import utilise la première date du nom de fichier.</Typography>
       {file && <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>{file.name}</Typography>}
       {step === "reading" && <Typography role="status">Lecture de la fiche…</Typography>}
       {error && <Alert severity="error">{error}</Alert>}

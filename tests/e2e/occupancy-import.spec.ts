@@ -8,7 +8,7 @@ test("preview a stay sheet, import it, then correct and search the occupant", as
   await page.getByRole("button", { name: "Importer la fiche de séjours" }).click();
   const preview = page.getByRole("dialog", { name: "Importer la fiche de séjours" });
   await preview.getByLabel("Fiche de séjours Excel").setInputFiles({
-    name: "Sejours_20261120_20261120.xlsx",
+    name: "Sejours_20261120_20261123.xlsx",
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(await makeSejoursFixture()),
   });

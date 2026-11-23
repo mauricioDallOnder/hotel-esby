@@ -52,7 +52,9 @@ Dans le formulaire **Équipements**, **État du mobilier et des équipements** p
 
 **Ce que vous voyez :** une case cochée signifie **Occupée**. Si la chambre est vide, l'équipe choisit **Libre** (disponible) ou **En travaux** (indisponible) et peut ajouter une observation. Les filtres évitent de confondre une chambre vide avec une chambre prête à accueillir quelqu'un.
 
-Dans **Chambres → Occupation**, sélectionnez la fiche Excel **Séjours** et vérifiez la date et les chambres dans l’aperçu avant de confirmer. Pour la journée du planning, une case vide indique une chambre libre. Le rouge uni et le rouge pointillé indiquent des travaux. Pour chaque chambre occupée, la fiche indique le nom de l’occupant et le dernier jour couvert par sa barre de séjour. Le tableau de bord reprend les totaux des chambres libres, occupées et en travaux.
+Dans **Chambres → Occupation**, cliquez sur **Importer la fiche de séjours** et sélectionnez la fiche Excel d’une journée ou d’une période. L’import utilise la première date du nom de fichier. Par exemple, `Sejours_20261123_20261201.xlsx` met à jour l’occupation du **23 novembre 2026**. Vérifiez la date et les chambres dans l’aperçu avant de confirmer.
+
+Pour la journée importée, une case vide indique une chambre libre. Le rouge uni et le rouge pointillé indiquent des travaux. Pour chaque chambre occupée, la fiche indique le nom de l’occupant et le dernier jour couvert par sa barre de séjour. Le tableau de bord reprend les totaux des chambres libres, occupées et en travaux.
 
 Saisissez tout ou partie d’un nom dans la recherche pour retrouver la chambre d’un occupant. La recherche accepte aussi le numéro de chambre. Après l’import, **Modifier le séjour** permet de corriger le nom ou la date. La case **Occupée** et le choix **Libre / En travaux** restent utilisables pour corriger la situation du jour.
 
