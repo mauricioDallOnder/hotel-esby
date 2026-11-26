@@ -15,6 +15,7 @@ import { rooms } from "@/lib/rooms";
 import { CafardFollowupDialog } from "./CafardFollowupDialog";
 import { IssueBadges } from "./HotelUI";
 import { IssuePhoto } from "./IssuePhoto";
+import { PhotoCaptureButton } from "./PhotoCaptureButton";
 import { QuickChoice } from "./QuickChoice";
 import { ProblemTypeSelect } from "./ProblemTypeSelect";
 import { flushDeviceDrafts, useDeviceDraft } from "@/lib/useDeviceDraft";
@@ -347,7 +348,7 @@ function IssueDialogForm({ issue, onClose, onSaved, onOpenExisting, storedDraft,
                       <TextField fullWidth type="date" required label="Date du constat" value={date} onChange={e => setDate(e.target.value)} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today() } }} />
                       <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Photos · facultatif</Typography>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button variant="outlined" component="label" startIcon={<PhotoCameraOutlined />} disabled={processing || busy || photos.length >= MAX_ISSUE_PHOTOS}>Prendre une photo<input hidden type="file" accept="image/*" capture="environment" onChange={e => { void loadPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
+                        <PhotoCaptureButton startIcon={<PhotoCameraOutlined />} disabled={processing || busy || photos.length >= MAX_ISSUE_PHOTOS} onCapture={file => { void loadPhotos([file]); }} />
                         <Button component="label" disabled={processing || busy || photos.length >= MAX_ISSUE_PHOTOS}>Choisir des photos<input hidden type="file" accept="image/*" multiple onChange={e => { void loadPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
                       </Stack>
                       <Typography variant="body2" color="text.secondary">{photos.length} / {MAX_ISSUE_PHOTOS} photos · facultatif</Typography>
