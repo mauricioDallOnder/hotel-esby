@@ -20,6 +20,8 @@ Fini les informations dispersées entre carnets, messages et tableaux : Hôtel C
 
 **2. Pendant la visite :** choisissez des réponses simples (**OK**, **Problème**, **Oui**, **Non**), ajoutez une remarque et, si nécessaire, prenez jusqu'à **3 photos par contrôle**. Les problèmes techniques sont suivis sans multiplier les doublons.
 
+Sur Android, dans un contrôle de chambre ou un signalement, touchez **Prendre une photo** et autorisez l’accès à la caméra si le téléphone le demande. Cadrez la photo dans l’application, puis touchez **Photographier** pour la joindre au formulaire. La résolution de la prise de vue est limitée pour économiser la mémoire. Vous pouvez aussi choisir une image déjà enregistrée sur le téléphone.
+
 Si la chambre est encombrée et que le radiateur est caché, indiquez les deux constats. Dans le **Résumé**, chacun retrouve automatiquement sa fiche lorsqu’une seule correspondance précise existe. Vous pouvez alors **Enregistrer le contrôle**, même si une fiche de robinetterie reste ouverte dans cette chambre. Si plusieurs fiches conviennent au même constat, choisissez celle de l’équipement concerné.
 
 Si vous reprenez un brouillon d’un autre jour, choisissez la date de la visite. Pour un nouveau passage dans une chambre toujours encombrée, choisissez aujourd’hui et confirmez **Toujours présent** sur la fiche existante. Un contrôle complet sort alors de la tournée du jour et la fiche d’encombrement reste ouverte. Pour transmettre une ancienne visite, gardez sa date d’origine. Un contrôle effectué hors ligne garde lui aussi sa date lors de l’envoi.

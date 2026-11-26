@@ -14,6 +14,7 @@ import { useDeviceDraft } from "@/lib/useDeviceDraft";
 import { useRoomObservations } from "@/lib/useRoomObservations";
 import { useWorkEvents } from "@/lib/useWorkEvents";
 import { QuickChoice } from "./QuickChoice";
+import { PhotoCaptureButton } from "./PhotoCaptureButton";
 import { ProblemTypeSelect } from "./ProblemTypeSelect";
 
 type Draft = Omit<RoomEntry, "condition" | "carpet"> & {
@@ -412,7 +413,7 @@ export function RoomInspectionDialog({ room, nextRoom, onClose, onSaved, onDefer
             <TextField label="Observations et problèmes constatés" multiline minRows={2} value={value.notes} onChange={e => update({ notes: e.target.value })} slotProps={{ htmlInput: { maxLength: 4000 } }} helperText="Facultatif : les boutons décrivent déjà les constats. Les détails restent dans l’historique." />
             <Typography variant="subtitle2">Photos · {value.photosData.length}/3</Typography>
             <Stack direction="row" spacing={1}>
-              <Button component="label" variant="outlined" disabled={compressing || value.photosData.length >= 3}>Prendre une photo<input hidden type="file" accept="image/*" capture="environment" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
+              <PhotoCaptureButton disabled={compressing || value.photosData.length >= 3} onCapture={file => { void addPhotos([file]); }} />
               <Button component="label" disabled={compressing || value.photosData.length >= 3}>Galerie<input hidden multiple type="file" accept="image/*" onChange={e => { void addPhotos(Array.from(e.target.files || [])); e.target.value = ""; }} /></Button>
             </Stack>
             {compressing && <LinearProgress aria-label="Préparation des photos" variant="determinate" value={photoProgress.total ? photoProgress.completed / photoProgress.total * 100 : 0} />}
